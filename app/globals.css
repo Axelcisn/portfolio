@@ -1,45 +1,30 @@
 /* ===== Tokens ===== */
 :root{
   --bg:#ffffff; --text:#111827; --card:#f6f7f8; --border:#e5e7eb;
-  --accent:#007aff;            /* Apple blue */
-  --accent-hover:#006ee6;      /* hover (≈ -6%) */
-  --accent-active:#005ec2;     /* active (≈ -10%) */
-  --radius:14px;
-  --row-gap:16px;  /* default vertical gap */
-  --col-gap:12px;  /* default horizontal gap */
+  --accent:#007aff; --accent-hover:#006ee6; --accent-active:#005ec2;
+  --radius:14px; --row-gap:16px; --col-gap:12px;
 }
 html.dark{
-  --bg:#0b0b0c;
-  --text:#ffffff;
-  --card:#14161a;
-  --border:#2b2f36;
-  --accent:#007aff;
-  --accent-hover:#006ee6;
-  --accent-active:#005ec2;
+  --bg:#0b0b0c; --text:#ffffff; --card:#14161a; --border:#2b2f36;
+  --accent:#007aff; --accent-hover:#006ee6; --accent-active:#005ec2;
 }
 
 /* ===== Base ===== */
 *{box-sizing:border-box}
 ::selection{background:rgba(0,122,255,.25)}
-body{
-  margin:0;
-  font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
-  background:var(--bg);color:var(--text);min-height:100vh
-}
+body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
+  background:var(--bg);color:var(--text);min-height:100vh}
 a{color:inherit;text-decoration:none}
 label{font-weight:500;opacity:.95}
 h3{margin:0 0 12px 0;font-weight:600;letter-spacing:.2px}
 .small{font-size:12px;opacity:.9}
-.help{font-size:12px;opacity:.6;margin-top:8px}
 .value{font-weight:600;font-size:1.1rem;line-height:1}
 
 /* ===== Layout ===== */
 .container{max-width:1100px;margin:0 auto;padding:24px}
-.navbar{
-  position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
-  gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);
-  backdrop-filter:blur(8px);background:rgba(0,0,0,0.03)
-}
+.navbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+  gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);backdrop-filter:blur(8px);
+  background:rgba(0,0,0,0.03)}
 html.dark .navbar{background:rgba(0,0,0,0.35)}
 .nav-left{display:flex;align-items:center;gap:12px}
 .nav-title{font-weight:700;letter-spacing:.2px}
@@ -49,25 +34,28 @@ html.dark .navbar{background:rgba(0,0,0,0.35)}
 .right{display:flex;align-items:center;gap:12px}
 
 /* Cards */
-.card{
-  border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px;background:var(--card)
-}
+.card{border:1px solid var(--border);border-radius:var(--radius);padding:16px;background:var(--card)}
 .card > * + *{margin-top:12px}
 
-/* Market card specific: px-6 py-5 + larger row gaps for symmetry */
+/* Market card: symmetric padding + row spacing */
 .card.market{padding:20px 24px}
 .market-stack{display:grid;row-gap:20px} /* gap-y-5 */
 
-/* Grids/rows */
+/* Grid helpers */
 .grid{display:grid;gap:var(--row-gap)}
 .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media (max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+/* Row patterns */
 .row{display:flex;align-items:center;gap:var(--col-gap)}
 .row-right{display:flex;align-items:center;gap:var(--col-gap);justify-content:flex-end}
+.index-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:var(--col-gap)} /* controls left, % right */
 
-/* Columns for sublabels + controls */
+/* Vertical group: extra space between label and control (≈ mt-3) */
+.vgroup{display:flex;flex-direction:column;row-gap:12px}
+
+/* Sublabel columns (used under Index Average Return) */
 .col{display:flex;flex-direction:column;align-items:stretch}
 .sublabel{font-size:12px;opacity:.9;margin-bottom:6px}
 
@@ -99,23 +87,17 @@ html.dark input::placeholder,html.dark textarea::placeholder{color:rgba(255,255,
 .button.ghost:hover{background:var(--card)}
 
 /* Checkbox — solid blue, no checkmark */
-input[type="checkbox"]{
-  -webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:9999px;
-  border:1px solid var(--border);background:transparent;cursor:pointer;
-  transition:background .12s ease,border-color .12s ease;
-}
+input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:9999px;
+  border:1px solid var(--border);background:transparent;cursor:pointer;transition:background .12s ease,border-color .12s ease}
 input[type="checkbox"]:checked{background:var(--accent);border-color:var(--accent)}
 input[type="checkbox"]:focus{outline:2px solid var(--accent);outline-offset:2px}
 
 /* Small theme toggle */
-.toggle{
-  width:36px;height:36px;border-radius:9999px;border:1px solid var(--border);
+.toggle{width:36px;height:36px;border-radius:9999px;border:1px solid var(--border);
   background:rgba(0,0,0,.04);display:inline-flex;align-items:center;justify-content:center;
-  transition:background .12s ease,filter .12s ease;
-}
+  transition:background .12s ease,filter .12s ease}
 html.dark .toggle{background:rgba(255,255,255,.08)}
 .toggle:hover{filter:brightness(0.96)}
 .toggle:active{filter:brightness(0.90)}
 html:not(.dark) .toggle{box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .toggle:focus{outline:2px solid var(--accent);outline-offset:2px}
-
