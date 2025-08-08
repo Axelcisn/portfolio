@@ -16,8 +16,8 @@ export default function Page() {
       <section className="card">
         <h3>Shortcuts</h3>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link className="btn" href="/strategy">Open Strategy</Link>
-          <Link className="btn" href="/portfolio">Open Portfolio</Link>
+          <Link className="button" href="/strategy">Open Strategy</Link>
+          <Link className="button" href="/portfolio">Open Portfolio</Link>
         </div>
       </section>
     </div>
