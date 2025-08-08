@@ -9,19 +9,14 @@ const INDICES = [
 ];
 const LOOKS = ["1y", "2y", "3y", "5y", "10y"];
 
-/* helpers: keep UX in % while we compute decimals */
-const cleanPct = (s) => (s ?? "").toString().replace(/[^\d.,-]/g, "").replace(",", ".");
-const toPctNumber = (s) => {
-  const n = parseFloat(cleanPct(s));
-  return isFinite(n) ? n : null;
-};
-const toPctDisplay = (s) => {
-  const n = toPctNumber(s);
-  return n == null ? "" : `${n}`;
-};
+/* % input helpers — allow dot, up to 2 decimals, keep raw while typing */
+const pctPattern = /^(\d{0,3})(?:\.(\d{0,2})?)?$/; // "", "5", "5.", "5.5", "12.34", "100"
+const sanitizePct = (raw) => raw.replace(/[^\d.]/g, ""); // no commas, no spaces
+const canAccept = (raw) => raw === "" || pctPattern.test(raw);
+const stripTrailingDot = (raw) => (raw.endsWith(".") ? raw.slice(0, -1) : raw);
 
 export default function MarketCard({ onRates }) {
-  // shown to user in %
+  // UI shows percent numbers (e.g., "5.50"), internal emits decimals (e.g., 0.055)
   const [riskFreePct, setRiskFreePct] = useState("");
   const [mrpPct, setMrpPct] = useState("");
 
@@ -29,32 +24,32 @@ export default function MarketCard({ onRates }) {
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
 
-  // decimals we emit upward
   const riskFreeDec = useMemo(() => {
-    const n = toPctNumber(riskFreePct);
-    return n == null ? null : n / 100;
+    const v = stripTrailingDot(riskFreePct);
+    const n = v === "" ? null : parseFloat(v);
+    return n == null || !isFinite(n) ? null : n / 100;
   }, [riskFreePct]);
+
   const mrpDec = useMemo(() => {
-    const n = toPctNumber(mrpPct);
-    return n == null ? null : n / 100;
+    const v = stripTrailingDot(mrpPct);
+    const n = v === "" ? null : parseFloat(v);
+    return n == null || !isFinite(n) ? null : n / 100;
   }, [mrpPct]);
 
-  // initial fetch
+  // Initial fetch (populate % inputs from decimals; emit to parent)
   useEffect(() => {
     const fetchData = async () => {
       const r = await fetch(`/api/market?index=${indexKey}&lookback=${lookback}`);
       const d = await r.json();
-      // display as %
-      setRiskFreePct(d.riskFree != null ? String((d.riskFree * 100).toFixed(2)) : "");
-      setMrpPct(d.mrp != null ? String((d.mrp * 100).toFixed(2)) : "");
+      setRiskFreePct(d.riskFree != null ? (d.riskFree * 100).toFixed(2) : "");
+      setMrpPct(d.mrp != null ? (d.mrp * 100).toFixed(2) : "");
       setIndexAnn(d.indexAnn ?? null);
-      onRates?.({ riskFree: d.riskFree, mrp: d.mrp, indexAnn: d.indexAnn });
+      onRates?.({ riskFree: d.riskFree ?? 0, mrp: d.mrp ?? 0, indexAnn: d.indexAnn ?? null });
     };
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indexKey, lookback]);
 
-  // when user changes % and blurs, emit decimals up
   const commitRates = () => {
     onRates?.({
       riskFree: riskFreeDec ?? 0,
@@ -68,7 +63,7 @@ export default function MarketCard({ onRates }) {
       <h3>Market</h3>
 
       <div className="market-stack">
-        {/* Row 1 — Risk-Free Rate (label + extra spacing before input) */}
+        {/* Row 1 — Risk-Free Rate */}
         <div className="vgroup">
           <label>Risk-Free Rate</label>
           <input
@@ -76,10 +71,15 @@ export default function MarketCard({ onRates }) {
             inputMode="decimal"
             placeholder="e.g., 2.50"
             value={riskFreePct}
-            onChange={(e) => setRiskFreePct(toPctDisplay(e.target.value))}
+            onChange={(e) => {
+              const raw = sanitizePct(e.target.value);
+              if (canAccept(raw)) setRiskFreePct(raw);
+            }}
             onBlur={() => {
-              const n = toPctNumber(riskFreePct);
-              if (n != null) setRiskFreePct(String(n)); // keep "5.5" style; append "%" if you prefer -> `${n}%`
+              if (riskFreePct === "") return commitRates();
+              const v = stripTrailingDot(riskFreePct);
+              const n = parseFloat(v);
+              setRiskFreePct(isFinite(n) ? n.toFixed(2) : "");
               commitRates();
             }}
           />
@@ -93,10 +93,15 @@ export default function MarketCard({ onRates }) {
             inputMode="decimal"
             placeholder="e.g., 5.50"
             value={mrpPct}
-            onChange={(e) => setMrpPct(toPctDisplay(e.target.value))}
+            onChange={(e) => {
+              const raw = sanitizePct(e.target.value);
+              if (canAccept(raw)) setMrpPct(raw);
+            }}
             onBlur={() => {
-              const n = toPctNumber(mrpPct);
-              if (n != null) setMrpPct(String(n));
+              if (mrpPct === "") return commitRates();
+              const v = stripTrailingDot(mrpPct);
+              const n = parseFloat(v);
+              setMrpPct(isFinite(n) ? n.toFixed(2) : "");
               commitRates();
             }}
           />
@@ -104,28 +109,32 @@ export default function MarketCard({ onRates }) {
 
         {/* Row 3 — Index Average Return */}
         <div className="vgroup">
-          {/* Line 1: title with extra spacing */}
           <label>Index Average Return</label>
 
-          {/* Line 2: controls left, % result right — both vertically centered */}
+          {/* Controls left; % value right (same row, centered vertically) */}
           <div className="index-row">
             <div className="row">
-              <div className="col" style={{ width: 200 }}>
-                <div className="sublabel">Index</div>
-                <select className="field" value={indexKey} onChange={(e) => setIndexKey(e.target.value)}>
-                  {INDICES.map((i) => (
-                    <option key={i.key} value={i.key}>{i.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="col" style={{ width: 120 }}>
-                <div className="sublabel">Lookback</div>
-                <select className="field" value={lookback} onChange={(e) => setLookback(e.target.value)}>
-                  {LOOKS.map((l) => (
-                    <option key={l} value={l}>{l}</option>
-                  ))}
-                </select>
-              </div>
+              <select
+                className="field"
+                value={indexKey}
+                onChange={(e) => setIndexKey(e.target.value)}
+                style={{ width: 200 }}
+              >
+                {INDICES.map((i) => (
+                  <option key={i.key} value={i.key}>{i.label}</option>
+                ))}
+              </select>
+
+              <select
+                className="field"
+                value={lookback}
+                onChange={(e) => setLookback(e.target.value)}
+                style={{ width: 120 }}
+              >
+                {LOOKS.map((l) => (
+                  <option key={l} value={l}>{l}</option>
+                ))}
+              </select>
             </div>
 
             <div className="value" style={{ textAlign: "right" }}>
