@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { riskFreeByCcy } from "../../../lib/riskfree";
-import { yahooDailyCloses } from "../../../lib/yahoo";
-import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats";
+import { riskFreeByCcy } from "../../../lib/riskfree.js";
+import { yahooDailyCloses } from "../../../lib/yahoo.js";
+import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats.js";
 
 // Map UI keys → Yahoo index tickers
 const INDEX_MAP = {
