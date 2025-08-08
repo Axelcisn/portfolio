@@ -6,24 +6,19 @@ import ThemeToggle from "./ThemeToggle";
 
 const items = [
   { href: "/", label: "Dashboard" },
-  { href: "/strategy", label: "Strategy" },
   { href: "/portfolio", label: "Portfolio" },
+  { href: "/strategy", label: "Strategy" }
 ];
 
 export default function NavBar() {
   const pathname = usePathname();
-
   return (
     <nav className="navbar">
       <div className="nav-left">
         <span className="nav-title">Portfolio</span>
         <div className="nav-links">
-          {items.map((i) => (
-            <Link
-              key={i.href}
-              href={i.href}
-              className={`nav-link ${pathname === i.href ? "active" : ""}`}
-            >
+          {items.map(i => (
+            <Link key={i.href} href={i.href} className={`nav-link ${pathname === i.href ? "active" : ""}`}>
               {i.label}
             </Link>
           ))}
