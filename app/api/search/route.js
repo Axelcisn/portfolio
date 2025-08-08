@@ -3,7 +3,6 @@ import { yahooSearch } from "../../../lib/yahoo.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 export async function GET(req) {
   try {
@@ -14,9 +13,6 @@ export async function GET(req) {
     const results = await yahooSearch(q);
     return NextResponse.json({ results });
   } catch (err) {
-    return NextResponse.json(
-      { results: [], error: String(err?.message || err) },
-      { status: 200 }
-    );
+    return NextResponse.json({ results: [], error: String(err?.message || err) }, { status: 200 });
   }
 }
