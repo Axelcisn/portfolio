@@ -3,8 +3,8 @@ import { yahooQuote, yahooLiveIv, yahooDailyCloses } from "../../../lib/yahoo.js
 import { fxToEUR } from "../../../lib/fx.js";
 import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats.js";
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -12,21 +12,23 @@ export async function GET(req) {
   if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
 
   try {
-    const q = await yahooQuote(symbol);
-    // hist stats for realized vol/drift (1y)
-    let hist = null;
+    const q = await yahooQuote(symbol); // spot, currency, beta, 52w, name
+
+    // historical realized drift/vol (1y)
+    let driftHist = null, ivHist = null;
     try {
       const bars = await yahooDailyCloses(symbol, "1y", "1d");
-      const rets = logReturns(bars.map(b => b.close));
+      const closes = bars.map(b => b.close);
+      const rets = logReturns(closes);
       const { driftA, volA } = annualizedFromDailyLogs(rets);
-      hist = { driftA, volA };
-    } catch { hist = null; }
+      driftHist = driftA; ivHist = volA;
+    } catch { /* ignore */ }
 
-    // live IV (ATM-ish)
+    // live ATM-ish IV
     let ivLive = null;
-    try { if (q.spot) ivLive = await yahooLiveIv(symbol, q.spot); } catch {}
+    try { if (q.spot) ivLive = await yahooLiveIv(symbol, q.spot); } catch { /* ignore */ }
 
-    // FX to EUR
+    // FX conversion to EUR
     const fx = await fxToEUR(q.currency || "EUR");
 
     return NextResponse.json({
@@ -37,13 +39,13 @@ export async function GET(req) {
       high52: q.high52,
       low52: q.low52,
       beta: q.beta,
-      ivLive,             // decimal if present (e.g., 0.30)
-      ivHist: hist?.volA ?? null, // realized annualized
-      driftHist: hist?.driftA ?? null,
-      fxToEUR: fx.rate,   // null if unknown
+      ivLive,          // decimal
+      ivHist,          // decimal
+      driftHist,       // decimal
+      fxToEUR: fx.rate,
       fxSource: fx.via
     });
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
 }
