@@ -42,11 +42,10 @@ export default function CompanyCard({ value, onConfirm, onHorizonChange, onIvSou
       <h3>Company</h3>
 
       <label>Company / Ticker</label>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input className="btn" style={{ flex: 1, background: "transparent" }}
-               placeholder="Search by name or ticker…" value={query}
+      <div className="row">
+        <input className="field" placeholder="Search by name or ticker…" value={query}
                onChange={e => { setQuery(e.target.value); setSelected(null); }} />
-        <button className="btn" onClick={() => confirm()} disabled={loading}>
+        <button className="button" onClick={() => confirm()} disabled={loading}>
           {loading ? "Searching…" : "Confirm"}
         </button>
       </div>
@@ -54,9 +53,9 @@ export default function CompanyCard({ value, onConfirm, onHorizonChange, onIvSou
       {results.length > 0 && (
         <div className="card" style={{ marginTop: 8 }}>
           <div className="small">No exact match — pick one:</div>
-          <div style={{ display: "grid", gap: 6 }}>
+          <div className="row" style={{ flexWrap: "wrap" }}>
             {results.map(r => (
-              <button key={r.symbol} className="btn" onClick={() => confirm(r.symbol)}>
+              <button key={r.symbol} className="button ghost" onClick={() => confirm(r.symbol)}>
                 {r.symbol} • {r.name}
               </button>
             ))}
@@ -77,23 +76,23 @@ export default function CompanyCard({ value, onConfirm, onHorizonChange, onIvSou
             <div className="card"><div className="small">52W Low</div><div><strong>{fmtNum(details?.low52)}</strong></div></div>
             <div className="card">
               <div className="small">Time (days)</div>
-              <input className="btn" type="number" min={1} step={1} defaultValue={30}
+              <input className="field" type="number" min={1} step={1} defaultValue={30}
                      onChange={e => onHorizonChange?.(parseInt(e.target.value || "0", 10))} />
             </div>
           </div>
 
           <div className="card">
             <div className="small">Implied Volatility</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <select className="btn" value={ivSource} onChange={e => setIvSource(e.target.value)}>
+            <div className="row" style={{ flexWrap: "wrap" }}>
+              <select className="field" style={{ width: 220 }} value={ivSource} onChange={e => setIvSource(e.target.value)}>
                 <option value="live">Live IV</option>
                 <option value="hist">Historical IV</option>
                 <option value="manual">Manual</option>
               </select>
               {ivSource === "manual"
-                ? <input className="btn" placeholder="e.g., 0.30" value={ivManual} onChange={e => setIvManual(e.target.value)} />
+                ? <input className="field" placeholder="e.g., 0.30" value={ivManual} onChange={e => setIvManual(e.target.value)} style={{ width: 180 }} />
                 : <span className="small">{ivSource === "live" ? fmtNum(details?.ivLive) : fmtNum(details?.ivHist)}</span>}
-              {details?.currency !== "EUR" && <span className="btn small">Converted to EUR</span>}
+              {details?.currency !== "EUR" && <span className="badge">Converted to EUR</span>}
             </div>
           </div>
         </div>
