@@ -16,57 +16,58 @@ export default function MarketCard({ onRates }) {
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
 
-  const fetchData = async () => {
-    const r = await fetch(`/api/market?index=${indexKey}&lookback=${lookback}`);
-    const d = await r.json();
-    setRiskFree((d.riskFree ?? 0).toString());
-    setMrp((d.mrp ?? 0).toString());
-    setIndexAnn(d.indexAnn ?? null);
-    onRates?.({ riskFree: d.riskFree, mrp: d.mrp, indexAnn: d.indexAnn });
-  };
-
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [indexKey, lookback]);
+  useEffect(() => {
+    const fetchData = async () => {
+      const r = await fetch(`/api/market?index=${indexKey}&lookback=${lookback}`);
+      const d = await r.json();
+      setRiskFree((d.riskFree ?? 0).toString());
+      setMrp((d.mrp ?? 0).toString());
+      setIndexAnn(d.indexAnn ?? null);
+      onRates?.({ riskFree: d.riskFree, mrp: d.mrp, indexAnn: d.indexAnn });
+    };
+    fetchData();
+  }, [indexKey, lookback, onRates]);
 
   return (
-    <section className="card">
+    <section className="card market">
       <h3>Market</h3>
 
-      {/* Row 1 — Risk-Free Rate */}
-      <div className="row-split">
+      <div className="market-stack">
+        {/* Row 1 — Risk-Free Rate */}
         <div>
-          <div className="small">Risk-Free Rate</div>
+          <label>Risk-Free Rate</label>
           <input className="field" value={riskFree} onChange={e => setRiskFree(e.target.value)} />
-          <div className="help">decimal (0.027 = 2.7%)</div>
         </div>
-        <div /> {/* right side intentionally empty */}
-      </div>
 
-      {/* Row 2 — Market Risk Premium */}
-      <div className="row-split">
+        {/* Row 2 — Market Risk Premium */}
         <div>
-          <div className="small">Market Risk Premium</div>
+          <label>Market Risk Premium</label>
           <input className="field" value={mrp} onChange={e => setMrp(e.target.value)} />
-          <div className="help">decimal</div>
         </div>
-        <div />
-      </div>
 
-      {/* Row 3 — Index Average Return */}
-      <div className="row-split">
-        {/* Left: label + value aligned */}
+        {/* Row 3 — Index Average Return (3-line stack) */}
         <div>
-          <div className="small">Index Average Return</div>
-          <div className="value">{indexAnn == null ? "—" : fmtPct(indexAnn)}</div>
-        </div>
+          {/* Line 1: section title */}
+          <label>Index Average Return</label>
 
-        {/* Right: controls inline, right-justified */}
-        <div className="row-right">
-          <select className="field" value={indexKey} onChange={e => setIndexKey(e.target.value)} style={{ width: 160 }}>
-            {INDICES.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
-          </select>
-          <select className="field" value={lookback} onChange={e => setLookback(e.target.value)} style={{ width: 100 }}>
-            {LOOKS.map(l => <option key={l} value={l}>{l}</option>)}
-          </select>
+          {/* Line 2: controls (right-aligned), each with sublabel */}
+          <div className="row-right">
+            <div className="col" style={{ width: 200 }}>
+              <div className="sublabel">Index</div>
+              <select className="field" value={indexKey} onChange={e => setIndexKey(e.target.value)}>
+                {INDICES.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
+              </select>
+            </div>
+            <div className="col" style={{ width: 120 }}>
+              <div className="sublabel">Lookback</div>
+              <select className="field" value={lookback} onChange={e => setLookback(e.target.value)}>
+                {LOOKS.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Line 3: result (aligned with section title) */}
+          <div className="value">{indexAnn == null ? "—" : fmtPct(indexAnn)}</div>
         </div>
       </div>
     </section>
