@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import { yahooDailyCloses } from "../../../lib/yahoo.js";
 import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats.js";
 
-export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const symbol = (searchParams.get("symbol") || "").trim();
-  const range = searchParams.get("range") || "1y";
+  const range = (searchParams.get("range") || "1y").trim();
   if (!symbol) return NextResponse.json({ error: "symbol required" }, { status: 400 });
 
   try {
@@ -18,6 +18,6 @@ export async function GET(req) {
     const { driftA, volA } = annualizedFromDailyLogs(rets);
     return NextResponse.json({ bars, driftA, volA });
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
 }
