@@ -19,24 +19,34 @@ export default function Strategy() {
   const tickerConfirmed = !!company?.symbol;
 
   return (
-    <div className="grid grid-2">
-      <CompanyCard
-        value={company}
-        onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
-        onHorizonChange={(d) => setHorizon(d)}
-        onIvSourceChange={(s) => setIvSource(s)}
-        onIvValueChange={(v) => setIvValue(v)}
-      />
-      <MarketCard onRates={(r) => setMarket(r)} />
+    <div className="grid">
+      {/* Only this row is two columns */}
+      <div className="grid grid-2">
+        <CompanyCard
+          value={company}
+          onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
+          onHorizonChange={(d) => setHorizon(d)}
+          onIvSourceChange={(s) => setIvSource(s)}
+          onIvValueChange={(v) => setIvValue(v)}
+        />
+        <MarketCard onRates={(r) => setMarket(r)} />
+      </div>
 
+      {/* Full-width sections */}
       <LegsSection currency={currency} onNetPremiumChange={setNetPremium} />
-
       <Chart pLow={-0.15} pHigh={0.15} expected={0.02} />
-
-      <MiniCards disabled={!tickerConfirmed} defaultHorizon={horizon}
-        onRun={(cfg) => console.log("run MC", cfg, { ivSource, ivValue, market })} />
-
-      <SummaryTiles currency={currency} netPremium={netPremium} probProfit={null} expectancy={null} expReturn={null} />
+      <MiniCards
+        disabled={!tickerConfirmed}
+        defaultHorizon={horizon}
+        onRun={(cfg) => console.log("run MC", cfg, { ivSource, ivValue, market })}
+      />
+      <SummaryTiles
+        currency={currency}
+        netPremium={netPremium}
+        probProfit={null}
+        expectancy={null}
+        expReturn={null}
+      />
     </div>
   );
 }
