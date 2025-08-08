@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import LegRow from "./LegRow";
 import { fmtNum } from "../../utils/format";
 
-export default function LegsSection({ currency = "EUR", onNetPremiumChange }) {
+export default function LegsSection({ currency = "EUR", onNetPremiumChange, onLegsChange }) {
   const [legs, setLegs] = useState({
     lc: { enabled: false, strike: "", premium: "", qty: 1 },
     sc: { enabled: false, strike: "", premium: "", qty: 1 },
@@ -24,6 +24,7 @@ export default function LegsSection({ currency = "EUR", onNetPremiumChange }) {
   }, [legs]);
 
   useEffect(() => { onNetPremiumChange?.(netPremium); }, [netPremium, onNetPremiumChange]);
+  useEffect(() => { onLegsChange?.(legs); }, [legs, onLegsChange]);
 
   return (
     <section className="card">
