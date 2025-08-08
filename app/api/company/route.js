@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { yahooQuote, yahooLiveIv, yahooDailyCloses } from "../../../lib/yahoo";
-import { fxToEUR } from "../../../lib/fx";
-import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats";
+import { yahooQuote, yahooLiveIv, yahooDailyCloses } from "../../../lib/yahoo.js";
+import { fxToEUR } from "../../../lib/fx.js";
+import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
