@@ -1,32 +1,41 @@
+/* ===== Tokens ===== */
 :root{
   --bg:#ffffff; --text:#111827; --card:#f6f7f8; --border:#e5e7eb;
   --accent:#007aff;            /* Apple blue */
-  --accent-hover:#006ee6;      /* hover: slightly darker */
-  --accent-active:#2a8cff;     /* active: slightly lighter */
+  --accent-hover:#006ee6;      /* hover (≈ -6%) */
+  --accent-active:#005ec2;     /* active (≈ -10%) */
+  --radius:14px;
+  --row-gap:16px;  /* vertical gap between rows */
+  --col-gap:12px;  /* horizontal gap within rows */
 }
 html.dark{
   --bg:#0b0b0c;
-  --text:#ffffff;              /* high-contrast text in dark */
-  --card:#14161a;              /* higher contrast cards */
+  --text:#ffffff;              /* pure/high-contrast */
+  --card:#14161a;              /* darker for contrast */
   --border:#2b2f36;
   --accent:#007aff;
   --accent-hover:#006ee6;
-  --accent-active:#2a8cff;
+  --accent-active:#005ec2;
 }
 
-/* base */
+/* ===== Base ===== */
 *{box-sizing:border-box}
+::selection{background:rgba(0,122,255,.25)}
 body{
   margin:0;
   font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
   background:var(--bg);color:var(--text);min-height:100vh
 }
 a{color:inherit;text-decoration:none}
-
-/* headings lighter weight for dark mode heaviness */
+label{font-weight:500;opacity:.95}
 h3{margin:0 0 12px 0;font-weight:600;letter-spacing:.2px}
 
-/* container & layout */
+/* Text + helpers */
+.small{font-size:12px;opacity:.9}
+.help{font-size:12px;opacity:.6;margin-top:8px}
+.value{font-weight:600;font-size:1.1rem;line-height:1}
+
+/* ===== Layout ===== */
 .container{max-width:1100px;margin:0 auto;padding:24px}
 .navbar{
   position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
@@ -41,60 +50,71 @@ html.dark .navbar{background:rgba(0,0,0,0.35)}
 .nav-link.active{background:var(--card);border:1px solid var(--border)}
 .right{display:flex;align-items:center;gap:12px}
 
-.card{border:1px solid var(--border);border-radius:14px;padding:16px;background:var(--card)}
-.grid{display:grid;gap:16px}
+/* Cards */
+.card{
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;background:var(--card)
+}
+.card > * + *{margin-top:12px}
+
+/* Grids */
+.grid{display:grid;gap:var(--row-gap)}
 .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media (max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
-.small{font-size:12px;opacity:.9}
 
-/* consistent inner spacing */
-.card > * + * { margin-top: 12px; }
+/* Row patterns */
+.row{display:flex;align-items:center;gap:var(--col-gap)}
+.row-split{
+  display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:var(--col-gap)
+}
+.row-right{display:flex;align-items:center;gap:var(--col-gap);justify-content:flex-end}
 
-/* controls */
-.row{display:flex;align-items:center;gap:8px}
+/* ===== Controls ===== */
+input,select,textarea{color:var(--text);caret-color:var(--text)}
+input::placeholder,textarea::placeholder{color:rgba(17,24,39,.55)}
+html.dark input::placeholder,html.dark textarea::placeholder{color:rgba(255,255,255,.78)}
 
-/* Inputs / selects (high-contrast in dark) */
 .field{
   display:inline-flex;align-items:center;height:40px;
   padding:10px 14px;border-radius:12px;border:1px solid var(--border);
   background:var(--card);color:var(--text);width:100%;
 }
-input.field, select.field, textarea.field{background:var(--card);color:var(--text)}
-html.dark input::placeholder,
-html.dark textarea::placeholder{color:rgba(255,255,255,.75)}
-html:not(.dark) input::placeholder,
-html:not(.dark) textarea::placeholder{color:rgba(17,24,39,.5)}
+.field:focus{outline:2px solid var(--accent);outline-offset:2px}
 
-/* Buttons — Apple blue */
+/* Primary buttons (Confirm, Run, etc.) */
 .button{
   display:inline-flex;align-items:center;justify-content:center;height:40px;
   padding:10px 14px;border-radius:12px;border:1px solid var(--accent);
   background:var(--accent);color:#fff;cursor:pointer;
-  transition:background .15s ease,filter .15s ease;
+  transition:background .12s ease,filter .12s ease,opacity .12s ease;
 }
 .button:hover{background:var(--accent-hover)}
 .button:active{background:var(--accent-active)}
 .button[disabled]{opacity:.6;cursor:not-allowed}
 
-/* Ghost button (used for suggestion list) */
-.button.ghost{
-  background:transparent;border:1px solid var(--border);color:var(--text)
-}
+/* Ghost button (suggestion chips) */
+.button.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
 .button.ghost:hover{background:var(--card)}
 
-/* Badge */
-.badge{
-  display:inline-flex;align-items:center;height:28px;padding:2px 10px;
-  border-radius:9999px;border:1px solid var(--accent);color:var(--accent);background:transparent;
-  font-size:12px
-}
-
-/* Apple-style checkbox: blue fill when checked, no icon */
+/* Checkbox — solid blue, no checkmark */
 input[type="checkbox"]{
   -webkit-appearance:none;appearance:none;width:20px;height:20px;border-radius:9999px;
   border:1px solid var(--border);background:transparent;cursor:pointer;
-  transition:background .15s ease,border-color .15s ease;
+  transition:background .12s ease,border-color .12s ease;
 }
 input[type="checkbox"]:checked{background:var(--accent);border-color:var(--accent)}
 input[type="checkbox"]:focus{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Theme toggle: small, time-aware, subtle hover */
+.toggle{
+  width:36px;height:36px;border-radius:9999px;border:1px solid var(--border);
+  background:rgba(0,0,0,.04);display:inline-flex;align-items:center;justify-content:center;
+  transition:background .12s ease,filter .12s ease;
+}
+html.dark .toggle{background:rgba(255,255,255,.08)}
+.toggle:hover{filter:brightness(0.96)}
+.toggle:active{filter:brightness(0.90)}
+html:not(.dark) .toggle{box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.toggle:focus{outline:2px solid var(--accent);outline-offset:2px}
+
