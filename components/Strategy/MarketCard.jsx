@@ -12,8 +12,8 @@ const LOOKS = ["1y", "2y", "3y", "5y", "10y"];
 export default function MarketCard({ onRates }) {
   const [riskFree, setRiskFree] = useState("");
   const [mrp, setMrp] = useState("");
-  const [indexKey, setIndexKey] = useState("SPX");
-  const [lookback, setLookback] = useState("3y");
+  const [indexKey, setIndexKey] = useState("STOXX"); // matches your screenshot
+  const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
 
   const fetchData = async () => {
@@ -33,21 +33,21 @@ export default function MarketCard({ onRates }) {
       <div className="grid grid-3">
         <div className="card">
           <div className="small">Risk-Free Rate</div>
-          <input className="btn" value={riskFree} onChange={e => setRiskFree(e.target.value)} />
+          <input className="field" value={riskFree} onChange={e => setRiskFree(e.target.value)} />
           <div className="small">decimal (0.027 = 2.7%)</div>
         </div>
         <div className="card">
           <div className="small">Market Risk Premium</div>
-          <input className="btn" value={mrp} onChange={e => setMrp(e.target.value)} />
+          <input className="field" value={mrp} onChange={e => setMrp(e.target.value)} />
           <div className="small">decimal</div>
         </div>
         <div className="card">
           <div className="small">Index Average Return</div>
-          <div className="small" style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <select className="btn" value={indexKey} onChange={e => setIndexKey(e.target.value)}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <select className="field" value={indexKey} onChange={e => setIndexKey(e.target.value)} style={{ width: 160 }} >
               {INDICES.map(i => <option key={i.key} value={i.key}>{i.label}</option>)}
             </select>
-            <select className="btn" value={lookback} onChange={e => setLookback(e.target.value)}>
+            <select className="field" value={lookback} onChange={e => setLookback(e.target.value)} style={{ width: 100 }}>
               {LOOKS.map(l => <option key={l} value={l}>{l}</option>)}
             </select>
           </div>
