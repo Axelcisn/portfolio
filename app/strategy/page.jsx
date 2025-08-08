@@ -20,10 +20,10 @@ export default function Strategy() {
 
   return (
     <div className="grid">
-      {/* Only this row is two columns */}
       <div className="grid grid-2">
         <CompanyCard
           value={company}
+          market={market}
           onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
           onHorizonChange={(d) => setHorizon(d)}
           onIvSourceChange={(s) => setIvSource(s)}
@@ -32,7 +32,6 @@ export default function Strategy() {
         <MarketCard onRates={(r) => setMarket(r)} />
       </div>
 
-      {/* Full-width sections */}
       <LegsSection currency={currency} onNetPremiumChange={setNetPremium} />
       <Chart pLow={-0.15} pHigh={0.15} expected={0.02} />
       <MiniCards
