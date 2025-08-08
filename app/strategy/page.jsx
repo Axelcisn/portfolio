@@ -1,47 +1,42 @@
+"use client";
+import { useState } from "react";
+import CompanyCard from "../../components/Strategy/CompanyCard";
+import MarketCard from "../../components/Strategy/MarketCard";
+import LegsSection from "../../components/Strategy/LegsSection";
+import Chart from "../../components/Strategy/Chart";
+import MiniCards from "../../components/Strategy/MiniCards";
+import SummaryTiles from "../../components/Strategy/SummaryTiles";
+
 export default function Strategy() {
+  const [company, setCompany] = useState(null);
+  const [currency, setCurrency] = useState("EUR");
+  const [horizon, setHorizon] = useState(30);
+  const [ivSource, setIvSource] = useState("live");
+  const [ivValue, setIvValue] = useState(null);
+  const [market, setMarket] = useState({ riskFree: null, mrp: null, indexAnn: null });
+  const [netPremium, setNetPremium] = useState(0);
+
+  const tickerConfirmed = !!company?.symbol;
+
   return (
     <div className="grid grid-2">
-      <div className="card">
-        <h3>Company</h3>
-        <div className="small">Ticker, name, sector (placeholder)</div>
-      </div>
-      <div className="card">
-        <h3>Market</h3>
-        <div className="small">Spot, IV, rate (placeholder)</div>
-      </div>
+      <CompanyCard
+        value={company}
+        onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
+        onHorizonChange={(d) => setHorizon(d)}
+        onIvSourceChange={(s) => setIvSource(s)}
+        onIvValueChange={(v) => setIvValue(v)}
+      />
+      <MarketCard onRates={(r) => setMarket(r)} />
 
-      <div className="card">
-        <h3>Legs</h3>
-        <div className="grid grid-2">
-          <div className="card"><strong>Long Call</strong><div className="small">strike/qty</div></div>
-          <div className="card"><strong>Short Call</strong><div className="small">strike/qty</div></div>
-          <div className="card"><strong>Long Put</strong><div className="small">strike/qty</div></div>
-          <div className="card"><strong>Short Put</strong><div className="small">strike/qty</div></div>
-        </div>
-      </div>
+      <LegsSection currency={currency} onNetPremiumChange={setNetPremium} />
 
-      <div className="card">
-        <h3>Chart</h3>
-        <div className="small">Payoff SVG + Monte Carlo overlays (placeholder)</div>
-      </div>
+      <Chart pLow={-0.15} pHigh={0.15} expected={0.02} />
 
-      <div className="card">
-        <h3>Monte Carlo mini-cards</h3>
-        <div className="grid grid-3">
-          <div className="card">μ / drift</div>
-          <div className="card">σ / vol</div>
-          <div className="card">VaR / tails</div>
-        </div>
-      </div>
+      <MiniCards disabled={!tickerConfirmed} defaultHorizon={horizon}
+        onRun={(cfg) => console.log("run MC", cfg, { ivSource, ivValue, market })} />
 
-      <div className="card">
-        <h3>Summary</h3>
-        <div className="grid grid-3">
-          <div className="card">Net Premium</div>
-          <div className="card">Probability of Profit</div>
-          <div className="card">Expectancy</div>
-        </div>
-      </div>
+      <SummaryTiles currency={currency} netPremium={netPremium} probProfit={null} expectancy={null} expReturn={null} />
     </div>
   );
 }
