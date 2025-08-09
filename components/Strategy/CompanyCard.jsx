@@ -12,15 +12,17 @@ export default function CompanyCard({
   onIvSourceChange,
   onIvValueChange,
 }) {
-  const [picked, setPicked] = useState(null);
+  const [typed, setTyped] = useState("");          // raw text from search box
+  const [picked, setPicked] = useState(null);      // {symbol, name}
   const [loading, setLoading] = useState(false);
   const [details, setDetails] = useState(null);
   const [err, setErr] = useState("");
 
-  // keep external value in sync (if provided)
+  // sync external value if provided
   useEffect(() => {
     if (value?.symbol) {
       setPicked({ symbol: value.symbol, name: value.name });
+      setTyped(value.symbol);
       setDetails({
         currency: value.currency,
         spot: value.spot,
@@ -29,26 +31,28 @@ export default function CompanyCard({
     }
   }, [value]);
 
+  const canConfirm = !!(picked?.symbol || (typed && typed.trim().length > 0)) && !loading;
+
   async function fetchCompany(sym) {
+    const symbol = (sym || typed || "").trim();
+    if (!symbol) return;
     setErr("");
     setLoading(true);
     try {
-      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
-        cache: "no-store",
-      });
+      const r = await fetch(`/api/company?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "fetch failed");
 
+      setPicked({ symbol: j.symbol, name: j.name });
       setDetails({
         currency: j.currency || "",
         spot: j.spot ?? null,
         beta: j.beta ?? null,
-        name: j.name || sym,
+        name: j.name || j.symbol,
         exchange: j.exchange || "",
         via: j.via || "",
       });
 
-      // push up
       onConfirm?.({
         symbol: j.symbol,
         name: j.name,
@@ -57,7 +61,6 @@ export default function CompanyCard({
         beta: j.beta,
       });
 
-      // set a default IV (live if available -> otherwise historical)
       if (typeof j.ivLive === "number") {
         onIvSourceChange?.("live");
         onIvValueChange?.(j.ivLive);
@@ -87,17 +90,22 @@ export default function CompanyCard({
       <div className="card-title">Company / Ticker</div>
 
       <TickerSearch
-        value={picked?.symbol || ""}
+        value={picked?.symbol || typed}
+        onType={(t) => {
+          setTyped(t);
+          setPicked(null);
+          setErr("");
+        }}
         onPick={(r) => {
           setPicked(r);
-          setDetails(null);
+          setTyped(r.symbol);
           setErr("");
         }}
       />
 
       <button
-        disabled={!picked?.symbol || loading}
-        onClick={() => fetchCompany(picked.symbol)}
+        disabled={!canConfirm}
+        onClick={() => fetchCompany(picked?.symbol || typed)}
         style={{ marginTop: 8 }}
       >
         {loading ? "Loading…" : "Confirm"}
@@ -109,25 +117,16 @@ export default function CompanyCard({
             Selected: <strong>{picked.symbol}</strong> — {details.name || ""}
           </div>
           <div>
-            Exchange/Currency: {details.exchange || "—"} ·{" "}
-            {details.currency || "—"}
+            Exchange/Currency: {details.exchange || "—"} · {details.currency || "—"}
           </div>
-          <div>Spot: {details.spot != null ? `$${details.spot}` : "—"}</div>
+          <div>Spot: {details.spot != null ? details.spot : "—"}</div>
           <div>β: {details.beta != null ? details.beta.toFixed(2) : "—"}</div>
-          <div>
-            CAPM: {capm != null ? capm.toFixed(2) : "0.00"}
-          </div>
-          <div style={{ opacity: 0.6, fontSize: 12 }}>
-            Source: {details.via || "—"}
-          </div>
+          <div>CAPM: {capm != null ? capm.toFixed(2) : "0.00"}</div>
+          <div style={{ opacity: 0.6, fontSize: 12 }}>Source: {details.via || "—"}</div>
         </div>
       )}
 
-      {err && (
-        <div style={{ color: "tomato", marginTop: 8 }}>
-          {err}
-        </div>
-      )}
+      {err && <div style={{ color: "tomato", marginTop: 8 }}>{err}</div>}
 
       <div style={{ marginTop: 16 }}>
         <label style={{ display: "block", marginBottom: 4 }}>Days</label>
