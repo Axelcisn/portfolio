@@ -4,19 +4,24 @@
 import { useEffect, useState } from "react";
 import TickerSearch from "./TickerSearch";
 
-export default function CompanyCard({
-  value = null,
-  onConfirm = () => {},
-}) {
+function fmtMoney(v, ccy) {
+  if (!Number.isFinite(v)) return "";
+  const sym = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
+  return `${sym}${v.toFixed(2)}`;
+}
+const twoDp = (v) =>
+  v == null || Number.isNaN(Number(v)) ? "" : Number(v).toFixed(2);
+
+export default function CompanyCard({ value = null, onConfirm = () => {} }) {
   const [typed, setTyped] = useState(value?.symbol || "");
   const [picked, setPicked] = useState(null);
 
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(Number(value?.spot || 0));
 
-  // ---- Beta (no Yahoo option) -----------------------------------------
-  // 'calc' = Calculated (1Y daily vs. index), 'manual' = user input
-  const [betaSource, setBetaSource] = useState("calc");
+  // ---- Beta ----
+  // 'auto' = Calculated (1Y daily vs. index), 'manual' = user input
+  const [betaSource, setBetaSource] = useState("auto");
   const [beta, setBeta] = useState("");
 
   const [err, setErr] = useState("");
@@ -45,7 +50,6 @@ export default function CompanyCard({
         spot: j.spot,
         high52: j.high52 ?? null,
         low52: j.low52 ?? null,
-        beta: j.beta ?? null,
       });
     } catch (e) {
       setErr(String(e?.message || e));
@@ -54,10 +58,10 @@ export default function CompanyCard({
     }
   }
 
-  // Fetch calculated beta when source is 'calc'
+  // Fetch calculated beta when source is 'auto'
   useEffect(() => {
     const sym = picked?.symbol || typed;
-    if (betaSource !== "calc" || !sym) return;
+    if (betaSource !== "auto" || !sym) return;
 
     let aborted = false;
     (async () => {
@@ -65,15 +69,14 @@ export default function CompanyCard({
         setErr("");
         const qs = new URLSearchParams({
           symbol: sym,
-          source: "calc",
-          // currency helps the API pick the right index; optional
+          source: "calc", // API expects 'calc'
           currency: currency || "",
         }).toString();
 
         const r = await fetch(`/api/beta?${qs}`, { cache: "no-store" });
         const j = await r.json();
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-        if (!aborted) setBeta(j?.beta ?? "");
+        if (!aborted) setBeta(twoDp(j?.beta));
       } catch (e) {
         if (!aborted) setErr(String(e?.message || e));
       }
@@ -82,7 +85,6 @@ export default function CompanyCard({
     return () => {
       aborted = true;
     };
-    // include currency so if it changes, calc refires
   }, [betaSource, picked?.symbol, typed, currency]);
 
   return (
@@ -137,12 +139,7 @@ export default function CompanyCard({
         <div>
           <label className="block text-sm text-gray-600">S</label>
           <input
-            value={
-              Number.isFinite(spot)
-                ? (currency === "EUR" ? "€" : currency === "GBP" ? "£" : "$") +
-                  spot.toFixed(2)
-                : ""
-            }
+            value={fmtMoney(spot, currency)}
             readOnly
             className="w-full rounded border border-gray-300 px-3 py-2 text-black"
           />
@@ -158,7 +155,7 @@ export default function CompanyCard({
             onChange={(e) => setBetaSource(e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2 text-black"
           >
-            <option value="calc">Calculated (1Y daily vs. index)</option>
+            <option value="auto">Auto</option>
             <option value="manual">Manual</option>
           </select>
         </div>
@@ -168,11 +165,13 @@ export default function CompanyCard({
           <input
             placeholder="Beta"
             value={
-              betaSource === "calc"
-                ? beta === "" ? "" : String(beta)
-                : String(beta ?? "")
+              betaSource === "auto"
+                ? beta
+                : beta
             }
-            onChange={(e) => betaSource === "manual" && setBeta(e.target.value)}
+            onChange={(e) =>
+              betaSource === "manual" && setBeta(e.target.value)
+            }
             readOnly={betaSource !== "manual"}
             className="w-full rounded border border-gray-300 px-3 py-2 text-black"
           />
