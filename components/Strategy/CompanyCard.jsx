@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TickerSearch from "./TickerSearch";
 
+/* Pretty exchange labels for the "Selected:" line */
 const EX_NAMES = {
   NMS: "NASDAQ",
   NGM: "NASDAQ GM",
@@ -16,13 +17,13 @@ const EX_NAMES = {
   BUE: "Buenos Aires",
 };
 
-function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
-}
+const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
+
 function fmtMoney(v, ccy = "") {
-  const x = Number(v);
-  if (!Number.isFinite(x)) return "";
-  return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + x.toFixed(2);
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
+  return sign + n.toFixed(2);
 }
 function parsePctInput(str) {
   const v = Number(String(str).replace("%", "").trim());
@@ -37,41 +38,32 @@ export default function CompanyCard({
   onIvSourceChange = () => {},
   onIvValueChange = () => {},
 }) {
-  // --- search & selection ---
+  /* -------- search & selection -------- */
   const [typed, setTyped] = useState(value?.symbol || "");
-  const [picked, setPicked] = useState(null);
+  const [picked, setPicked] = useState(null); // {symbol, name, exchange}
   const selSymbol = useMemo(
     () => (picked?.symbol || typed || "").trim(),
     [picked, typed]
   );
 
-  // --- company facts ---
+  /* -------- basic facts -------- */
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(value?.spot || null);
   const [exchangeLabel, setExchangeLabel] = useState("");
 
-  // --- horizon (days) ---
+  /* -------- horizon (days) -------- */
   const [days, setDays] = useState(30);
 
-  // --- volatility state ---
-  // 'iv' | 'hist' | 'manual'
+  /* -------- volatility UI state -------- */
+  // 'iv' = Implied Volatility, 'hist' = Historical, 'manual' = typed-in
   const [volSrc, setVolSrc] = useState("iv");
-  const [sigma, setSigma] = useState(null); // decimal annualized
+  // sigma is annualized *decimal* (e.g., 0.30 → 30%)
+  const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
 
-  // --- ui state ---
+  /* -------- status -------- */
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
-
-  const daysTimer = useRef(null);
-  useEffect(() => {
-    if (!selSymbol || volSrc === "manual") return;
-    clearTimeout(daysTimer.current);
-    daysTimer.current = setTimeout(() => {
-      getVolatility(selSymbol, volSrc, days).catch(() => {});
-    }, 400);
-    return () => clearTimeout(daysTimer.current);
-  }, [days, selSymbol, volSrc]);
 
   async function fetchCompany(sym) {
     const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
@@ -84,6 +76,7 @@ export default function CompanyCard({
     setExchangeLabel(
       picked?.exchange ? EX_NAMES[picked.exchange] || picked.exchange : ""
     );
+
     onConfirm({
       symbol: j.symbol,
       name: j.name,
@@ -103,18 +96,19 @@ export default function CompanyCard({
       onIvValueChange?.(sigma);
       return;
     }
-    setMsg("");
     try {
-      const u = `/api/volatility?symbol=${encodeURIComponent(
+      const url = `/api/volatility?symbol=${encodeURIComponent(
         sym
       )}&source=${encodeURIComponent(source)}&days=${encodeURIComponent(d)}`;
-      const r = await fetch(u, { cache: "no-store" });
+      const r = await fetch(url, { cache: "no-store" });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `Vol ${r.status}`);
+
       setSigma(j?.sigmaAnnual ?? null);
       setVolMeta(j?.meta || null);
       onIvSourceChange?.(source);
       onIvValueChange?.(j?.sigmaAnnual ?? null);
+      setMsg("");
     } catch (e) {
       setMsg(String(e?.message || e));
     }
@@ -135,18 +129,24 @@ export default function CompanyCard({
     }
   }
 
+  /* Re-fetch when source or days change (debounced) */
+  const daysTimer = useRef(null);
   useEffect(() => {
-    if (!selSymbol) return;
-    if (volSrc !== "manual") getVolatility(selSymbol, volSrc, days);
+    if (!selSymbol || volSrc === "manual") return;
+    clearTimeout(daysTimer.current);
+    daysTimer.current = setTimeout(() => {
+      getVolatility(selSymbol, volSrc, days);
+    }, 400);
+    return () => clearTimeout(daysTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc]);
+  }, [days, volSrc]);
 
   return (
     <div className="rounded border border-gray-300 p-4">
-      <h2 className="mb-3 text-2xl font-bold">Company</h2>
+      <h2 className="mb-3 text-2xl font-semibold">Company</h2>
 
       {/* Search + confirm */}
-      <div className="mb-2">
+      <div className="mb-3">
         <label className="mb-1 block text-sm font-medium">Company / Ticker</label>
         <TickerSearch
           value={typed}
@@ -179,7 +179,7 @@ export default function CompanyCard({
       </div>
 
       {/* Facts */}
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-sm text-gray-600">Currency</label>
           <input
@@ -207,7 +207,7 @@ export default function CompanyCard({
           max={365}
           value={days}
           onChange={(e) => {
-            const v = clamp(Number(e.target.value || 0), 1, 365);
+            const v = clamp(e.target.value, 1, 365);
             setDays(v);
             onHorizonChange?.(v);
           }}
@@ -233,7 +233,9 @@ export default function CompanyCard({
         <div className="flex items-center gap-2">
           <input
             placeholder="0.30 = 30%"
-            value={sigma == null ? "" : (sigma * 100).toFixed(2)}
+            value={
+              sigma == null ? "" : (Number(sigma) * 100).toFixed(2)
+            }
             onChange={(e) => {
               if (volSrc !== "manual") return;
               const v = parsePctInput(e.target.value);
@@ -245,11 +247,9 @@ export default function CompanyCard({
           />
           <span className="text-xs text-gray-600">
             {volSrc === "iv" && volMeta?.expiry
-              ? `IV @ ${volMeta.expiry}${volMeta?.fallback ? " (fallback used)" : ""}`
+              ? `IV @ ${volMeta.expiry}${volMeta?.fallback ? " · fallback used" : ""}`
               : volSrc === "hist" && volMeta?.pointsUsed
-              ? `Hist ${days}-day (n=${volMeta.pointsUsed})`
-              : volSrc === "iv" && volMeta?.fallback
-              ? `IV fallback used`
+              ? `Hist ${days}d (n=${volMeta.pointsUsed})${volMeta?.fallback ? " · fallback used" : ""}`
               : ""}
           </span>
         </div>
