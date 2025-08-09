@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TickerSearch from "./TickerSearch";
 
+/* ---- helpers & lookups -------------------------------------------------- */
 const EX_NAMES = {
   NMS: "NASDAQ",
   NGM: "NASDAQ GM",
@@ -15,6 +16,12 @@ const EX_NAMES = {
   LSE: "London",
   BUE: "Buenos Aires",
 };
+
+function clamp(x, lo, hi) {
+  const v = Number(x);
+  if (!Number.isFinite(v)) return lo;
+  return Math.min(Math.max(v, lo), hi);
+}
 
 function fmtMoney(v, ccy = "") {
   const x = Number(v);
@@ -31,6 +38,7 @@ function parsePctInput(str) {
   return Number.isFinite(v) ? v / 100 : null;
 }
 
+/* ---- component ----------------------------------------------------------- */
 export default function CompanyCard({
   value = null,
   market = {},
@@ -39,7 +47,7 @@ export default function CompanyCard({
   onIvSourceChange = () => {},
   onIvValueChange = () => {},
 }) {
-  // --- search & selection ---
+  // Search & selection
   const [typed, setTyped] = useState(value?.symbol || "");
   const [picked, setPicked] = useState(null); // { symbol, name, exchange }
   const selSymbol = useMemo(
@@ -47,24 +55,24 @@ export default function CompanyCard({
     [picked, typed]
   );
 
-  // --- company facts ---
+  // Company facts
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(value?.spot || null);
   const [exchangeLabel, setExchangeLabel] = useState("");
 
-  // --- horizon (days) ---
+  // Horizon (days)
   const [days, setDays] = useState(30);
 
-  // --- volatility state ---
+  // Volatility
   const [volSrc, setVolSrc] = useState("iv"); // 'iv' | 'hist' | 'manual'
   const [sigma, setSigma] = useState(null);   // decimal
   const [volMeta, setVolMeta] = useState(null);
 
-  // --- ui state ---
+  // UI state
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  // debounce re-compute when days changes (only for iv/hist)
+  // Debounce recompute when days changes (only for iv/hist)
   const daysTimer = useRef(null);
   useEffect(() => {
     if (!selSymbol || volSrc === "manual") return;
@@ -75,6 +83,7 @@ export default function CompanyCard({
     return () => clearTimeout(daysTimer.current);
   }, [days, selSymbol, volSrc]);
 
+  /* -------- server calls -------- */
   async function fetchCompany(sym) {
     const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
       cache: "no-store",
@@ -83,7 +92,9 @@ export default function CompanyCard({
     if (!r.ok) throw new Error(j?.error || `Company ${r.status}`);
     setCurrency(j.currency || "");
     setSpot(Number(j.spot || 0));
-    setExchangeLabel(picked?.exchange ? (EX_NAMES[picked.exchange] || picked.exchange) : "");
+    setExchangeLabel(
+      picked?.exchange ? EX_NAMES[picked.exchange] || picked.exchange : ""
+    );
     onConfirm({
       symbol: j.symbol,
       name: j.name,
@@ -135,12 +146,13 @@ export default function CompanyCard({
     }
   }
 
-  // recompute when source changes (if symbol already picked)
+  // Recompute when source changes (if symbol already picked)
   useEffect(() => {
     if (!selSymbol) return;
     if (volSrc !== "manual") getVolatility(selSymbol, volSrc, days);
   }, [volSrc]); // eslint-disable-line
 
+  /* -------- render -------- */
   return (
     <div className="rounded border border-gray-300 p-4">
       <h2 className="mb-3 text-xl font-semibold">Company</h2>
@@ -157,10 +169,7 @@ export default function CompanyCard({
             setTyped(it.symbol || "");
             setMsg("");
           }}
-          onEnter={(sym) => {
-            setTyped(sym);
-            confirm();
-          }}
+          onEnter={() => confirm()}
           placeholder="AAPL, ENEL.MI…"
         />
         <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -203,20 +212,18 @@ export default function CompanyCard({
         </div>
       </div>
 
-      {/* Days */}
+      {/* Time (days) */}
       <div className="mt-4">
-        <label className="mb-1 block text-sm text-gray-600">
-          Days — forecast window · MANUAL
-        </label>
+        <label className="mb-1 block text-sm text-gray-600">Time</label>
         <input
           type="number"
           min={1}
           max={365}
           value={days}
           onChange={(e) => {
-            const v = clamp(Number(e.target.value || 0), 1, 365);
+            const v = clamp(e.target.value, 1, 365);
             setDays(v);
-            onHorizonChange?.(v);
+            onHorizonChange?.(v); // still DAYS
           }}
           className="w-32 rounded border border-gray-300 px-3 py-2 text-black"
         />
@@ -225,9 +232,7 @@ export default function CompanyCard({
       {/* Volatility */}
       <div className="mt-4">
         <div className="mb-1 flex items-center justify-between">
-          <label className="block text-sm font-medium">
-            σ — Annualized volatility (%) · AUTO
-          </label>
+          <label className="block text-sm font-medium">Volatility</label>
           <select
             value={volSrc}
             onChange={(e) => setVolSrc(e.target.value)}
@@ -258,9 +263,13 @@ export default function CompanyCard({
           />
           <span className="text-xs text-gray-600">
             {volSrc === "iv" && volMeta?.expiry
-              ? `Live IV @ ${volMeta.expiry}${volMeta?.fallback ? " (fallback used)" : ""}`
+              ? `Live IV @ ${volMeta.expiry}${
+                  volMeta?.fallback ? " (fallback used)" : ""
+                }`
               : volSrc === "hist" && volMeta?.pointsUsed
-              ? `Hist ${days}-day (n=${volMeta.pointsUsed})${volMeta?.fallback ? " (fallback used)" : ""}`
+              ? `Hist ${days}-day (n=${volMeta.pointsUsed})${
+                  volMeta?.fallback ? " (fallback used)" : ""
+                }`
               : ""}
           </span>
         </div>
