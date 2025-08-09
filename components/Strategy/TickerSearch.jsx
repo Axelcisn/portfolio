@@ -1,140 +1,146 @@
 // components/Strategy/TickerSearch.jsx
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-// use the local hook with a RELATIVE import (no "@/")
-import useDebounce from "../../hooks/useDebounce";
 
-export default function TickerSearch({
-  value = "",
-  onPick,          // (item) => void
-  onEnter,         // (symbolString) => void (fallback if nothing picked)
-  placeholder = "AAPL, MSFT, Tesla…",
-  minChars = 1,
-}) {
-  const [query, setQuery] = useState(value);
-  const [results, setResults] = useState([]);
+import { useEffect, useRef, useState } from "react";
+
+/**
+ * Props:
+ *  - value?: string (initial/controlled text)
+ *  - onType?: (text: string) => void
+ *  - onPick?: (item: { symbol: string, name?: string, exchange?: string }) => void
+ */
+export default function TickerSearch({ value = "", onType, onPick }) {
+  const [q, setQ] = useState(value);
+  const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(-1); // keyboard focus index
+  const [idx, setIdx] = useState(-1); // highlighted item
   const boxRef = useRef(null);
-  const listRef = useRef(null);
-  const debounced = useDebounce(query, 200);
+  const timer = useRef(null);
 
-  useEffect(() => setQuery(value || ""), [value]);
-
-  // fetch suggestions
+  // keep input in sync if parent updates value
   useEffect(() => {
-    let abort = new AbortController();
-    async function run() {
-      const q = debounced.trim();
-      if (q.length < minChars) {
-        setResults([]);
-        return;
-      }
+    setQ(value || "");
+  }, [value]);
+
+  // Debounced search
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    onType?.(q);
+    if (!q || !q.trim()) {
+      setItems([]);
+      setOpen(false);
+      setIdx(-1);
+      return;
+    }
+    timer.current = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
-          cache: "no-store",
-          signal: abort.signal,
-        });
-        const j = await r.json().catch(() => ({ results: [] }));
-        setResults(Array.isArray(j.results) ? j.results : []);
-        setOpen(true);
-        setHighlight(-1);
-      } catch {
-        if (!abort.signal.aborted) {
-          setResults([]);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+        const j = await res.json();
+        if (Array.isArray(j?.results)) {
+          setItems(j.results.slice(0, 12));
           setOpen(true);
-          setHighlight(-1);
+          setIdx(j.results.length ? 0 : -1);
+        } else {
+          setItems([]);
+          setOpen(false);
+          setIdx(-1);
         }
-      }
-    }
-    run();
-    return () => abort.abort();
-  }, [debounced, minChars]);
-
-  // close list on outside click
-  useEffect(() => {
-    function onDocClick(e) {
-      if (!boxRef.current) return;
-      if (!boxRef.current.contains(e.target)) {
+      } catch {
+        setItems([]);
         setOpen(false);
+        setIdx(-1);
       }
+    }, 250);
+    return () => timer.current && clearTimeout(timer.current);
+  }, [q, onType]);
+
+  // Close on outside click
+  useEffect(() => {
+    function onDoc(e) {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target)) setOpen(false);
     }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
   function pick(item) {
-    onPick?.(item);
-    setQuery(item.symbol || "");
+    setQ(item.symbol);
     setOpen(false);
+    setIdx(-1);
+    onPick?.(item);
   }
 
-  function handleKeyDown(e) {
-    if (!open || results.length === 0) {
-      if (e.key === "Enter") {
-        onEnter?.(query.trim());
-      }
+  function onKeyDown(e) {
+    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      setOpen(items.length > 0);
       return;
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((i) => (i + 1) % results.length);
+      setIdx((p) => (items.length ? (p + 1) % items.length : -1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlight((i) => (i <= 0 ? results.length - 1 : i - 1));
+      setIdx((p) => (items.length ? (p - 1 + items.length) % items.length : -1));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const idx = highlight >= 0 ? highlight : 0;
-      pick(results[idx]);
-    } else if (e.key === "Escape") {
-      setOpen(false);
+      if (open && idx >= 0 && idx < items.length) {
+        pick(items[idx]);
+      } else if (q && q.trim()) {
+        // allow free-typed tickers
+        pick({ symbol: q.trim().toUpperCase(), name: q.trim() });
+      }
     }
   }
 
-  const list = useMemo(() => {
-    return results.map((r, i) => {
-      const sub =
-        [r.name, r.exchange].filter(Boolean).join(" · ") ||
-        (r.currency ? `CCY: ${r.currency}` : "");
-      const active = i === highlight;
-      return (
-        <li
-          key={`${r.symbol}-${i}`}
-          role="option"
-          aria-selected={active}
-          // use onMouseDown so it fires BEFORE input blur hides the list
-          onMouseDown={(ev) => {
-            ev.preventDefault();
-            pick(r);
-          }}
-          className={`px-3 py-2 cursor-pointer ${active ? "bg-gray-200" : "bg-white"} hover:bg-gray-100`}
-        >
-          <div className="font-medium">{r.symbol}</div>
-          {sub && <div className="text-sm text-gray-600">{sub}</div>}
-        </li>
-      );
-    });
-  }, [results, highlight]);
-
   return (
-    <div className="relative" ref={boxRef}>
+    <div ref={boxRef} style={{ position: "relative" }}>
       <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={() => results.length > 0 && setOpen(true)}
-        placeholder={placeholder}
-        className="w-full rounded border border-gray-300 px-3 py-2 text-black"
-        autoComplete="off"
-        spellCheck={false}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onFocus={() => items.length && setOpen(true)}
+        onKeyDown={onKeyDown}
+        placeholder="Type ticker or company (e.g., AAPL, ENEL.MI)"
+        style={{ width: 280 }}
       />
-      {open && results.length > 0 && (
+
+      {open && items.length > 0 && (
         <ul
-          ref={listRef}
-          role="listbox"
-          className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded border border-gray-300 bg-white shadow"
+          style={{
+            position: "absolute",
+            zIndex: 20,
+            top: "100%",
+            left: 0,
+            right: 0,
+            maxHeight: 260,
+            overflowY: "auto",
+            margin: 0,
+            padding: 0,
+            listStyle: "none",
+            background: "var(--card, white)",
+            border: "1px solid rgba(0,0,0,0.15)",
+            borderTop: "none",
+          }}
         >
-          {list}
+          {items.map((it, i) => (
+            <li
+              key={`${it.symbol}-${i}`}
+              onMouseDown={(e) => e.preventDefault()} // keep focus
+              onClick={() => pick(it)}
+              style={{
+                padding: "8px 10px",
+                cursor: "pointer",
+                background: i === idx ? "rgba(0,0,0,0.08)" : "transparent",
+                display: "flex",
+                gap: 8,
+                alignItems: "baseline",
+              }}
+            >
+              <strong style={{ minWidth: 72 }}>{it.symbol}</strong>
+              <span style={{ opacity: 0.8 }}>{it.name}</span>
+              {it.exchange && <span style={{ opacity: 0.6 }}> · {it.exchange}</span>}
+            </li>
+          ))}
         </ul>
       )}
     </div>
