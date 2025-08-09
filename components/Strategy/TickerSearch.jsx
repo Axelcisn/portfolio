@@ -1,154 +1,142 @@
+// components/Strategy/TickerSearch.jsx
 "use client";
-
 import { useEffect, useMemo, useRef, useState } from "react";
+// use the local hook with a RELATIVE import (no "@/")
 import useDebounce from "../../hooks/useDebounce";
 
-/**
- * Excel/Google-Finance–style ticker search.
- *
- * Props:
- *   value: string                // controlled input value
- *   onChange: (text) => void     // called on text change
- *   onSelect: (item) => void     // called when a suggestion is chosen
- *   onEnter: (text) => void      // called when Enter is pressed with current text
- *   placeholder?: string
- */
 export default function TickerSearch({
-  value,
-  onChange,
-  onSelect,
-  onEnter,
-  placeholder = "Ticker or company",
+  value = "",
+  onPick,          // (item) => void
+  onEnter,         // (symbolString) => void (fallback if nothing picked)
+  placeholder = "AAPL, MSFT, Tesla…",
+  minChars = 1,
 }) {
-  const [items, setItems] = useState([]);
+  const [query, setQuery] = useState(value);
+  const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(-1);
+  const [highlight, setHighlight] = useState(-1); // keyboard focus index
   const boxRef = useRef(null);
+  const listRef = useRef(null);
+  const debounced = useDebounce(query, 200);
 
-  const q = (value ?? "").trim();
-  const dq = useDebounce(q, 200);
+  useEffect(() => setQuery(value || ""), [value]);
 
+  // fetch suggestions
   useEffect(() => {
-    let cancelled = false;
+    let abort = new AbortController();
     async function run() {
-      if (!dq) {
-        setItems([]);
+      const q = debounced.trim();
+      if (q.length < minChars) {
+        setResults([]);
         return;
       }
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(dq)}`, {
+        const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
           cache: "no-store",
+          signal: abort.signal,
         });
-        const j = await r.json();
-        if (cancelled) return;
-        const arr = Array.isArray(j?.results) ? j.results : j ?? [];
-        setItems(arr.slice(0, 8));
+        const j = await r.json().catch(() => ({ results: [] }));
+        setResults(Array.isArray(j.results) ? j.results : []);
         setOpen(true);
-        setHighlight(arr.length ? 0 : -1);
+        setHighlight(-1);
       } catch {
-        if (!cancelled) {
-          setItems([]);
-          setOpen(false);
+        if (!abort.signal.aborted) {
+          setResults([]);
+          setOpen(true);
+          setHighlight(-1);
         }
       }
     }
     run();
-    return () => {
-      cancelled = true;
-    };
-  }, [dq]);
+    return () => abort.abort();
+  }, [debounced, minChars]);
 
-  // Close dropdown when clicking outside
+  // close list on outside click
   useEffect(() => {
     function onDocClick(e) {
       if (!boxRef.current) return;
-      if (!boxRef.current.contains(e.target)) setOpen(false);
+      if (!boxRef.current.contains(e.target)) {
+        setOpen(false);
+      }
     }
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const choose = (item) => {
-    onSelect?.(item);
+  function pick(item) {
+    onPick?.(item);
+    setQuery(item.symbol || "");
     setOpen(false);
-  };
+  }
 
-  const onKeyDown = (e) => {
-    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-      setOpen(true);
+  function handleKeyDown(e) {
+    if (!open || results.length === 0) {
+      if (e.key === "Enter") {
+        onEnter?.(query.trim());
+      }
       return;
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => (items.length ? (h + 1) % items.length : -1));
+      setHighlight((i) => (i + 1) % results.length);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlight((h) =>
-        items.length ? (h - 1 + items.length) % items.length : -1
-      );
+      setHighlight((i) => (i <= 0 ? results.length - 1 : i - 1));
     } else if (e.key === "Enter") {
-      if (open && highlight >= 0 && items[highlight]) {
-        e.preventDefault();
-        choose(items[highlight]);
-      } else {
-        // Confirm with raw text (e.g., "AAPL")
-        onEnter?.(q);
-      }
+      e.preventDefault();
+      const idx = highlight >= 0 ? highlight : 0;
+      pick(results[idx]);
     } else if (e.key === "Escape") {
       setOpen(false);
     }
-  };
+  }
 
-  const dropdown = useMemo(() => {
-    if (!open || !items.length) return null;
-    return (
-      <ul
-        role="listbox"
-        className="z-50 absolute left-0 right-0 mt-1 max-h-64 overflow-auto rounded-xl border border-zinc-700/50 bg-zinc-900 shadow-lg"
-      >
-        {items.map((it, i) => {
-          const sym = it.symbol ?? it.ticker ?? "";
-          const nm = it.name ?? it.longname ?? it.shortname ?? "";
-          const ex = it.exch ?? it.exchange ?? "";
-          const ccy = it.currency ?? it.ccy ?? "";
-        return (
-            <li
-              key={`${sym}-${i}`}
-              role="option"
-              aria-selected={i === highlight}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                choose(it);
-              }}
-              className={`px-3 py-2 cursor-pointer ${
-                i === highlight ? "bg-zinc-800" : "hover:bg-zinc-800/60"
-              }`}
-            >
-              <div className="text-sm font-medium">{sym}</div>
-              <div className="text-xs text-zinc-400 truncate">
-                {nm}
-                {ex ? ` • ${ex}` : ""}{ccy ? ` • ${ccy}` : ""}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    );
-  }, [open, items, highlight]);
+  const list = useMemo(() => {
+    return results.map((r, i) => {
+      const sub =
+        [r.name, r.exchange].filter(Boolean).join(" · ") ||
+        (r.currency ? `CCY: ${r.currency}` : "");
+      const active = i === highlight;
+      return (
+        <li
+          key={`${r.symbol}-${i}`}
+          role="option"
+          aria-selected={active}
+          // use onMouseDown so it fires BEFORE input blur hides the list
+          onMouseDown={(ev) => {
+            ev.preventDefault();
+            pick(r);
+          }}
+          className={`px-3 py-2 cursor-pointer ${active ? "bg-gray-200" : "bg-white"} hover:bg-gray-100`}
+        >
+          <div className="font-medium">{r.symbol}</div>
+          {sub && <div className="text-sm text-gray-600">{sub}</div>}
+        </li>
+      );
+    });
+  }, [results, highlight]);
 
   return (
-    <div ref={boxRef} className="relative">
+    <div className="relative" ref={boxRef}>
       <input
-        value={value ?? ""}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onFocus={() => results.length > 0 && setOpen(true)}
         placeholder={placeholder}
-        onChange={(e) => onChange?.(e.target.value)}
-        onKeyDown={onKeyDown}
-        onFocus={() => setOpen(items.length > 0)}
-        className="w-full rounded-xl border border-zinc-700/50 bg-transparent px-3 py-2 outline-none"
+        className="w-full rounded border border-gray-300 px-3 py-2 text-black"
         autoComplete="off"
-        spellCheck="false"
+        spellCheck={false}
       />
-      {dropdown}
+      {open && results.length > 0 && (
+        <ul
+          ref={listRef}
+          role="listbox"
+          className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded border border-gray-300 bg-white shadow"
+        >
+          {list}
+        </ul>
+      )}
     </div>
   );
 }
