@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// Box–Muller transform for standard normal samples
 function boxMuller() {
   let u = 0, v = 0;
   while (u === 0) u = Math.random();
@@ -9,6 +10,7 @@ function boxMuller() {
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
 
+// Compute payoff for a multi‑leg strategy at ST
 function payoffAt(ST, legs) {
   const call = (K, q, sgn) => Math.max(ST - K, 0) * q * sgn;
   const put  = (K, q, sgn) => Math.max(K - ST, 0) * q * sgn;
@@ -32,35 +34,56 @@ export async function POST(req) {
     legs = {},
     netPremium = 0,
     carryPremium = false,
-    riskFree = 0
+    riskFree = 0,
   } = body || {};
 
   if (!(spot > 0) || !(Tdays > 0)) {
-    return NextResponse.json({ error: "spot>0 and Tdays>0 required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "spot>0 and Tdays>0 required" },
+      { status: 400 }
+    );
   }
 
   const T = Tdays / 365;
   const sT = Math.sqrt(T);
-  const carry  = carryPremium ? Math.exp((riskFree || 0) * T) : 1;
-  const denom  = Math.abs(netPremium) > 1e-9 ? Math.abs(netPremium) : spot;
+  const carry =
+    carryPremium && riskFree
+      ? Math.exp((riskFree || 0) * T)
+      : 1;
+  const denom =
+    Math.abs(netPremium) > 1e-9 ? Math.abs(netPremium) : spot;
 
-  let n = 0, meanST = 0, m2 = 0, evAbs = 0, win = 0;
+  let n = 0,
+    meanST = 0,
+    m2 = 0,
+    evAbs = 0,
+    win = 0;
+
+  // reservoir sampling for quantiles
   const R = Math.min(20000, paths);
   const reservoir = new Float64Array(R);
 
   for (let i = 0; i < paths; i++) {
-    const z  = boxMuller();
-    const ST = spot * Math.exp((mu - 0.5 * sigma * sigma) * T + sigma * sT * z);
+    const z = boxMuller();
+    const ST =
+      spot *
+      Math.exp(
+        (mu - 0.5 * sigma * sigma) * T +
+          sigma * sT * z
+      );
 
+    // streaming mean/variance for ST
     n++;
     const delta = ST - meanST;
     meanST += delta / n;
-    m2    += delta * (ST - meanST);
+    m2 += delta * (ST - meanST);
 
+    // payoff
     const payoff = payoffAt(ST, legs) - carry * netPremium;
     evAbs += payoff;
     if (payoff > 0) win++;
 
+    // reservoir update
     if (i < R) {
       reservoir[i] = ST;
     } else {
@@ -68,13 +91,21 @@ export async function POST(req) {
       if (j < R) reservoir[j] = ST;
     }
 
-    if ((i + 1) % 5000 === 0) await new Promise(r => setTimeout(r, 0));
+    // yield to event loop every 5k iterations
+    if ((i + 1) % 5000 === 0) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
-  const arr = Array.from(reservoir.slice(0, Math.min(R, n))).sort((a, b) => a - b);
+  const arr = Array.from(reservoir.slice(0, Math.min(R, n))).sort(
+    (a, b) => a - b
+  );
   const q = (p) => {
     if (!arr.length) return null;
-    const idx = Math.max(0, Math.min(arr.length - 1, Math.round((arr.length - 1) * p)));
+    const idx = Math.max(
+      0,
+      Math.min(arr.length - 1, Math.round((arr.length - 1) * p))
+    );
     return arr[idx];
   };
 
@@ -89,6 +120,6 @@ export async function POST(req) {
     qHiST: q(0.975),
     pWin: n ? win / n : null,
     evAbs: n ? evAbs / n : null,
-    evPct: n ? (evAbs / n) / denom : null
+    evPct: n ? (evAbs / n) / denom : null,
   });
 }
