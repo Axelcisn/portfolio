@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { yahooDailyCloses } from "../../../../lib/yahoo";
-import { logReturns, annualizedFromDailyLogs } from "../../../../lib/stats";
+import { yahooDailyCloses } from "../../../lib/yahoo";
+import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats";
 
 export const runtime = "nodejs";
 
