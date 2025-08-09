@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { yahooSearch } from "../../../../lib/yahoo";
+import { yahooSearch } from "../../../lib/yahoo";
 
 export const runtime = "nodejs";
 
