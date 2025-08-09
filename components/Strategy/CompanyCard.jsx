@@ -1,137 +1,163 @@
 // components/Strategy/CompanyCard.jsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import TickerSearch from "./TickerSearch";
 
-const EX_NAMES = {
-  NMS: "NASDAQ",
-  NGM: "NASDAQ GM",
-  NCM: "NASDAQ CM",
-  NYQ: "NYSE",
-  ASE: "AMEX",
-  PCX: "NYSE Arca",
-  LSE: "LSE",
-  MIL: "Borsa Italiana",
-  BUE: "Buenos Aires",
-};
-
 export default function CompanyCard({
-  value = null,
-  market = {},
-  onConfirm = () => {},
-  onHorizonChange = () => {},
-  onIvSourceChange = () => {},
-  onIvValueChange = () => {},
+  value,
+  market,
+  onConfirm,
+  onHorizonChange,
+  onIvSourceChange,
+  onIvValueChange,
 }) {
-  const [picked, setPicked] = useState(null); // { symbol, name, exchange, ... }
-  const [typed, setTyped] = useState(value?.symbol || "");
+  const [picked, setPicked] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [details, setDetails] = useState(null);
   const [err, setErr] = useState("");
 
-  const [currency, setCurrency] = useState(value?.currency || "");
-  const [spot, setSpot] = useState(value?.spot || 0);
-  const [beta, setBeta] = useState(value?.beta ?? null);
+  // keep external value in sync (if provided)
+  useEffect(() => {
+    if (value?.symbol) {
+      setPicked({ symbol: value.symbol, name: value.name });
+      setDetails({
+        currency: value.currency,
+        spot: value.spot,
+        beta: value.beta ?? null,
+      });
+    }
+  }, [value]);
 
-  async function confirm(symbolMaybe) {
-    const sym = (symbolMaybe || picked?.symbol || typed).trim();
-    if (!sym) return;
-    setLoading(true);
+  async function fetchCompany(sym) {
     setErr("");
+    setLoading(true);
     try {
-      // uppercase for Yahoo; server will handle fallback to Stooq with suffix
-      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym.toUpperCase())}`, {
+      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
         cache: "no-store",
       });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j?.error || `Request failed (${r.status})`);
-      }
       const j = await r.json();
-      setCurrency(j.currency || "");
-      setSpot(Number(j.spot || 0));
-      setBeta(j.beta ?? null);
+      if (!r.ok) throw new Error(j?.error || "fetch failed");
 
-      onConfirm({
+      setDetails({
+        currency: j.currency || "",
+        spot: j.spot ?? null,
+        beta: j.beta ?? null,
+        name: j.name || sym,
+        exchange: j.exchange || "",
+        via: j.via || "",
+      });
+
+      // push up
+      onConfirm?.({
         symbol: j.symbol,
         name: j.name,
-        exchange: picked?.exchange || null,
-        currency: j.currency,
         spot: j.spot,
-        high52: j.high52 ?? null,
-        low52: j.low52 ?? null,
-        beta: j.beta ?? null,
-        ivLive: j.ivLive ?? null,
-        ivHist: j.ivHist ?? null,
-        driftHist: j.driftHist ?? null,
-        fxToEUR: j.fxToEUR ?? null,
-        fxSource: j.fxSource ?? null,
+        currency: j.currency,
+        beta: j.beta,
       });
+
+      // set a default IV (live if available -> otherwise historical)
+      if (typeof j.ivLive === "number") {
+        onIvSourceChange?.("live");
+        onIvValueChange?.(j.ivLive);
+      } else if (typeof j.ivHist === "number") {
+        onIvSourceChange?.("hist");
+        onIvValueChange?.(j.ivHist);
+      }
     } catch (e) {
-      setErr(String(e.message || e));
+      setErr(String(e?.message || e));
     } finally {
       setLoading(false);
     }
   }
 
-  const exchLabel =
-    picked?.exchange ? (EX_NAMES[picked.exchange] || picked.exchange) : null;
+  const capm = useMemo(() => {
+    const rf = +market?.riskFree ?? NaN;
+    const mrp = +market?.mrp ?? NaN;
+    const beta = +details?.beta ?? NaN;
+    if (Number.isFinite(rf) && Number.isFinite(mrp) && Number.isFinite(beta)) {
+      return rf + beta * mrp;
+    }
+    return null;
+  }, [market, details?.beta]);
 
   return (
-    <div className="rounded border border-gray-300 p-4">
-      <h2 className="mb-3 text-xl font-semibold">Company</h2>
+    <div className="card">
+      <div className="card-title">Company / Ticker</div>
 
-      <div className="mb-2">
-        <label className="mb-1 block text-sm font-medium">Company / Ticker</label>
+      <TickerSearch
+        value={picked?.symbol || ""}
+        onPick={(r) => {
+          setPicked(r);
+          setDetails(null);
+          setErr("");
+        }}
+      />
 
-        <TickerSearch
-          value={typed}
-          onPick={(item) => {
-            setPicked(item);
-            setTyped(item.symbol || "");
-            setErr("");
-          }}
-          onEnter={(sym) => {
-            setTyped(sym);
-            confirm(sym);
-          }}
-          placeholder="AAPL, MSFT, Tesla…"
-        />
+      <button
+        disabled={!picked?.symbol || loading}
+        onClick={() => fetchCompany(picked.symbol)}
+        style={{ marginTop: 8 }}
+      >
+        {loading ? "Loading…" : "Confirm"}
+      </button>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => confirm()}
-            disabled={loading}
-            className="rounded bg-blue-600 px-3 py-2 text-white disabled:opacity-50"
-          >
-            {loading ? "Loading…" : "Confirm"}
-          </button>
-          {picked?.symbol && (
-            <span className="text-sm text-gray-700">
-              Selected: <strong>{picked.symbol}</strong>
-              {picked.name ? ` – ${picked.name}` : ""}
-              {exchLabel ? ` • ${exchLabel}` : ""}
-            </span>
-          )}
+      {picked?.symbol && details && (
+        <div style={{ marginTop: 8 }}>
+          <div>
+            Selected: <strong>{picked.symbol}</strong> — {details.name || ""}
+          </div>
+          <div>
+            Exchange/Currency: {details.exchange || "—"} ·{" "}
+            {details.currency || "—"}
+          </div>
+          <div>Spot: {details.spot != null ? `$${details.spot}` : "—"}</div>
+          <div>β: {details.beta != null ? details.beta.toFixed(2) : "—"}</div>
+          <div>
+            CAPM: {capm != null ? capm.toFixed(2) : "0.00"}
+          </div>
+          <div style={{ opacity: 0.6, fontSize: 12 }}>
+            Source: {details.via || "—"}
+          </div>
         </div>
+      )}
 
-        {err && <div className="mt-2 text-sm text-red-600">{err}</div>}
+      {err && (
+        <div style={{ color: "tomato", marginTop: 8 }}>
+          {err}
+        </div>
+      )}
+
+      <div style={{ marginTop: 16 }}>
+        <label style={{ display: "block", marginBottom: 4 }}>Days</label>
+        <input
+          type="number"
+          defaultValue={30}
+          min={1}
+          onChange={(e) => onHorizonChange?.(Math.max(1, +e.target.value || 1))}
+          style={{ width: 120 }}
+        />
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div>
-          <label className="mb-1 block text-sm text-gray-600">Currency</label>
-          <input value={currency || ""} readOnly className="w-full rounded border border-gray-300 px-3 py-2 text-black"/>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-gray-600">S</label>
-          <input value={`$${Number(spot || 0).toFixed(2)}`} readOnly className="w-full rounded border border-gray-300 px-3 py-2 text-black"/>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-gray-600">β</label>
-          <input value={beta == null ? "" : String(beta)} readOnly className="w-full rounded border border-gray-300 px-3 py-2 text-black"/>
-        </div>
+      <div style={{ marginTop: 12 }}>
+        <label style={{ display: "block", marginBottom: 4 }}>σ (IV)</label>
+        <select
+          onChange={(e) => onIvSourceChange?.(e.target.value)}
+          defaultValue="live"
+          style={{ width: 140, marginRight: 8 }}
+        >
+          <option value="live">Live IV</option>
+          <option value="hist">Hist IV</option>
+          <option value="manual">Manual</option>
+        </select>
+        <input
+          type="number"
+          step="0.01"
+          placeholder="0.30 = 30%"
+          onChange={(e) => onIvValueChange?.(+e.target.value || 0)}
+          style={{ width: 140 }}
+        />
       </div>
     </div>
   );
