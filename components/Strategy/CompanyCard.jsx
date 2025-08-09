@@ -1,173 +1,221 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import TickerSearch from "./TickerSearch";
 
 function fmtMoney(v, ccy = "USD") {
-  if (v == null || Number.isNaN(v)) return "$0.00";
+  if (v == null || Number.isNaN(+v)) return "$0.00";
   try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency: ccy }).format(v);
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: ccy || "USD",
+      maximumFractionDigits: 2,
+    }).format(Number(v));
   } catch {
     return `$${Number(v).toFixed(2)}`;
   }
 }
 
-export default function CompanyCard() {
-  const [input, setInput] = useState("");
-  const [symbol, setSymbol] = useState("");
-  const [ccy, setCcy] = useState("");
-  const [spot, setSpot] = useState(null);
-  const [beta, setBeta] = useState(null);
-  const [sigmaMode, setSigmaMode] = useState("live"); // "live" | "hist"
-  const [sigma, setSigma] = useState(30);
-  const [days, setDays] = useState(30);
-  const [capm, setCapm] = useState(0);
+export default function CompanyCard({
+  value,
+  market, // { riskFree, mrp }
+  onConfirm, // (companyObj)
+  onHorizonChange,
+  onIvSourceChange,
+  onIvValueChange,
+}) {
+  const [selected, setSelected] = useState(null); // from search: {symbol, name}
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const canConfirm = useMemo(() => !!input.trim(), [input]);
+  const [ccy, setCcy] = useState(value?.currency ?? "");
+  const [spot, setSpot] = useState(value?.spot ?? null);
+  const [beta, setBeta] = useState(value?.beta ?? null);
+  const [ivLive, setIvLive] = useState(null);
+  const [ivHist, setIvHist] = useState(null);
 
-  const fetchCompany = useCallback(async (sym) => {
-    if (!sym) return;
+  const capm = useMemo(() => {
+    if (
+      market?.riskFree == null ||
+      market?.mrp == null ||
+      beta == null ||
+      Number.isNaN(+beta)
+    )
+      return 0;
+    // riskFree / mrp assumed entered as percentages (e.g., 2.7, 5.5)
+    const r = Number(market.riskFree);
+    const erp = Number(market.mrp);
+    return r + beta * erp;
+  }, [market?.riskFree, market?.mrp, beta]);
+
+  async function fetchCompany(symbol) {
+    if (!symbol) return;
     setLoading(true);
     setErr("");
     try {
-      const u = `/api/company?symbol=${encodeURIComponent(sym)}`;
-      const r = await fetch(u, { cache: "no-store" });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || r.statusText);
-
-      setSymbol(j.symbol || sym);
-      setCcy(j.currency || "USD");
+      const res = await fetch(`/api/company?symbol=${encodeURIComponent(symbol)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || `HTTP ${res.status}`);
+      }
+      const j = await res.json();
+      // j: { symbol,name,spot,currency,high52,low52,beta,ivLive,ivHist,driftHist,fxToEUR,fxSource }
+      setCcy(j.currency || "");
       setSpot(j.spot ?? null);
       setBeta(j.beta ?? null);
+      setIvLive(j.ivLive ?? null);
+      setIvHist(j.ivHist ?? null);
 
-      // Optionally default vol from live/hist if returned
-      if (sigmaMode === "live" && j.ivLive != null) setSigma(Number(j.ivLive * 100).toFixed(2));
-      if (sigmaMode === "hist" && j.ivHist != null) setSigma(Number(j.ivHist * 100).toFixed(2));
+      // choose an IV to feed parent (prefer live)
+      const chosenIv = j.ivLive ?? j.ivHist ?? null; // decimal
+      if (chosenIv != null) onIvValueChange?.(chosenIv);
+      onIvSourceChange?.(j.ivLive != null ? "live" : "hist");
 
+      onConfirm?.({
+        symbol: j.symbol,
+        name: j.name,
+        spot: j.spot,
+        currency: j.currency,
+        beta: j.beta,
+        high52: j.high52,
+        low52: j.low52,
+      });
     } catch (e) {
       setErr(String(e?.message || e));
     } finally {
       setLoading(false);
     }
-  }, [sigmaMode]);
-
-  function onSelect(sym /*, meta */) {
-    setInput(sym);
-    setSymbol(sym);
-    fetchCompany(sym);
-  }
-
-  function onConfirm() {
-    fetchCompany(input.trim().toUpperCase());
   }
 
   return (
-    <div className="rounded-2xl border border-neutral-800 bg-[#111114] p-4 shadow-sm">
+    <div className="card">
       <div className="mb-3 text-xl font-semibold">Company</div>
 
-      {/* Row: ticker + confirm */}
-      <div className="mb-4 flex items-stretch gap-3">
-        <div className="grow">
+      <div className="mb-2 text-sm font-medium">Company / Ticker</div>
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
           <TickerSearch
-            value={input}
-            onChange={setInput}
-            onSelect={onSelect}
-            placeholder="Type ticker or company…"
+            value={value?.symbol || ""}
+            onSelect={(it) => setSelected(it)}
+            placeholder="AAPL, TSLA, RACE…"
           />
         </div>
         <button
-          onClick={onConfirm}
-          disabled={!canConfirm || loading}
-          className="rounded-xl bg-[#007aff] px-4 py-2 text-white disabled:opacity-50"
+          type="button"
+          disabled={loading || !selected?.symbol}
+          onClick={() => fetchCompany(selected?.symbol)}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
         >
           {loading ? "Loading…" : "Confirm"}
         </button>
       </div>
 
-      {err && <div className="mb-3 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</div>}
+      {err && (
+        <div className="mt-2 text-sm text-red-400">
+          {err}
+        </div>
+      )}
 
-      {/* Grid of fields */}
-      <div className="grid grid-cols-6 gap-3">
+      <div className="mt-4 grid grid-cols-2 gap-4">
         {/* Currency */}
-        <div className="col-span-2">
-          <div className="mb-1 text-xs text-neutral-400">Currency</div>
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">Currency</div>
           <input
             value={ccy || ""}
             readOnly
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+            className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
           />
         </div>
 
-        {/* D (empty / manual override) */}
-        <div className="col-span-2">
-          <div className="mb-1 text-xs text-neutral-400">D</div>
+        {/* D (drift - left empty for now / manual) */}
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">D</div>
           <input
             placeholder=""
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+            className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
+            onChange={(e) => {
+              // hook this up if you want manual drift
+            }}
           />
         </div>
 
         {/* Spot */}
-        <div className="col-span-2">
-          <div className="mb-1 text-xs text-neutral-400">S</div>
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">S</div>
           <input
             value={fmtMoney(spot, ccy || "USD")}
             readOnly
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+            className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
           />
         </div>
 
-        {/* Sigma + source */}
-        <div className="col-span-3">
-          <div className="mb-1 text-xs text-neutral-400">σ</div>
-          <input
-            value={String(sigma)}
-            onChange={e => setSigma(e.target.value)}
-            placeholder="30.00"
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
-          />
-        </div>
-        <div className="col-span-3">
-          <div className="mb-1 text-xs text-neutral-400 invisible">source</div>
-          <select
-            value={sigmaMode}
-            onChange={e => setSigmaMode(e.target.value)}
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
-          >
-            <option value="live">Live IV</option>
-            <option value="hist">Historical</option>
-          </select>
+        {/* IV source picker + value supplied upward by onIvValueChange */}
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">σ</div>
+          <div className="flex gap-2">
+            <select
+              className="flex-1 rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
+              onChange={(e) => {
+                const src = e.target.value;
+                onIvSourceChange?.(src);
+                const v = src === "live" ? ivLive : ivHist;
+                if (v != null) onIvValueChange?.(v);
+              }}
+              defaultValue={ivLive != null ? "live" : "hist"}
+            >
+              <option value="live">Live IV</option>
+              <option value="hist">Hist vol</option>
+              <option value="manual">Manual</option>
+            </select>
+            <input
+              type="number"
+              step="0.01"
+              placeholder="0.30 = 30%"
+              className="w-36 rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
+              onChange={(e) => {
+                const v = e.target.value === "" ? null : Number(e.target.value);
+                onIvSourceChange?.("manual");
+                onIvValueChange?.(v);
+              }}
+            />
+          </div>
+          <div className="mt-1 text-xs text-neutral-400">
+            Live: {ivLive != null ? (ivLive * 100).toFixed(2) + "%" : "—"} · Hist:{" "}
+            {ivHist != null ? (ivHist * 100).toFixed(2) + "%" : "—"}
+          </div>
         </div>
 
         {/* Beta */}
-        <div className="col-span-2">
-          <div className="mb-1 text-xs text-neutral-400">β</div>
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">β</div>
           <input
             value={beta ?? ""}
-            onChange={e => setBeta(e.target.value)}
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+            readOnly
+            className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
           />
         </div>
 
-        {/* Days */}
-        <div className="col-span-2">
-          <div className="mb-1 text-xs text-neutral-400">Days</div>
+        {/* Days (horizon) */}
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">Days</div>
           <input
-            value={days}
-            onChange={e => setDays(e.target.value)}
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+            type="number"
+            min={1}
+            defaultValue={30}
+            className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
+            onChange={(e) => onHorizonChange?.(Number(e.target.value))}
           />
         </div>
 
-        {/* CAPM (computed elsewhere; placeholder here) */}
-        <div className="col-span-2">
-          <div className="mb-1 text-xs text-neutral-400">CAPM</div>
+        {/* CAPM */}
+        <div>
+          <div className="mb-1 text-sm text-neutral-400">CAPM</div>
           <input
-            value={Number(capm).toFixed(2)}
-            onChange={e => setCapm(e.target.value)}
-            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+            value={(capm || 0).toFixed(2)}
+            readOnly
+            className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2"
           />
         </div>
       </div>
