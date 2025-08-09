@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { riskFreeByCcy } from "../../../../lib/riskfree";
-import { yahooDailyCloses } from "../../../../lib/yahoo";
-import { logReturns, annualizedFromDailyLogs } from "../../../../lib/stats";
+import { riskFreeByCcy } from "../../../lib/riskfree";
+import { yahooDailyCloses } from "../../../lib/yahoo";
+import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats";
 
-// Map from index key to Yahoo symbol
 const INDEX_MAP = {
-  SPX: "^GSPC",   // S&P 500
-  STOXX: "^STOXX",// STOXX Europe 600
-  NDX: "NDX",     // Nasdaq‑100 PR
+  SPX: "^GSPC",
+  STOXX: "^STOXX",
+  NDX: "NDX",
 };
 
 export const runtime = "nodejs";
@@ -28,10 +27,10 @@ export async function GET(req) {
     const { driftA } = annualizedFromDailyLogs(rets);
     const indexAnn = driftA;
 
-    // risk‑free rate by currency
+    // risk‑free rate
     const rf = await riskFreeByCcy(currency);
 
-    // market risk premium = indexAnn – rf
+    // market risk premium
     const mrp =
       indexAnn != null && Number.isFinite(indexAnn)
         ? indexAnn - rf.r
