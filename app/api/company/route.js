@@ -1,9 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  yahooQuote,
-  yahooLiveIv,
-  yahooDailyCloses,
-} from "../../../lib/yahoo";
+import { yahooQuote, yahooLiveIv, yahooDailyCloses } from "../../../lib/yahoo";
 import { fxToEUR } from "../../../lib/fx";
 import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats";
 
@@ -17,34 +13,20 @@ export async function GET(req) {
   }
   try {
     const q = await yahooQuote(symbol);
-
-    // realised drift/vol from 1y daily closes
-    let driftHist = null;
-    let ivHist = null;
+    let driftHist = null, ivHist = null;
     try {
       const bars = await yahooDailyCloses(symbol, "1y", "1d");
-      const closes = bars.map((b) => b.close);
+      const closes = bars.map(b => b.close);
       const rets = logReturns(closes);
       const { driftA, volA } = annualizedFromDailyLogs(rets);
       driftHist = driftA;
       ivHist = volA;
-    } catch {
-      /* ignore */
-    }
-
-    // live ATM-ish IV
+    } catch {}
     let ivLive = null;
     if (q.spot) {
-      try {
-        ivLive = await yahooLiveIv(symbol, q.spot);
-      } catch {
-        /* ignore */
-      }
+      try { ivLive = await yahooLiveIv(symbol, q.spot); } catch {}
     }
-
-    // FX conversion to EUR
     const fx = await fxToEUR(q.currency || "EUR");
-
     return NextResponse.json({
       symbol: q.symbol,
       name: q.name,
@@ -60,9 +42,6 @@ export async function GET(req) {
       fxSource: fx.via,
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: String(e?.message || e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
   }
 }
