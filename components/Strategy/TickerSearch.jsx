@@ -2,146 +2,75 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import useDebounce from "../../hooks/useDebounce";
 
-/**
- * Props:
- *  - value?: string (initial/controlled text)
- *  - onType?: (text: string) => void
- *  - onPick?: (item: { symbol: string, name?: string, exchange?: string }) => void
- */
-export default function TickerSearch({ value = "", onType, onPick }) {
+export default function TickerSearch({
+  value = "",
+  onPick = () => {},
+  onEnter = () => {},
+  placeholder = "Type ticker or company…",
+}) {
   const [q, setQ] = useState(value);
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
-  const [idx, setIdx] = useState(-1); // highlighted item
+  const debounced = useDebounce(q, 200);
   const boxRef = useRef(null);
-  const timer = useRef(null);
 
-  // keep input in sync if parent updates value
-  useEffect(() => {
-    setQ(value || "");
-  }, [value]);
+  useEffect(() => { setQ(value || ""); }, [value]);
 
-  // Debounced search
   useEffect(() => {
-    if (timer.current) clearTimeout(timer.current);
-    onType?.(q);
-    if (!q || !q.trim()) {
-      setItems([]);
-      setOpen(false);
-      setIdx(-1);
-      return;
-    }
-    timer.current = setTimeout(async () => {
+    let abort = false;
+    async function run() {
+      const term = (debounced || "").trim();
+      if (!term) { setItems([]); setOpen(false); return; }
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { cache: "no-store" });
-        const j = await res.json();
-        if (Array.isArray(j?.results)) {
-          setItems(j.results.slice(0, 12));
-          setOpen(true);
-          setIdx(j.results.length ? 0 : -1);
-        } else {
-          setItems([]);
-          setOpen(false);
-          setIdx(-1);
-        }
+        const r = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { cache: "no-store" });
+        const j = await r.json();
+        if (!abort) { setItems(Array.isArray(j?.results) ? j.results : j); setOpen(true); }
       } catch {
-        setItems([]);
-        setOpen(false);
-        setIdx(-1);
+        if (!abort) { setItems([]); setOpen(false); }
       }
-    }, 250);
-    return () => timer.current && clearTimeout(timer.current);
-  }, [q, onType]);
-
-  // Close on outside click
-  useEffect(() => {
-    function onDoc(e) {
-      if (!boxRef.current) return;
-      if (!boxRef.current.contains(e.target)) setOpen(false);
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
+    run();
+    return () => { abort = true; };
+  }, [debounced]);
 
-  function pick(item) {
-    setQ(item.symbol);
+  // close the list after the click finishes so blur doesn't cancel selection
+  const pick = (it) => {
+    onPick(it);
+    setQ(it.symbol || "");
     setOpen(false);
-    setIdx(-1);
-    onPick?.(item);
-  }
-
-  function onKeyDown(e) {
-    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-      setOpen(items.length > 0);
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setIdx((p) => (items.length ? (p + 1) % items.length : -1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setIdx((p) => (items.length ? (p - 1 + items.length) % items.length : -1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (open && idx >= 0 && idx < items.length) {
-        pick(items[idx]);
-      } else if (q && q.trim()) {
-        // allow free-typed tickers
-        pick({ symbol: q.trim().toUpperCase(), name: q.trim() });
-      }
-    }
-  }
+  };
 
   return (
-    <div ref={boxRef} style={{ position: "relative" }}>
+    <div className="relative" ref={boxRef}>
       <input
+        className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-black"
         value={q}
+        placeholder={placeholder}
         onChange={(e) => setQ(e.target.value)}
-        onFocus={() => items.length && setOpen(true)}
-        onKeyDown={onKeyDown}
-        placeholder="Type ticker or company (e.g., AAPL, ENEL.MI)"
-        style={{ width: 280 }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onEnter(q.trim());
+        }}
+        onFocus={() => { if (items.length) setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
       />
 
       {open && items.length > 0 && (
-        <ul
-          style={{
-            position: "absolute",
-            zIndex: 20,
-            top: "100%",
-            left: 0,
-            right: 0,
-            maxHeight: 260,
-            overflowY: "auto",
-            margin: 0,
-            padding: 0,
-            listStyle: "none",
-            background: "var(--card, white)",
-            border: "1px solid rgba(0,0,0,0.15)",
-            borderTop: "none",
-          }}
-        >
+        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded border border-gray-300 bg-white shadow">
           {items.map((it, i) => (
-            <li
+            <button
               key={`${it.symbol}-${i}`}
-              onMouseDown={(e) => e.preventDefault()} // keep focus
-              onClick={() => pick(it)}
-              style={{
-                padding: "8px 10px",
-                cursor: "pointer",
-                background: i === idx ? "rgba(0,0,0,0.08)" : "transparent",
-                display: "flex",
-                gap: 8,
-                alignItems: "baseline",
-              }}
+              type="button"
+              className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-gray-100"
+              onMouseDown={(e) => { e.preventDefault(); pick(it); }}
             >
-              <strong style={{ minWidth: 72 }}>{it.symbol}</strong>
-              <span style={{ opacity: 0.8 }}>{it.name}</span>
-              {it.exchange && <span style={{ opacity: 0.6 }}> · {it.exchange}</span>}
-            </li>
+              <div className="w-28 font-semibold text-black">{it.symbol}</div>
+              <div className="flex-1 text-black">{it.name || ""}</div>
+              <div className="shrink-0 text-gray-500">{it.exchDisp || it.exchange || ""}</div>
+            </button>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );
