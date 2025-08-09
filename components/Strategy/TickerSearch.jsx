@@ -1,108 +1,154 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import useDebounce from "../../hooks/useDebounce";
 
 /**
- * Simple ticker/company search with built-in debounce (no external hook).
+ * Excel/Google-Finance–style ticker search.
+ *
  * Props:
- *   value?: string
- *   disabled?: boolean
+ *   value: string                // controlled input value
+ *   onChange: (text) => void     // called on text change
+ *   onSelect: (item) => void     // called when a suggestion is chosen
+ *   onEnter: (text) => void      // called when Enter is pressed with current text
  *   placeholder?: string
- *   onSelect: (item) => void   // item = { symbol, name, exch?, type? }
  */
 export default function TickerSearch({
-  value = "",
-  disabled = false,
-  placeholder = "Type ticker or company…",
+  value,
+  onChange,
   onSelect,
+  onEnter,
+  placeholder = "Ticker or company",
 }) {
-  const [q, setQ] = useState(value);
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
-  const abortRef = useRef(null);
-  const timerRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+  const boxRef = useRef(null);
 
-  // Debounced search against /api/search?q=...
+  const q = (value ?? "").trim();
+  const dq = useDebounce(q, 200);
+
   useEffect(() => {
-    if (!q || q.trim().length < 1) {
-      setItems([]);
-      setOpen(false);
-      return;
-    }
-
-    // debounce 250ms
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(async () => {
+    let cancelled = false;
+    async function run() {
+      if (!dq) {
+        setItems([]);
+        return;
+      }
       try {
-        abortRef.current?.abort?.();
-        const ctrl = new AbortController();
-        abortRef.current = ctrl;
-        setLoading(true);
-
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, {
-          signal: ctrl.signal,
+        const r = await fetch(`/api/search?q=${encodeURIComponent(dq)}`, {
           cache: "no-store",
         });
-        const data = await res.json().catch(() => ({ results: [] }));
-        setItems(Array.isArray(data?.results) ? data.results.slice(0, 10) : []);
+        const j = await r.json();
+        if (cancelled) return;
+        const arr = Array.isArray(j?.results) ? j.results : j ?? [];
+        setItems(arr.slice(0, 8));
         setOpen(true);
-      } catch (_) {
-        // ignore
-      } finally {
-        setLoading(false);
+        setHighlight(arr.length ? 0 : -1);
+      } catch {
+        if (!cancelled) {
+          setItems([]);
+          setOpen(false);
+        }
       }
-    }, 250);
-
+    }
+    run();
     return () => {
-      clearTimeout(timerRef.current);
-      abortRef.current?.abort?.();
+      cancelled = true;
     };
-  }, [q]);
+  }, [dq]);
 
-  function handlePick(item) {
-    setQ(item.symbol);
-    setOpen(false);
-    setItems([]);
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const choose = (item) => {
     onSelect?.(item);
-  }
+    setOpen(false);
+  };
+
+  const onKeyDown = (e) => {
+    if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      setOpen(true);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => (items.length ? (h + 1) % items.length : -1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) =>
+        items.length ? (h - 1 + items.length) % items.length : -1
+      );
+    } else if (e.key === "Enter") {
+      if (open && highlight >= 0 && items[highlight]) {
+        e.preventDefault();
+        choose(items[highlight]);
+      } else {
+        // Confirm with raw text (e.g., "AAPL")
+        onEnter?.(q);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  const dropdown = useMemo(() => {
+    if (!open || !items.length) return null;
+    return (
+      <ul
+        role="listbox"
+        className="z-50 absolute left-0 right-0 mt-1 max-h-64 overflow-auto rounded-xl border border-zinc-700/50 bg-zinc-900 shadow-lg"
+      >
+        {items.map((it, i) => {
+          const sym = it.symbol ?? it.ticker ?? "";
+          const nm = it.name ?? it.longname ?? it.shortname ?? "";
+          const ex = it.exch ?? it.exchange ?? "";
+          const ccy = it.currency ?? it.ccy ?? "";
+        return (
+            <li
+              key={`${sym}-${i}`}
+              role="option"
+              aria-selected={i === highlight}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                choose(it);
+              }}
+              className={`px-3 py-2 cursor-pointer ${
+                i === highlight ? "bg-zinc-800" : "hover:bg-zinc-800/60"
+              }`}
+            >
+              <div className="text-sm font-medium">{sym}</div>
+              <div className="text-xs text-zinc-400 truncate">
+                {nm}
+                {ex ? ` • ${ex}` : ""}{ccy ? ` • ${ccy}` : ""}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }, [open, items, highlight]);
 
   return (
-    <div className="relative w-full">
+    <div ref={boxRef} className="relative">
       <input
-        value={q}
-        disabled={disabled}
-        onChange={(e) => setQ(e.target.value)}
-        onFocus={() => items.length && setOpen(true)}
-        className="w-full rounded-lg bg-transparent border border-neutral-700 px-3 py-2 outline-none"
+        value={value ?? ""}
         placeholder={placeholder}
+        onChange={(e) => onChange?.(e.target.value)}
+        onKeyDown={onKeyDown}
+        onFocus={() => setOpen(items.length > 0)}
+        className="w-full rounded-xl border border-zinc-700/50 bg-transparent px-3 py-2 outline-none"
         autoComplete="off"
-        spellCheck={false}
+        spellCheck="false"
       />
-      {open && (items.length > 0 || loading) && (
-        <div className="absolute z-20 mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 shadow-lg">
-          {loading && (
-            <div className="px-3 py-2 text-sm text-neutral-300">Searching…</div>
-          )}
-          {!loading &&
-            items.map((it) => (
-              <button
-                key={`${it.symbol}-${it.name}`}
-                type="button"
-                onClick={() => handlePick(it)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-neutral-800"
-              >
-                <span className="font-mono text-sm">{it.symbol}</span>
-                <span className="text-sm text-neutral-300 truncate">
-                  {it.name}
-                </span>
-              </button>
-            ))}
-          {!loading && items.length === 0 && (
-            <div className="px-3 py-2 text-sm text-neutral-400">No matches</div>
-          )}
-        </div>
-      )}
+      {dropdown}
     </div>
   );
 }
