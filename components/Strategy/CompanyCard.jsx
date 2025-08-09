@@ -1,258 +1,176 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import useDebounce from "../../hooks/useDebounce";
-import { fmtCur } from "../../utils/format";
 
-/* helpers */
-const curSanitize = (s) => (s ?? "").toString().replace(/[^\d.]/g, "");
-const pctSanitize = (s) => (s ?? "").toString().replace(/[^\d.]/g, "");
-const pctPattern = /^(\d{0,3})(?:\.(\d{0,2})?)?$/;            // allow up to 2 decimals
-const canPct = (raw) => raw === "" || pctPattern.test(raw);
-const stripDot = (raw) => (raw.endsWith(".") ? raw.slice(0, -1) : raw);
+import { useCallback, useMemo, useState } from "react";
+import TickerSearch from "./TickerSearch";
 
-export default function CompanyCard({
-  value,
-  market,                       // { riskFree, mrp }
-  onConfirm,
-  onHorizonChange,
-  onIvSourceChange,
-  onIvValueChange
-}) {
-  /* search & fetch */
-  const [query, setQuery] = useState(value?.symbol || "");
-  const [results, setResults] = useState([]);
+function fmtMoney(v, ccy = "USD") {
+  if (v == null || Number.isNaN(v)) return "$0.00";
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: ccy }).format(v);
+  } catch {
+    return `$${Number(v).toFixed(2)}`;
+  }
+}
+
+export default function CompanyCard() {
+  const [input, setInput] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [ccy, setCcy] = useState("");
+  const [spot, setSpot] = useState(null);
+  const [beta, setBeta] = useState(null);
+  const [sigmaMode, setSigmaMode] = useState("live"); // "live" | "hist"
+  const [sigma, setSigma] = useState(30);
+  const [days, setDays] = useState(30);
+  const [capm, setCapm] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(value || null);
-  const [details, setDetails] = useState(null);
+  const [err, setErr] = useState("");
 
-  /* IV */
-  const [ivSource, setIvSource] = useState("live");  // live | hist | manual
-  const [ivManualPct, setIvManualPct] = useState(""); // string in %
+  const canConfirm = useMemo(() => !!input.trim(), [input]);
 
-  /* fields (with overrides) */
-  const [ccy, setCcy] = useState("");      // 1) Currency
-  const [D, setD] = useState("");          // 2) D (free text)
-  const [S, setS] = useState("");          // 3) Spot (currency string)
-  const [sigmaPct, setSigmaPct] = useState(""); // 4) σ in %
-  const [beta, setBeta] = useState("");    // 6) β
-  const [days, setDays] = useState(30);    // 7) Days
-  const [capmPct, setCapmPct] = useState(""); // 8) CAPM (%)
-  const [capmEdited, setCapmEdited] = useState(false);
-
-  const debounced = useDebounce(query, 300);
-
-  /* search suggestions */
-  useEffect(() => {
-    if (!debounced || (selected && debounced === selected.symbol)) { setResults([]); return; }
+  const fetchCompany = useCallback(async (sym) => {
+    if (!sym) return;
     setLoading(true);
-    fetch(`/api/search?q=${encodeURIComponent(debounced)}`)
-      .then(r => r.json()).then(d => setResults(d.results || []))
-      .finally(() => setLoading(false));
-  }, [debounced, selected]);
+    setErr("");
+    try {
+      const u = `/api/company?symbol=${encodeURIComponent(sym)}`;
+      const r = await fetch(u, { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || r.statusText);
 
-  /* confirm ticker -> fetch details + populate */
-  const confirm = async (sym) => {
-    const symbol = sym || (results[0]?.symbol ?? query.toUpperCase());
-    if (!symbol) { alert("Select a company/ticker."); return; }
-    const r = await fetch(`/api/company?symbol=${encodeURIComponent(symbol)}`);
-    const d = await r.json();
-    const next = { symbol, ...d };
-    setSelected(next); setDetails(d); setResults([]); setQuery(symbol);
+      setSymbol(j.symbol || sym);
+      setCcy(j.currency || "USD");
+      setSpot(j.spot ?? null);
+      setBeta(j.beta ?? null);
 
-    const currency = d.currency || "USD";
-    setCcy(currency);
-    setS(fmtCur(d.spot ?? 0, currency));
-    setBeta(Number.isFinite(d.beta) ? String(d.beta) : "");
+      // Optionally default vol from live/hist if returned
+      if (sigmaMode === "live" && j.ivLive != null) setSigma(Number(j.ivLive * 100).toFixed(2));
+      if (sigmaMode === "hist" && j.ivHist != null) setSigma(Number(j.ivHist * 100).toFixed(2));
 
-    // σ from chosen source unless manual already
-    const iv = ivSource === "manual" ? (parseFloat(ivManualPct) / 100) : (ivSource === "live" ? d.ivLive : d.ivHist);
-    setSigmaPct(Number.isFinite(iv) ? (iv * 100).toFixed(2) : "");
-
-    // CAPM (unless user has edited)
-    if (!capmEdited) {
-      const rf = market?.riskFree ?? 0;
-      const mrp = market?.mrp ?? 0;
-      const b = Number.isFinite(d.beta) ? d.beta : parseFloat(beta) || 0;
-      setCapmPct(((rf + b * mrp) * 100).toFixed(2));
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
     }
+  }, [sigmaMode]);
 
-    onConfirm?.(next);
-  };
+  function onSelect(sym /*, meta */) {
+    setInput(sym);
+    setSymbol(sym);
+    fetchCompany(sym);
+  }
 
-  /* keep CAPM auto if not edited */
-  useEffect(() => {
-    if (!details || capmEdited) return;
-    const rf = market?.riskFree ?? 0;
-    const mrp = market?.mrp ?? 0;
-    const b = Number.isFinite(details?.beta) ? details.beta : parseFloat(beta) || 0;
-    setCapmPct(((rf + b * mrp) * 100).toFixed(2));
-  }, [market, details, beta, capmEdited]);
-
-  /* IV wiring up */
-  useEffect(() => { onIvSourceChange?.(ivSource); }, [ivSource, onIvSourceChange]);
-  useEffect(() => {
-    const v = ivSource === "manual"
-      ? (parseFloat(stripDot(ivManualPct)) / 100)
-      : (ivSource === "live" ? details?.ivLive : details?.ivHist);
-    onIvValueChange?.(Number.isFinite(v) ? v : undefined);
-    setSigmaPct(Number.isFinite(v) ? (v * 100).toFixed(2) : "");
-  }, [ivSource, ivManualPct, details, onIvValueChange]);
-
-  /* currency input helpers */
-  const blurFormatCurrency = (raw, setter, currency) => {
-    const v = parseFloat(curSanitize(raw));
-    setter(Number.isFinite(v) ? fmtCur(v, currency) : "");
-  };
-
-  /* percent input helpers */
-  const onPctChange = (val, setter) => {
-    const raw = pctSanitize(val);
-    if (canPct(raw)) setter(raw);
-  };
-  const onPctBlur = (val, setter) => {
-    if (val === "") return;
-    const n = parseFloat(stripDot(val));
-    setter(Number.isFinite(n) ? n.toFixed(2) : "");
-  };
+  function onConfirm() {
+    fetchCompany(input.trim().toUpperCase());
+  }
 
   return (
-    <section className="card">
-      <h3>Company</h3>
+    <div className="rounded-2xl border border-neutral-800 bg-[#111114] p-4 shadow-sm">
+      <div className="mb-3 text-xl font-semibold">Company</div>
 
-      {/* search */}
-      <label>Company / Ticker</label>
-      <div className="row">
-        <input
-          className="field"
-          placeholder="Search by name or ticker…"
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setSelected(null); }}
-        />
-        <button className="button" onClick={() => confirm()} disabled={loading}>
-          {loading ? "Searching…" : "Confirm"}
+      {/* Row: ticker + confirm */}
+      <div className="mb-4 flex items-stretch gap-3">
+        <div className="grow">
+          <TickerSearch
+            value={input}
+            onChange={setInput}
+            onSelect={onSelect}
+            placeholder="Type ticker or company…"
+          />
+        </div>
+        <button
+          onClick={onConfirm}
+          disabled={!canConfirm || loading}
+          className="rounded-xl bg-[#007aff] px-4 py-2 text-white disabled:opacity-50"
+        >
+          {loading ? "Loading…" : "Confirm"}
         </button>
       </div>
 
-      {results.length > 0 && (
-        <div className="card" style={{ marginTop: 8 }}>
-          <div className="small">No exact match — pick one:</div>
-          <div className="row" style={{ flexWrap: "wrap" }}>
-            {results.map(r => (
-              <button key={r.symbol} className="button ghost" onClick={() => confirm(r.symbol)}>
-                {r.symbol} • {r.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {err && <div className="mb-3 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</div>}
 
-      {/* details: label left, value right (aligned) */}
-      <div className="grid" style={{ rowGap: 12, marginTop: 8 }}>
-        {/* 1. Currency */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>Currency</div>
-          <input className="field" value={ccy} onChange={(e) => setCcy(e.target.value.toUpperCase())} />
-        </div>
-
-        {/* 2. D */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>D</div>
-          <input className="field" placeholder="" value={D} onChange={(e) => setD(e.target.value)} />
-        </div>
-
-        {/* 3. S (Spot) */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>S</div>
+      {/* Grid of fields */}
+      <div className="grid grid-cols-6 gap-3">
+        {/* Currency */}
+        <div className="col-span-2">
+          <div className="mb-1 text-xs text-neutral-400">Currency</div>
           <input
-            className="field"
-            value={S}
-            onChange={(e) => setS(curSanitize(e.target.value))}
-            onBlur={() => blurFormatCurrency(S, setS, ccy || "USD")}
-            placeholder={fmtCur(0, ccy || "USD")}
+            value={ccy || ""}
+            readOnly
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
           />
         </div>
 
-        {/* 4. σ + IV Source inline */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>σ</div>
-          <div className="row" style={{ width: "100%" }}>
-            <input
-              className="field"
-              inputMode="decimal"
-              placeholder="30.00"
-              value={sigmaPct}
-              onChange={(e) => {
-                onPctChange(e.target.value, setSigmaPct);
-                setIvSource("manual");
-                setIvManualPct(e.target.value);
-              }}
-              onBlur={(e) => {
-                onPctBlur(e.target.value, setSigmaPct);
-                setIvSource("manual");
-                setIvManualPct(stripDot(e.target.value));
-              }}
-              style={{ flex: 1 }}
-            />
-            <select
-              className="field"
-              value={ivSource}
-              onChange={(e) => setIvSource(e.target.value)}
-              style={{ width: 200 }}
-              aria-label="Implied Volatility Source"
-              title="Implied Volatility Source"
-            >
-              <option value="live">Live IV</option>
-              <option value="hist">Historical IV</option>
-              <option value="manual">Manual</option>
-            </select>
-          </div>
-        </div>
-
-        {/* 6. β */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>β</div>
+        {/* D (empty / manual override) */}
+        <div className="col-span-2">
+          <div className="mb-1 text-xs text-neutral-400">D</div>
           <input
-            className="field"
-            inputMode="decimal"
-            value={beta}
-            onChange={(e) => setBeta(e.target.value.replace(/[^\d.-]/g, ""))}
-            onBlur={(e) => {
-              const n = parseFloat(e.target.value);
-              setBeta(Number.isFinite(n) ? String(n) : "");
-            }}
+            placeholder=""
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
           />
         </div>
 
-        {/* 7. Days */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>Days</div>
+        {/* Spot */}
+        <div className="col-span-2">
+          <div className="mb-1 text-xs text-neutral-400">S</div>
           <input
-            className="field"
-            type="number"
-            min={1}
-            step={1}
+            value={fmtMoney(spot, ccy || "USD")}
+            readOnly
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+          />
+        </div>
+
+        {/* Sigma + source */}
+        <div className="col-span-3">
+          <div className="mb-1 text-xs text-neutral-400">σ</div>
+          <input
+            value={String(sigma)}
+            onChange={e => setSigma(e.target.value)}
+            placeholder="30.00"
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+          />
+        </div>
+        <div className="col-span-3">
+          <div className="mb-1 text-xs text-neutral-400 invisible">source</div>
+          <select
+            value={sigmaMode}
+            onChange={e => setSigmaMode(e.target.value)}
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+          >
+            <option value="live">Live IV</option>
+            <option value="hist">Historical</option>
+          </select>
+        </div>
+
+        {/* Beta */}
+        <div className="col-span-2">
+          <div className="mb-1 text-xs text-neutral-400">β</div>
+          <input
+            value={beta ?? ""}
+            onChange={e => setBeta(e.target.value)}
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
+          />
+        </div>
+
+        {/* Days */}
+        <div className="col-span-2">
+          <div className="mb-1 text-xs text-neutral-400">Days</div>
+          <input
             value={days}
-            onChange={(e) => {
-              const v = parseInt(e.target.value || "0", 10);
-              setDays(v);
-              onHorizonChange?.(v);
-            }}
+            onChange={e => setDays(e.target.value)}
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
           />
         </div>
 
-        {/* 8. CAPM (%) */}
-        <div className="index-row">
-          <div className="small" style={{ opacity: .95 }}>CAPM</div>
+        {/* CAPM (computed elsewhere; placeholder here) */}
+        <div className="col-span-2">
+          <div className="mb-1 text-xs text-neutral-400">CAPM</div>
           <input
-            className="field"
-            inputMode="decimal"
-            placeholder="21.38"
-            value={capmPct}
-            onChange={(e) => { onPctChange(e.target.value, setCapmPct); setCapmEdited(true); }}
-            onBlur={(e) => { onPctBlur(e.target.value, setCapmPct); setCapmEdited(true); }}
+            value={Number(capm).toFixed(2)}
+            onChange={e => setCapm(e.target.value)}
+            className="w-full rounded-xl border border-neutral-700 bg-transparent px-3 py-2 text-neutral-200"
           />
         </div>
       </div>
-    </section>
+    </div>
   );
 }
