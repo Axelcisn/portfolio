@@ -3,9 +3,9 @@ import {
   yahooQuote,
   yahooLiveIv,
   yahooDailyCloses,
-} from "../../../../lib/yahoo";
-import { fxToEUR } from "../../../../lib/fx";
-import { logReturns, annualizedFromDailyLogs } from "../../../../lib/stats";
+} from "../../../lib/yahoo";
+import { fxToEUR } from "../../../lib/fx";
+import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats";
 
 export const runtime = "nodejs";
 
@@ -16,7 +16,6 @@ export async function GET(req) {
     return NextResponse.json({ error: "symbol required" }, { status: 400 });
   }
   try {
-    // basic quote data
     const q = await yahooQuote(symbol);
 
     // realised drift/vol from 1y daily closes
@@ -30,7 +29,7 @@ export async function GET(req) {
       driftHist = driftA;
       ivHist = volA;
     } catch {
-      /* ignore errors on historical stats */
+      /* ignore */
     }
 
     // live ATM-ish IV
@@ -43,7 +42,7 @@ export async function GET(req) {
       }
     }
 
-    // convert currency to EUR (if needed)
+    // FX conversion to EUR
     const fx = await fxToEUR(q.currency || "EUR");
 
     return NextResponse.json({
@@ -54,9 +53,9 @@ export async function GET(req) {
       high52: q.high52,
       low52: q.low52,
       beta: q.beta,
-      ivLive,      // decimal (e.g., 0.30)
-      ivHist,      // realised volatility (annualised)
-      driftHist,   // realised drift (annualised)
+      ivLive,
+      ivHist,
+      driftHist,
       fxToEUR: fx.rate,
       fxSource: fx.via,
     });
