@@ -1,6 +1,6 @@
 // app/api/company/route.js
 import { NextResponse } from "next/server";
-import { robustQuote } from "@/lib/yahoo";
+import { robustQuote } from "../../../lib/yahoo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
