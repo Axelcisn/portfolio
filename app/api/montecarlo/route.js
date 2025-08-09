@@ -39,10 +39,10 @@ export async function POST(req) {
     return NextResponse.json({ error: "spot>0 and Tdays>0 required" }, { status: 400 });
   }
 
-  const T   = Tdays / 365;
-  const sT  = Math.sqrt(T);
-  const carry = carryPremium ? Math.exp((riskFree || 0) * T) : 1;
-  const denom = Math.abs(netPremium) > 1e-9 ? Math.abs(netPremium) : spot;
+  const T = Tdays / 365;
+  const sT = Math.sqrt(T);
+  const carry  = carryPremium ? Math.exp((riskFree || 0) * T) : 1;
+  const denom  = Math.abs(netPremium) > 1e-9 ? Math.abs(netPremium) : spot;
 
   let n = 0, meanST = 0, m2 = 0, evAbs = 0, win = 0;
   const R = Math.min(20000, paths);
@@ -52,17 +52,15 @@ export async function POST(req) {
     const z  = boxMuller();
     const ST = spot * Math.exp((mu - 0.5 * sigma * sigma) * T + sigma * sT * z);
 
-    // streaming mean/variance
     n++;
     const delta = ST - meanST;
     meanST += delta / n;
-    m2 += delta * (ST - meanST);
+    m2    += delta * (ST - meanST);
 
     const payoff = payoffAt(ST, legs) - carry * netPremium;
     evAbs += payoff;
     if (payoff > 0) win++;
 
-    // reservoir sampling
     if (i < R) {
       reservoir[i] = ST;
     } else {
@@ -70,11 +68,9 @@ export async function POST(req) {
       if (j < R) reservoir[j] = ST;
     }
 
-    // yield control every 5000 iterations
     if ((i + 1) % 5000 === 0) await new Promise(r => setTimeout(r, 0));
   }
 
-  // quantiles from reservoir
   const arr = Array.from(reservoir.slice(0, Math.min(R, n))).sort((a, b) => a - b);
   const q = (p) => {
     if (!arr.length) return null;
@@ -91,8 +87,8 @@ export async function POST(req) {
     q95ST: q(0.95),
     qLoST: q(0.025),
     qHiST: q(0.975),
-    pWin:   n ? win / n : null,
-    evAbs:  n ? evAbs / n : null,
-    evPct:  n ? (evAbs / n) / denom : null
+    pWin: n ? win / n : null,
+    evAbs: n ? evAbs / n : null,
+    evPct: n ? (evAbs / n) / denom : null
   });
 }
