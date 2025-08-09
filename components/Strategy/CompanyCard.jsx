@@ -1,73 +1,56 @@
 // components/Strategy/CompanyCard.jsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import TickerSearch from "./TickerSearch";
 
 export default function CompanyCard({
-  value,
-  market,
-  onConfirm,
-  onHorizonChange,
-  onIvSourceChange,
-  onIvValueChange,
+  value = null,
+  market = {},
+  onConfirm = () => {},
+  // These are accepted so Strategy/page.jsx doesn’t break,
+  // but we’re not using them on this step.
+  onHorizonChange = () => {},
+  onIvSourceChange = () => {},
+  onIvValueChange = () => {},
 }) {
-  const [typed, setTyped] = useState("");          // raw text from search box
-  const [picked, setPicked] = useState(null);      // {symbol, name}
+  const [typed, setTyped] = useState(value?.symbol || "");
+  const [picked, setPicked] = useState(null); // { symbol, name, exchange, ... }
   const [loading, setLoading] = useState(false);
-  const [details, setDetails] = useState(null);
   const [err, setErr] = useState("");
 
-  // sync external value if provided
-  useEffect(() => {
-    if (value?.symbol) {
-      setPicked({ symbol: value.symbol, name: value.name });
-      setTyped(value.symbol);
-      setDetails({
-        currency: value.currency,
-        spot: value.spot,
-        beta: value.beta ?? null,
-      });
-    }
-  }, [value]);
+  // what we show in the mini fields
+  const [currency, setCurrency] = useState(value?.currency || "");
+  const [spot, setSpot] = useState(value?.spot ?? null);
 
-  const canConfirm = !!(picked?.symbol || (typed && typed.trim().length > 0)) && !loading;
-
-  async function fetchCompany(sym) {
-    const symbol = (sym || typed || "").trim();
-    if (!symbol) return;
-    setErr("");
+  async function confirm(symbolMaybe) {
+    const sym = (symbolMaybe || picked?.symbol || typed || "").trim();
+    if (!sym) return;
     setLoading(true);
+    setErr("");
+
     try {
-      const r = await fetch(`/api/company?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "fetch failed");
+      if (!r.ok) throw new Error(j?.error || `Request failed (${r.status})`);
 
-      setPicked({ symbol: j.symbol, name: j.name });
-      setDetails({
-        currency: j.currency || "",
-        spot: j.spot ?? null,
-        beta: j.beta ?? null,
-        name: j.name || j.symbol,
-        exchange: j.exchange || "",
-        via: j.via || "",
-      });
+      setCurrency(j.currency || "");
+      setSpot(Number.isFinite(j.spot) ? j.spot : null);
 
-      onConfirm?.({
+      onConfirm({
         symbol: j.symbol,
         name: j.name,
-        spot: j.spot,
         currency: j.currency,
-        beta: j.beta,
+        spot: j.spot,
+        beta: j.beta ?? null,
+        high52: j.high52 ?? null,
+        low52: j.low52 ?? null,
+        ivLive: j.ivLive ?? null,
+        ivHist: j.ivHist ?? null,
+        driftHist: j.driftHist ?? null,
+        fxToEUR: j.fxToEUR ?? null,
+        fxSource: j.fxSource ?? null,
       });
-
-      if (typeof j.ivLive === "number") {
-        onIvSourceChange?.("live");
-        onIvValueChange?.(j.ivLive);
-      } else if (typeof j.ivHist === "number") {
-        onIvSourceChange?.("hist");
-        onIvValueChange?.(j.ivHist);
-      }
     } catch (e) {
       setErr(String(e?.message || e));
     } finally {
@@ -75,88 +58,60 @@ export default function CompanyCard({
     }
   }
 
-  const capm = useMemo(() => {
-    const rf = +market?.riskFree ?? NaN;
-    const mrp = +market?.mrp ?? NaN;
-    const beta = +details?.beta ?? NaN;
-    if (Number.isFinite(rf) && Number.isFinite(mrp) && Number.isFinite(beta)) {
-      return rf + beta * mrp;
-    }
-    return null;
-  }, [market, details?.beta]);
-
   return (
-    <div className="card">
-      <div className="card-title">Company / Ticker</div>
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-5">
+      <h2 className="mb-4 text-2xl font-semibold text-black">Company / Ticker</h2>
 
-      <TickerSearch
-        value={picked?.symbol || typed}
-        onType={(t) => {
-          setTyped(t);
-          setPicked(null);
-          setErr("");
-        }}
-        onPick={(r) => {
-          setPicked(r);
-          setTyped(r.symbol);
-          setErr("");
-        }}
-      />
-
-      <button
-        disabled={!canConfirm}
-        onClick={() => fetchCompany(picked?.symbol || typed)}
-        style={{ marginTop: 8 }}
-      >
-        {loading ? "Loading…" : "Confirm"}
-      </button>
-
-      {picked?.symbol && details && (
-        <div style={{ marginTop: 8 }}>
-          <div>
-            Selected: <strong>{picked.symbol}</strong> — {details.name || ""}
-          </div>
-          <div>
-            Exchange/Currency: {details.exchange || "—"} · {details.currency || "—"}
-          </div>
-          <div>Spot: {details.spot != null ? details.spot : "—"}</div>
-          <div>β: {details.beta != null ? details.beta.toFixed(2) : "—"}</div>
-          <div>CAPM: {capm != null ? capm.toFixed(2) : "0.00"}</div>
-          <div style={{ opacity: 0.6, fontSize: 12 }}>Source: {details.via || "—"}</div>
-        </div>
-      )}
-
-      {err && <div style={{ color: "tomato", marginTop: 8 }}>{err}</div>}
-
-      <div style={{ marginTop: 16 }}>
-        <label style={{ display: "block", marginBottom: 4 }}>Days</label>
-        <input
-          type="number"
-          defaultValue={30}
-          min={1}
-          onChange={(e) => onHorizonChange?.(Math.max(1, +e.target.value || 1))}
-          style={{ width: 120 }}
+      <div className="mb-3">
+        <TickerSearch
+          value={typed}
+          onPick={(it) => { setPicked(it); setTyped(it.symbol || ""); setErr(""); }}
+          onEnter={(sym) => confirm(sym)}
+          placeholder="AAPL, MSFT, ENEL.MI…"
         />
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => confirm()}
+            disabled={loading}
+            className="rounded bg-gray-900 px-3 py-2 text-white disabled:opacity-50"
+          >
+            {loading ? "Loading…" : "Confirm"}
+          </button>
+          {picked?.symbol && (
+            <span className="ml-3 text-sm text-gray-700">
+              Selected: <strong>{picked.symbol}</strong>
+              {picked.name ? ` — ${picked.name}` : ""}
+              {picked.exchDisp ? ` • ${picked.exchDisp}` : ""}
+            </span>
+          )}
+        </div>
+        {err && <div className="mt-2 text-sm text-red-600">{err}</div>}
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <label style={{ display: "block", marginBottom: 4 }}>σ (IV)</label>
-        <select
-          onChange={(e) => onIvSourceChange?.(e.target.value)}
-          defaultValue="live"
-          style={{ width: 140, marginRight: 8 }}
-        >
-          <option value="live">Live IV</option>
-          <option value="hist">Hist IV</option>
-          <option value="manual">Manual</option>
-        </select>
-        <input
-          type="number"
-          step="0.01"
-          placeholder="0.30 = 30%"
-          onChange={(e) => onIvValueChange?.(+e.target.value || 0)}
-          style={{ width: 140 }}
-        />
+      {/* Only what you asked for now: Currency + Spot */}
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <div>
+          <label className="mb-1 block text-sm text-gray-600">Currency</label>
+          <input
+            className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-black"
+            readOnly
+            value={currency || ""}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm text-gray-600">S (Spot)</label>
+          <input
+            className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-black"
+            readOnly
+            value={
+              spot == null
+                ? ""
+                : new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "USD" }).format(spot)
+            }
+          />
+        </div>
       </div>
     </div>
   );
