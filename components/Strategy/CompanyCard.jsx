@@ -4,6 +4,18 @@
 import { useState } from "react";
 import TickerSearch from "./TickerSearch";
 
+const EX_NAMES = {
+  NMS: "NASDAQ",
+  NGM: "NASDAQ GM",
+  NCM: "NASDAQ CM",
+  NYQ: "NYSE",
+  ASE: "AMEX",
+  PCX: "NYSE Arca",
+  LSE: "LSE",
+  MIL: "Borsa Italiana",
+  BUE: "Buenos Aires",
+};
+
 export default function CompanyCard({
   value = null,
   market = {},
@@ -12,12 +24,11 @@ export default function CompanyCard({
   onIvSourceChange = () => {},
   onIvValueChange = () => {},
 }) {
-  const [picked, setPicked] = useState(null);       // { symbol, name, ... } from search
-  const [typed, setTyped]   = useState(value?.symbol || "");
+  const [picked, setPicked] = useState(null); // { symbol, name, exchange, ... }
+  const [typed, setTyped] = useState(value?.symbol || "");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // displayed fields
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(value?.spot || 0);
   const [beta, setBeta] = useState(value?.beta ?? null);
@@ -25,11 +36,11 @@ export default function CompanyCard({
   async function confirm(symbolMaybe) {
     const sym = (symbolMaybe || picked?.symbol || typed).trim();
     if (!sym) return;
-
     setLoading(true);
     setErr("");
     try {
-      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
+      // uppercase for Yahoo; server will handle fallback to Stooq with suffix
+      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym.toUpperCase())}`, {
         cache: "no-store",
       });
       if (!r.ok) {
@@ -44,6 +55,7 @@ export default function CompanyCard({
       onConfirm({
         symbol: j.symbol,
         name: j.name,
+        exchange: picked?.exchange || null,
         currency: j.currency,
         spot: j.spot,
         high52: j.high52 ?? null,
@@ -61,6 +73,9 @@ export default function CompanyCard({
       setLoading(false);
     }
   }
+
+  const exchLabel =
+    picked?.exchange ? (EX_NAMES[picked.exchange] || picked.exchange) : null;
 
   return (
     <div className="rounded border border-gray-300 p-4">
@@ -83,7 +98,7 @@ export default function CompanyCard({
           placeholder="AAPL, MSFT, Tesla…"
         />
 
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => confirm()}
@@ -93,8 +108,10 @@ export default function CompanyCard({
             {loading ? "Loading…" : "Confirm"}
           </button>
           {picked?.symbol && (
-            <span className="self-center text-sm text-gray-600">
-              Selected: <strong>{picked.symbol}</strong>{picked.name ? ` – ${picked.name}` : ""}
+            <span className="text-sm text-gray-700">
+              Selected: <strong>{picked.symbol}</strong>
+              {picked.name ? ` – ${picked.name}` : ""}
+              {exchLabel ? ` • ${exchLabel}` : ""}
             </span>
           )}
         </div>
