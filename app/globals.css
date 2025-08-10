@@ -20,6 +20,9 @@
   --accent-hover:#006ee6;
   --accent-active:#005ec2;
 
+  /* Overlays / dropdowns (near‑opaque for readability) */
+  --dropdown: rgba(255,255,255,.98);
+
   /* Radii & elevation */
   --radius:14px;
   --shadow-soft: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
@@ -46,6 +49,9 @@ html.dark{
   --accent:#1790ff;
   --accent-hover:#0f79db;
   --accent-active:#0c63b5;
+
+  /* dark dropdown is solid for contrast */
+  --dropdown: rgba(18,19,22,.98);
 
   --shadow-soft: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.25);
 }
@@ -233,9 +239,9 @@ html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
 /* Column stack in left pane (uniform gaps) */
 .tv-layout > .page-stack{ display:grid; gap:var(--row-gap); }
 
-/* Sticky, compact rail */
+/* Sticky, compact rail — start aligned with Market */
 .stats-rail{
-  position: sticky; top: 72px;
+  position: sticky; top: 0;
   display: grid; gap: 12px;
 }
 
@@ -300,7 +306,7 @@ html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
 /* Slightly tighter vertical rhythm within Market card */
 .card.market .market-stack{ row-gap:16px; }
 
-/* ---------- Company/Ticker Search (utility shims used by TickerSearch) ---------- */
+/* ---------- Company/Ticker Search shims ---------- */
 .relative{ position:relative; }
 .absolute{ position:absolute; }
 .left-0{ left:0; }
@@ -340,14 +346,16 @@ html.dark .hover\:bg-gray-100:hover{ background:rgba(255,255,255,.06); }
   outline-offset:var(--focus-offset);
 }
 
-/* Dropdown panel */
+/* Dropdown panel — make it solid for readability */
 .relative > .absolute.left-0.right-0.mt-1.rounded.border.bg-white.shadow-xl{
   max-height:360px;
   overflow:auto;
   -webkit-overflow-scrolling:touch;
   z-index:60;
   padding:6px 4px;
-  backdrop-filter: blur(4px);
+  background: var(--dropdown);
+  backdrop-filter: none;         /* remove extra transparency */
+  border-color: var(--border);
 }
 
 /* List items are buttons — neutralize default button chrome */
@@ -373,7 +381,7 @@ html.dark .relative .absolute button:hover{ background:rgba(255,255,255,.06); }
 }
 
 /* ---------- Company block (top) ---------- */
-.company-block{ padding:0; }
+.company-block{ padding:0; margin-bottom: var(--row-gap); }
 .company-title{ font-size:20px; font-weight:600; margin:0 0 8px 0; }
 .company-search{ display:flex; align-items:center; gap:10px; }
 .company-search .relative{ flex:1 1 auto; min-width:0; }
@@ -389,7 +397,7 @@ html.dark .relative .absolute button:hover{ background:rgba(255,255,255,.06); }
   box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 20px rgba(0,0,0,.04);
 }
 html.dark .company-search input.w-full.rounded.border.border-gray-300.bg-white.px-3.py-2.text-black{
-  background: #121316;
+  background:#121316;
   box-shadow: 0 1px 2px rgba(0,0,0,.45), 0 8px 20px rgba(0,0,0,.35);
 }
 
@@ -399,7 +407,7 @@ html.dark .company-search input.w-full.rounded.border.border-gray-300.bg-white.p
 /* Selected line under search */
 .company-selected{ margin-top:6px; }
 
-/* Row of facts/controls */
+/* Row of facts/controls — full width, 4 columns, wraps neatly */
 .company-fields{
   display:grid; gap:var(--col-gap);
   grid-template-columns: repeat(4, minmax(0,1fr));
@@ -420,15 +428,6 @@ html.dark .company-search input.w-full.rounded.border.border-gray-300.bg-white.p
   .company-fields{ grid-template-columns: 1fr; }
   .vol-wrap{ grid-template-columns: 1fr; }
 }
-
-/* TickerSearch dropdown within company */
-.company-search .absolute.left-0.right-0.mt-1.rounded.border.bg-white.shadow-xl{
-  max-height:360px; overflow:auto; z-index:70;
-  background:var(--card); border-color:var(--border);
-}
-.company-search .absolute button{ padding:10px 12px; border-radius:10px; }
-.company-search .absolute button:hover{ background:rgba(0,0,0,.04); }
-html.dark .company-search .absolute button:hover{ background:rgba(255,255,255,.06); }
 
 /* Respect reduced motion */
 @media (prefers-reduced-motion: reduce){
