@@ -1,109 +1,175 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-// Box–Muller transform to generate a standard normal random variable
-function boxMuller() {
-  let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+const cacheHeaders = { "Cache-Control": "no-store" };
+
+function err(status, code, message) {
+  // Back-compat: plain string `error`, plus structured `errorObj`
+  return NextResponse.json(
+    { ok: false, error: message, errorObj: { code, message } },
+    { status, headers: cacheHeaders }
+  );
 }
 
-// Compute the payoff of a multi‑leg option strategy at ST
+const toNum = (x) => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+};
+const clampInt = (x, lo, hi) => {
+  const n = Math.floor(Number(x) || 0);
+  return Math.min(Math.max(n, lo), hi);
+};
+
+export async function POST(req) {
+  const t0 = Date.now();
+  try {
+    const body = await req.json();
+
+    const spot = toNum(body?.spot);
+    const Tdays = toNum(body?.Tdays);
+
+    if (!(spot > 0) || !(Tdays > 0)) {
+      return err(400, "BAD_INPUT", "spot>0 and Tdays>0 required");
+    }
+
+    const mu = toNum(body?.mu) ?? 0;
+    const sigma = Math.max(0, toNum(body?.sigma) ?? 0);
+    const paths = clampInt(body?.paths ?? 20000, 1000, 200000);
+
+    const legs = body?.legs || {};
+    const netPremium = toNum(body?.netPremium) ?? 0;
+    const carryPremium = !!body?.carryPremium;
+    const riskFree = toNum(body?.riskFree) ?? 0;
+
+    const T = Tdays / 365;
+    const carry = carryPremium ? Math.exp(riskFree * T) : 1;
+
+    // --- Monte Carlo ---
+    const R = Math.min(paths, 20000);
+    const reservoir = new Float64Array(R);
+    let resCount = 0;
+
+    let meanST = 0;
+    let m2ST = 0;
+
+    let win = 0;
+    let sumEV = 0;
+    const denom = Math.abs(netPremium) > 1e-12 ? Math.abs(netPremium) : spot;
+
+    for (let i = 0; i < paths; i++) {
+      const z = boxMuller(Math.random);
+      const ST =
+        spot *
+        Math.exp((mu - 0.5 * sigma * sigma) * T + sigma * Math.sqrt(T) * z);
+
+      // streaming mean/variance (variance not returned but preserved for parity)
+      const delta = ST - meanST;
+      meanST += delta / (i + 1);
+      m2ST += delta * (ST - meanST);
+
+      // reservoir sampling for quantiles
+      if (resCount < R) {
+        reservoir[resCount++] = ST;
+      } else {
+        const j = Math.floor(Math.random() * (i + 1));
+        if (j < R) reservoir[j] = ST;
+      }
+
+      const payoff = payoffAt(ST, legs) - carry * netPremium;
+      if (payoff > 0) win += 1;
+      sumEV += payoff;
+
+      if ((i + 1) % 5000 === 0) {
+        // yield to event loop to avoid blocking
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    // quantiles (on ST) via index rounding, matching existing behavior
+    let q05ST = null,
+      q25ST = null,
+      q50ST = null,
+      q75ST = null,
+      q95ST = null,
+      qLoST = null,
+      qHiST = null;
+
+    if (resCount > 0) {
+      const arr = Array.from(reservoir.slice(0, resCount)).sort((a, b) => a - b);
+      const at = (p) =>
+        arr[Math.min(arr.length - 1, Math.max(0, Math.round((arr.length - 1) * p)))];
+      q05ST = at(0.05);
+      q25ST = at(0.25);
+      q50ST = at(0.5);
+      q75ST = at(0.75);
+      q95ST = at(0.95);
+      qLoST = at(0.025);
+      qHiST = at(0.975);
+    }
+
+    const n = paths;
+    const pWin = n ? win / n : null;
+    const evAbs = n ? sumEV / n : null;
+    const evPct = evAbs != null ? evAbs / denom : null;
+
+    const data = {
+      meanST,
+      q05ST,
+      q25ST,
+      q50ST,
+      q75ST,
+      q95ST,
+      qLoST,
+      qHiST,
+      pWin,
+      evAbs,
+      evPct,
+    };
+
+    // Back-compat: also expose top-level fields
+    return NextResponse.json(
+      { ok: true, data, ...data, _ms: Date.now() - t0 },
+      { status: 200, headers: cacheHeaders }
+    );
+  } catch (e) {
+    return err(500, "INTERNAL_ERROR", String(e?.message ?? e));
+  }
+}
+
+/* -------- helpers -------- */
 function payoffAt(ST, legs) {
-  const call = (K, q, sgn) => Math.max(ST - K, 0) * q * sgn;
-  const put  = (K, q, sgn) => Math.max(K - ST, 0) * q * sgn;
   let p = 0;
-  const L = legs || {};
-  if (L.lc?.enabled) p += call(+L.lc.K, +L.lc.qty, +1);
-  if (L.sc?.enabled) p += call(+L.sc.K, +L.sc.qty, -1);
-  if (L.lp?.enabled) p += put(+L.lp.K, +L.lp.qty, +1);
-  if (L.sp?.enabled) p += put(+L.sp.K, +L.sp.qty, -1);
+
+  const lc = legs?.lc || {};
+  if (lc.enabled && Number.isFinite(lc.K) && Number.isFinite(+lc.qty)) {
+    p += Math.max(ST - Number(lc.K), 0) * (+lc.qty || 0);
+  }
+
+  const sc = legs?.sc || {};
+  if (sc.enabled && Number.isFinite(sc.K) && Number.isFinite(+sc.qty)) {
+    p -= Math.max(ST - Number(sc.K), 0) * (+sc.qty || 0);
+  }
+
+  const lp = legs?.lp || {};
+  if (lp.enabled && Number.isFinite(lp.K) && Number.isFinite(+lp.qty)) {
+    p += Math.max(Number(lp.K) - ST, 0) * (+lp.qty || 0);
+  }
+
+  const sp = legs?.sp || {};
+  if (sp.enabled && Number.isFinite(sp.K) && Number.isFinite(+sp.qty)) {
+    p -= Math.max(Number(sp.K) - ST, 0) * (+sp.qty || 0);
+  }
+
   return p;
 }
 
-export async function POST(req) {
-  const body = await req.json();
-  const {
-    spot,
-    mu = 0,
-    sigma = 0,
-    Tdays,
-    paths = 20000,
-    legs = {},
-    netPremium = 0,
-    carryPremium = false,
-    riskFree = 0
-  } = body || {};
-
-  if (!(spot > 0) || !(Tdays > 0)) {
-    return NextResponse.json(
-      { error: "spot>0 and Tdays>0 required" },
-      { status: 400 }
-    );
-  }
-
-  const T   = Tdays / 365;
-  const sT  = Math.sqrt(T);
-  const carry = carryPremium ? Math.exp((riskFree || 0) * T) : 1;
-  const denom = Math.abs(netPremium) > 1e-9 ? Math.abs(netPremium) : spot;
-
-  let n = 0, meanST = 0, m2 = 0, evAbs = 0, win = 0;
-  const R = Math.min(20000, paths);
-  const reservoir = new Float64Array(R);
-
-  for (let i = 0; i < paths; i++) {
-    const z = boxMuller();
-    const ST = spot *
-      Math.exp(
-        (mu - 0.5 * sigma * sigma) * T +
-        sigma * sT * z
-      );
-
-    // streaming mean/variance for ST
-    n++;
-    const delta = ST - meanST;
-    meanST += delta / n;
-    m2    += delta * (ST - meanST);
-
-    // payoff
-    const payoff = payoffAt(ST, legs) - carry * netPremium;
-    evAbs += payoff;
-    if (payoff > 0) win++;
-
-    // reservoir sampling for quantiles
-    if (i < R) {
-      reservoir[i] = ST;
-    } else {
-      const j = Math.floor(Math.random() * (i + 1));
-      if (j < R) reservoir[j] = ST;
-    }
-
-    // yield control every 5k iterations
-    if ((i + 1) % 5000 === 0) {
-      await new Promise(r => setTimeout(r, 0));
-    }
-  }
-
-  const arr = Array.from(reservoir.slice(0, Math.min(R, n))).sort((a, b) => a - b);
-  const q = (p) => {
-    if (!arr.length) return null;
-    const idx = Math.max(0, Math.min(arr.length - 1, Math.round((arr.length - 1) * p)));
-    return arr[idx];
-  };
-
-  return NextResponse.json({
-    meanST,
-    q05ST: q(0.05),
-    q25ST: q(0.25),
-    q50ST: q(0.50),
-    q75ST: q(0.75),
-    q95ST: q(0.95),
-    qLoST: q(0.025),
-    qHiST: q(0.975),
-    pWin:  n ? win / n : null,
-    evAbs: n ? evAbs / n : null,
-    evPct: n ? (evAbs / n) / denom : null
-  });
+function boxMuller(rand) {
+  let u = 0,
+    v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
 }
