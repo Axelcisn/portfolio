@@ -11,18 +11,14 @@ const EX_NAMES = {
   TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
 
-/* Clean corporate suffixes for the display name (Apple → Apple, Inc. -> Apple) */
+/* Clean corporate suffixes for the display name (Apple → Apple) */
 function cleanName(raw = "") {
   let s = String(raw).trim();
   if (!s) return "";
   const rx =
     /(,?\s+(incorporated|inc\.?|corp\.?|corporation|company|co\.?|ltd\.?|limited|plc|s\.a\.|sa|s\.p\.a\.|spa|n\.v\.|nv|ag|se|oyj|ab|holdings?))$/i;
-  // Strip repeatedly from the end if multiple suffixes exist
   let prev;
-  do {
-    prev = s;
-    s = s.replace(rx, "").trim();
-  } while (s !== prev);
+  do { prev = s; s = s.replace(rx, "").trim(); } while (s !== prev);
   return s;
 }
 
@@ -39,17 +35,18 @@ function formatParts(n) {
   }
   return { int, dec };
 }
-function pctStr(v) {
-  if (!Number.isFinite(v)) return null;
-  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}%`;
-}
-function absStr(v) {
-  if (!Number.isFinite(v)) return null;
-  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}`;
-}
+const pctStr = (v) =>
+  Number.isFinite(v)
+    ? `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}%`
+    : null;
+const absStr = (v) =>
+  Number.isFinite(v)
+    ? `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}`
+    : null;
+
 function tzNow() {
   const d = new Date();
-  const off = -d.getTimezoneOffset(); // minutes from UTC
+  const off = -d.getTimezoneOffset();
   const s = off >= 0 ? "+" : "−";
   const a = Math.abs(off); const h = Math.floor(a / 60); const m = a % 60;
   return `GMT${s}${String(h).padStart(2, "0")}${m ? ":" + String(m).padStart(2, "0") : ""}`;
@@ -62,18 +59,18 @@ export default function CompanyHero({ company }) {
     exchange,
     currency = "USD",
     spot,
-    prevClose,               // optional
-    change,                  // optional absolute change
-    changePct,               // optional percentage change
-    marketSession,           // optional: "At close" | "Pre‑market" | "After hours"
-    logoUrl,                 // optional logo URL
+    prevClose,
+    change,
+    changePct,
+    marketSession,     // "At close" | "Pre‑market" | "After hours" (optional)
+    logoUrl,           // optional
   } = company || {};
 
   const displayName = cleanName(name || symbol);
   const exchangeLabel = EX_NAMES[exchange] || exchange || "";
   const price = Number(spot);
 
-  // derive change if not provided
+  // derive move if missing
   const chAbs = useMemo(() => {
     if (Number.isFinite(change)) return change;
     if (Number.isFinite(prevClose) && Number.isFinite(price)) return price - prevClose;
@@ -91,7 +88,7 @@ export default function CompanyHero({ company }) {
   const dir = Number.isFinite(chAbs) ? (chAbs > 0 ? "pos" : chAbs < 0 ? "neg" : "flat") : "flat";
   const session = marketSession || "At close";
 
-  // Accessible spoken line
+  // For screen readers
   const srLine =
     Number.isFinite(price) && Number.isFinite(chPct)
       ? `Price, ${price.toFixed(2)} ${currency}, ${chPct >= 0 ? "up" : "down"} ${Math.abs(chPct).toFixed(2)} percent`
@@ -99,7 +96,7 @@ export default function CompanyHero({ company }) {
 
   return (
     <div className="company-hero" aria-live="polite">
-      {/* Logo top-left */}
+      {/* Logo top‑left */}
       <div className="ch-avatar" aria-hidden="true">
         {logoUrl ? (
           <img src={logoUrl} alt="" className="avatar-img" />
@@ -108,46 +105,41 @@ export default function CompanyHero({ company }) {
         )}
       </div>
 
-      {/* Right side: name → ticker•exchange → price → status */}
+      {/* Content to the right of the logo */}
       <div className="ch-content">
         {/* Full company name (no suffixes) */}
-        <h1 className="ch-name" title={displayName}>
-          {displayName}
-        </h1>
+        <h1 className="ch-name" title={displayName}>{displayName}</h1>
 
-        {/* TICKER • EXCHANGE (smaller) */}
-        <div
-          className="id-line"
-          title={`${symbol}${exchangeLabel ? " • " + exchangeLabel : ""}`}
-        >
+        {/* TICKER • EXCHANGE inside a pill */}
+        <div className="id-pill" title={`${symbol}${exchangeLabel ? " • " + exchangeLabel : ""}`}>
           <span className="id-symbol">{symbol}</span>
           {exchangeLabel && <span className="id-dot">•</span>}
           {exchangeLabel && <span className="id-exch">{exchangeLabel}</span>}
         </div>
+      </div>
 
-        {/* Price (large) */}
-        <div className="price-stack" aria-label={srLine}>
-          <div className="price-row">
-            <span className="price-int">{intPart}</span>
-            {decPart && <span className="price-dec">{decPart}</span>}
-            <span className="price-ccy">{currency}</span>
-            {Number.isFinite(chAbs) && Number.isFinite(chPct) && (
-              <span className={`price-change ${dir}`}>
-                {absStr(chAbs)}&nbsp;&nbsp;{pctStr(chPct)}
-              </span>
-            )}
-          </div>
-
-          {/* MARKET_STATUS • DATE, TIME TZ */}
-          <div className="ch-status small">
-            {session} • {new Date().toLocaleString(undefined, {
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}{" "}
-            {tzNow()}
-          </div>
+      {/* Price row spans across and is LEFT‑aligned to the logo edge */}
+      <div className="price-stack" aria-label={srLine}>
+        <div className="price-row">
+          <span className="price-int">{intPart}</span>
+          {decPart && <span className="price-dec">{decPart}</span>}
+          <span className="price-ccy">{currency}</span>
+          {Number.isFinite(chAbs) && Number.isFinite(chPct) && (
+            <span className={`price-change ${dir}`}>
+              {absStr(chAbs)}&nbsp;&nbsp;{pctStr(chPct)}
+            </span>
+          )}
+        </div>
+        {/* MARKET_STATUS • DATE, TIME TZ */}
+        <div className="ch-status small">
+          {session} •{" "}
+          {new Date().toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}{" "}
+          {tzNow()}
         </div>
       </div>
     </div>
