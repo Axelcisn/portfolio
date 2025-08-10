@@ -1,33 +1,39 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+
 import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import LegsSection from "../../components/Strategy/LegsSection";
 import Chart from "../../components/Strategy/Chart";
 import MiniCards from "../../components/Strategy/MiniCards";
-import SummaryTiles from "../../components/Strategy/SummaryTiles";
+import StatsRail from "../../components/Strategy/StatsRail";
+
+import RomeClock from "../../components/RomeClock";
+import ThemeToggle from "../../components/ThemeToggle";
 import useDebounce from "../../hooks/useDebounce";
 
 export default function Strategy() {
+  // Company / market
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
 
+  // IV
   const [ivSource, setIvSource] = useState("live");
   const [ivValue, setIvValue] = useState(null); // decimal (e.g., 0.30)
 
+  // Market rates
   const [market, setMarket] = useState({ riskFree: null, mrp: null, indexAnn: null });
 
+  // Legs + premium
   const [netPremium, setNetPremium] = useState(0);
   const [legsUi, setLegsUi] = useState(null);
 
   // MC outputs
-  const [mcStats, setMcStats] = useState(null); // { meanST, q05ST, ..., qHiST }
-  const [probProfit, setProbProfit] = useState(null); // 0..1
-  const [expectancy, setExpectancy] = useState(null); // EV (abs)
-  const [expReturn, setExpReturn] = useState(null);   // EV / |premium| (or /S if 0)
-
-  const tickerConfirmed = !!company?.symbol;
+  const [mcStats, setMcStats] = useState(null);
+  const [probProfit, setProbProfit] = useState(null);
+  const [expectancy, setExpectancy] = useState(null);
+  const [expReturn, setExpReturn] = useState(null);
 
   const spot = company?.spot || null;
   const sigma = ivValue ?? null;
@@ -58,13 +64,13 @@ export default function Strategy() {
     if (!(spot > 0) || !(T > 0) || !(sigma >= 0)) return null;
     return {
       spot,
-      mu: 0,                          // drift: keep 0 for now; we can wire CAPM later
-      sigma,                           // annualized decimal
-      Tdays: horizon,                  // send days to the API
-      paths: 15000,                    // responsive default
+      mu: 0,                     // drift: keep 0 for now; can wire CAPM later
+      sigma,                     // annualized decimal
+      Tdays: horizon,            // send days to the API
+      paths: 15000,              // responsive default
       legs,
       netPremium: Number.isFinite(netPremium) ? netPremium : 0,
-      carryPremium: false,             // UI toggle can be added later
+      carryPremium: false,       // UI toggle can be added later
       riskFree: market.riskFree ?? 0,
     };
   }, [spot, T, sigma, horizon, legs, netPremium, market.riskFree]);
@@ -77,10 +83,7 @@ export default function Strategy() {
     let aborted = false;
     async function run() {
       if (!debouncedPayload) {
-        setMcStats(null);
-        setProbProfit(null);
-        setExpectancy(null);
-        setExpReturn(null);
+        setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
         return;
       }
       const body = JSON.parse(debouncedPayload);
@@ -94,14 +97,9 @@ export default function Strategy() {
         const j = await r.json();
         if (aborted) return;
         if (!r.ok || j?.ok === false) {
-          // keep graceful UI on errors
-          setMcStats(null);
-          setProbProfit(null);
-          setExpectancy(null);
-          setExpReturn(null);
+          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
           return;
         }
-        // Accept either envelope or flat (back-compat)
         const src = j?.data || j || {};
         const nextStats = {
           meanST: src.meanST ?? null,
@@ -119,10 +117,7 @@ export default function Strategy() {
         setExpReturn(Number.isFinite(src.evPct) ? src.evPct : null);
       } catch {
         if (!aborted) {
-          setMcStats(null);
-          setProbProfit(null);
-          setExpectancy(null);
-          setExpReturn(null);
+          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
         }
       }
     }
@@ -131,51 +126,80 @@ export default function Strategy() {
   }, [debouncedPayload]);
 
   return (
-    <div className="grid">
-      {/* 2-column header row */}
-      <div className="grid grid-2">
-        <CompanyCard
-          value={company}
+    <div className="container">
+      {/* Page header */}
+      <header className="page-header">
+        <div className="titles">
+          <div className="eyebrow">Portfolio</div>
+          <h1 className="page-title">Strategy</h1>
+          <p className="subtitle">Build, compare, and validate your options strategy.</p>
+        </div>
+        <div className="header-tools">
+          <RomeClock />
+          <button aria-label="Toggle theme" className="toggle"><ThemeToggle /></button>
+        </div>
+      </header>
+
+      <div className="tv-layout">
+        {/* Main column */}
+        <div>
+          <div className="grid grid-2">
+            <CompanyCard
+              value={company}
+              market={market}
+              onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
+              onHorizonChange={(d) => setHorizon(d)}
+              onIvSourceChange={(s) => setIvSource(s)}
+              onIvValueChange={(v) => setIvValue(v)}
+            />
+            <MarketCard onRates={(r) => setMarket(r)} />
+          </div>
+
+          {/* Legs */}
+          <section className="card">
+            <h3>Legs</h3>
+            <LegsSection
+              currency={currency}
+              onNetPremiumChange={setNetPremium}
+              onLegsChange={setLegsUi}
+            />
+          </section>
+
+          {/* Chart */}
+          <div className="tv-chart">
+            <Chart
+              spot={spot}
+              legs={legs}
+              riskFree={market.riskFree ?? 0}
+              carryPremium={false}
+              mu={null}
+              sigma={sigma || 0}
+              T={T || 0}
+              mcStats={mcStats}
+            />
+          </div>
+
+          {/* Quick actions (kept) */}
+          <MiniCards
+            disabled={!company?.symbol}
+            defaultHorizon={horizon}
+            onRun={(cfg) => console.log("run MC (manual)", cfg, { ivSource, ivValue, market })}
+          />
+        </div>
+
+        {/* Right rail */}
+        <StatsRail
+          spot={spot}
+          currency={currency}
+          company={company}
+          iv={sigma}
           market={market}
-          onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
-          onHorizonChange={(d) => setHorizon(d)}
-          onIvSourceChange={(s) => setIvSource(s)}
-          onIvValueChange={(v) => setIvValue(v)}
+          mcStats={mcStats}
+          probProfit={probProfit}
+          expectancy={expectancy}
+          expReturn={expReturn}
         />
-        <MarketCard onRates={(r) => setMarket(r)} />
       </div>
-
-      {/* Full width sections */}
-      <LegsSection
-        currency={currency}
-        onNetPremiumChange={setNetPremium}
-        onLegsChange={setLegsUi}
-      />
-
-      <Chart
-        spot={spot}
-        legs={legs}
-        riskFree={market.riskFree ?? 0}
-        carryPremium={false}   /* set true when you add a UI toggle */
-        mu={null}              /* we’ll wire CAPM later if you want */
-        sigma={sigma || 0}
-        T={T || 0}
-        mcStats={mcStats}
-      />
-
-      <MiniCards
-        disabled={!tickerConfirmed}
-        defaultHorizon={horizon}
-        onRun={(cfg) => console.log("run MC (manual)", cfg, { ivSource, ivValue, market })}
-      />
-
-      <SummaryTiles
-        currency={currency}
-        netPremium={netPremium}
-        probProfit={probProfit}
-        expectancy={expectancy}
-        expReturn={expReturn}
-      />
     </div>
   );
 }
