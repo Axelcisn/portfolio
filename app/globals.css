@@ -1,64 +1,105 @@
-/* =========================
-   Global Styles (Portfolio)
-   ========================= */
+/* =========================================
+   Global Styles — clean, Apple‑like, precise
+   ========================================= */
 
-/* ===== Design Tokens ===== */
+/* ---------- Tokens ---------- */
 :root{
+  color-scheme: light dark;
+
+  /* Surfaces & text */
   --bg:#ffffff;
   --text:#111827;
+  --muted:#6b7280;
+
+  /* Cards & borders */
   --card:#f6f7f8;
   --border:#e5e7eb;
 
-  --accent:#007aff;        /* Apple blue */
-  --accent-hover:#006ee6;  /* hover (~-6%)  */
-  --accent-active:#005ec2; /* active (~-10%)*/
-
-  --radius:14px;
-
-  --row-gap:16px;          /* vertical spacing between blocks */
-  --col-gap:12px;          /* horizontal spacing within rows  */
-
-  /* Focus ring (slimmer = ~2/3 of old 3px) */
-  --focus-w:2px;
-  --focus-offset:2px;
-}
-html.dark{
-  --bg:#0b0b0c;
-  --text:#ffffff;          /* high-contrast text in dark */
-  --card:#14161a;          /* darker card for contrast   */
-  --border:#2b2f36;
-
+  /* Accent (Apple blue) */
   --accent:#007aff;
   --accent-hover:#006ee6;
   --accent-active:#005ec2;
+
+  /* Radii & elevation */
+  --radius:14px;
+  --shadow-soft: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+
+  /* Spacing */
+  --row-gap:16px;  /* vertical spacing between blocks */
+  --col-gap:12px;  /* horizontal spacing within rows */
+
+  /* Focus */
+  --focus-w:2px;
+  --focus-offset:2px;
+
+  /* Layout */
+  --container-w:1100px;
 }
+
+html.dark{
+  --bg:#0b0b0c;
+  --text:#ffffff;
+  --muted:#9aa0a6;
+
+  --card:#14161a;
+  --border:#2b2f36;
+
+  --accent:#1790ff;
+  --accent-hover:#0f79db;
+  --accent-active:#0c63b5;
+
+  --shadow-soft: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.25);
+}
+
 @media (prefers-contrast: more){
-  :root{ --focus-w:3px; }  /* accessibility bump */
+  :root{ --focus-w:3px; }
 }
 
-/* ===== Base ===== */
+/* ---------- Base ---------- */
 *{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
 ::selection{ background:rgba(0,122,255,.25); }
-
+html{ -webkit-text-size-adjust:100%; }
 body{
-  margin:0;
-  font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
+  font-family: ui-sans-serif, system-ui, -apple-system, "SF Pro Text", "SF Pro Display",
+               Segoe UI, Roboto, Inter, Helvetica, Arial, sans-serif;
+  line-height:1.45;
   background:var(--bg);
   color:var(--text);
   min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+}
+a{ color:inherit; text-decoration:none; }
+label{ font-weight:500; opacity:.95; cursor:default; }
+
+h1,h2,h3{ margin:0; font-weight:600; letter-spacing:.2px; }
+h1{ font-size:28px; line-height:1.1; }
+h2{ font-size:20px; }
+h3{ font-size:16px; margin-bottom:12px; }
+
+.small{ font-size:12px; color:var(--muted); }
+.value{ font-weight:600; font-size:1.1rem; line-height:1; font-variant-numeric: tabular-nums; }
+.muted{ color:var(--muted); }
+
+/* ---------- Layout ---------- */
+.container{
+  max-width:var(--container-w);
+  margin:0 auto;
+  padding:24px;
 }
 
-a{ color:inherit; text-decoration:none; }
-label{ font-weight:500; opacity:.95; }
-h3{ margin:0 0 12px 0; font-weight:600; letter-spacing:.2px; }
+.grid{ display:grid; gap:var(--row-gap); }
+.grid-2{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--row-gap); }
+.grid-3{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--row-gap); }
+@media (max-width:900px){
+  .grid-2,.grid-3{ grid-template-columns:1fr; }
+}
 
-.small{ font-size:12px; opacity:.9; }
-.value{ font-weight:600; font-size:1.1rem; line-height:1; }
-.muted{ opacity:.7; }
+.row{ display:flex; align-items:center; gap:var(--col-gap); }
+.row-right{ display:flex; align-items:center; gap:var(--col-gap); justify-content:flex-end; }
 
-/* ===== Layout ===== */
-.container{ max-width:1100px; margin:0 auto; padding:24px; }
-
+/* Sticky navbar */
 .navbar{
   position:sticky; top:0; z-index:50;
   display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -68,7 +109,6 @@ h3{ margin:0 0 12px 0; font-weight:600; letter-spacing:.2px; }
   background:rgba(0,0,0,0.03);
 }
 html.dark .navbar{ background:rgba(0,0,0,0.35); }
-
 .nav-left{ display:flex; align-items:center; gap:12px; }
 .nav-title{ font-weight:700; letter-spacing:.2px; }
 .nav-links{ display:flex; gap:8px; flex-wrap:wrap; }
@@ -78,67 +118,38 @@ html.dark .navbar{ background:rgba(0,0,0,0.35); }
 
 /* Cards */
 .card{
+  background:var(--card);
   border:1px solid var(--border);
   border-radius:var(--radius);
   padding:16px;
-  background:var(--card);
+  box-shadow:var(--shadow-soft);
 }
 .card > * + *{ margin-top:12px; }
 
-/* Market card — symmetric paddings & stacked rows */
-.card.market{ padding:20px 24px; }         /* py-5 px-6 */
-.market-stack{ display:grid; row-gap:20px; }  /* gap-y-5 */
+/* Market card */
+.card.market{ padding:20px 24px; }
+.market-stack{ display:grid; row-gap:20px; }
 
-/* Grids */
-.grid{ display:grid; gap:var(--row-gap); }
-.grid-2{ grid-template-columns:repeat(2,minmax(0,1fr)); }
-.grid-3{ grid-template-columns:repeat(3,minmax(0,1fr)); }
-@media (max-width:900px){
-  .grid-2,.grid-3{ grid-template-columns:1fr; }
-}
-
-/* Row patterns */
-.row{ display:flex; align-items:center; gap:var(--col-gap); }
-.row-right{ display:flex; align-items:center; gap:var(--col-gap); justify-content:flex-end; }
-
-/* Left controls + right value (same line) */
-.index-row{
-  display:grid;
-  grid-template-columns:1fr auto;
-  align-items:center;
-  gap:var(--col-gap);
-}
-
-/* Vertical group — extra space between label and the control */
-.vgroup{
-  display:flex;
-  flex-direction:column;
-  row-gap:12px; /* ≈ mt-3 separation */
-}
-
-/* Optional columns with sublabels (kept for reuse) */
-.col{ display:flex; flex-direction:column; align-items:stretch; }
-.sublabel{ font-size:12px; opacity:.9; margin-bottom:6px; }
-
-/* ===== Controls ===== */
-input,select,textarea{
-  color:var(--text);
-  caret-color:var(--text);
-}
+/* ---------- Controls ---------- */
+input,select,textarea,button{ font:inherit; color:inherit; }
+input,select,textarea{ caret-color:var(--text); }
 input::placeholder,textarea::placeholder{ color:rgba(17,24,39,.55); }
-html.dark input::placeholder,
-html.dark textarea::placeholder{ color:rgba(255,255,255,.78); }
+html.dark input::placeholder, html.dark textarea::placeholder{ color:rgba(255,255,255,.75); }
 
-/* Unified field size */
+/* Unified field */
 .field{
   display:inline-flex; align-items:center;
   height:40px; padding:10px 14px;
-  border-radius:12px; border:1px solid var(--border);
-  background:var(--card); color:var(--text);
-  width:100%;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:var(--card);
+  color:var(--text);
+  width:100%; max-width:100%; min-width:0;
+  transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
 }
+.field:disabled{ opacity:.65; cursor:not-allowed; }
 
-/* Slim, consistent focus ring across interactive elements */
+/* Focus ring — consistent across interactive elements */
 .field:focus,
 select.field:focus,
 textarea.field:focus,
@@ -151,7 +162,7 @@ input[type="checkbox"]:focus,
   outline-offset:var(--focus-offset);
 }
 
-/* ===== Buttons ===== */
+/* Buttons */
 .button{
   display:inline-flex; align-items:center; justify-content:center;
   height:40px; padding:10px 14px;
@@ -160,13 +171,13 @@ input[type="checkbox"]:focus,
   background:var(--accent);
   color:#fff;
   cursor:pointer;
-  transition:background .12s ease, filter .12s ease, opacity .12s ease;
+  transition:background .12s ease, filter .12s ease, opacity .12s ease, box-shadow .12s ease;
+  box-shadow: 0 1px 0 rgba(0,0,0,.06);
 }
 .button:hover{ background:var(--accent-hover); }
 .button:active{ background:var(--accent-active); }
 .button[disabled]{ opacity:.6; cursor:not-allowed; }
 
-/* Ghost button (chips) */
 .button.ghost{
   background:transparent;
   border:1px solid var(--border);
@@ -174,31 +185,29 @@ input[type="checkbox"]:focus,
 }
 .button.ghost:hover{ background:var(--card); }
 
-/* ===== Checkbox — solid blue, no checkmark ===== */
+/* Checkbox — solid blue dot */
 input[type="checkbox"]{
   -webkit-appearance:none; appearance:none;
   width:20px; height:20px; border-radius:9999px;
   border:1px solid var(--border); background:transparent;
-  cursor:pointer; transition:background .12s ease, border-color .12s ease;
+  cursor:pointer; transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
-input[type="checkbox"]:checked{
-  background:var(--accent); border-color:var(--accent);
-}
+input[type="checkbox"]:checked{ background:var(--accent); border-color:var(--accent); }
 
-/* ===== Small theme toggle ===== */
+/* Theme toggle (icon holder) */
 .toggle{
   width:36px; height:36px; border-radius:9999px;
   border:1px solid var(--border);
   background:rgba(0,0,0,.04);
   display:inline-flex; align-items:center; justify-content:center;
-  transition:background .12s ease, filter .12s ease;
+  transition:background .12s ease, filter .12s ease, box-shadow .12s ease;
 }
 html.dark .toggle{ background:rgba(255,255,255,.08); }
 .toggle:hover{ filter:brightness(0.96); }
 .toggle:active{ filter:brightness(0.90); }
 html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
 
-/* ===== Badges (optional) ===== */
+/* Badges */
 .badge{
   display:inline-flex; align-items:center;
   height:28px; padding:2px 10px;
@@ -209,21 +218,22 @@ html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
   font-size:12px;
 }
 
-/* =========================
-   TradingView-style additions
-   ========================= */
+/* ---------- TradingView‑style additions (Strategy) ---------- */
 
-/* 2-column app layout: main + right rail (collapses on small screens) */
+/* 2‑column: main + stats rail (collapses on small screens) */
 .tv-layout{
   display:grid;
   grid-template-columns: 1fr 320px;
-  gap:16px;
+  gap:var(--row-gap);
   align-items:start;
 }
 @media (max-width:1100px){
   .tv-layout{ grid-template-columns: 1fr; }
   .stats-rail{ position: static; }
 }
+
+/* Column stack in left pane (uniform gaps) */
+.tv-layout > .page-stack{ display:grid; gap:var(--row-gap); }
 
 /* Sticky, compact rail */
 .stats-rail{
@@ -233,8 +243,7 @@ html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
 
 /* Compact cards used in the rail */
 .card.dense{ padding:12px; }
-
-.section-title{ font-size:12px; opacity:.8; margin-bottom:6px; }
+.section-title{ font-size:12px; color:var(--muted); margin-bottom:6px; }
 
 /* Distribution tiles (P5…P95, bounds, mean) */
 .dense-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
@@ -252,32 +261,48 @@ html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
   padding:6px 0; border-bottom:1px dashed var(--border);
 }
 .stat-row:last-child{ border-bottom:0; }
-.stat-row .k{ font-size:12px; opacity:.75; }
+.stat-row .k{ font-size:12px; color:var(--muted); }
 .stat-row .v{ font-variant-numeric: tabular-nums; font-weight:600; }
 
 /* Probability bar */
 .progress{ height:8px; background:var(--border); border-radius:9999px; overflow:hidden; margin-top:6px; }
 .progress .bar{ height:100%; background:var(--accent); }
 
-/* Hide old inline tiles inside the chart wrapper (when present) */
+/* Hide legacy inline tiles when the chart is wrapped */
 .tv-chart .card > .grid.grid-3{ display:none; }
 
-/* ===== Page header (Strategy) ===== */
+/* ---------- Page header (Strategy) ---------- */
 .page-header{
   display:flex; align-items:center; justify-content:space-between;
   padding: 8px 0 18px 0; border-bottom: 1px solid var(--border);
   margin-bottom: 16px;
 }
 .titles{ display:flex; flex-direction:column; gap:6px; }
-.eyebrow{ font-size:12px; opacity:.75; letter-spacing:.3px; }
+.eyebrow{ font-size:12px; color:var(--muted); letter-spacing:.3px; }
 .page-title{ font-size:28px; line-height:1.1; margin:0; letter-spacing:-.2px; }
-.subtitle{ margin:0; font-size:14px; opacity:.85; }
-
+.subtitle{ margin:0; font-size:14px; color:var(--muted); }
 .header-tools{ display:flex; align-items:center; gap:10px; }
 
-/* Chart card helpers */
+/* ---------- Chart helpers ---------- */
 .card.padless{ padding:0; overflow:hidden; }
 .card.canvas svg{ display:block; }
 
-/* Nicer <h3> spacing inside cards */
-.card h3{ margin:0 0 10px 0; font-size:16px; }
+/* ---------- Strategy tweaks & fixes ---------- */
+
+/* Prevent input overflow inside Market card (controls fit boundaries) */
+.index-row{
+  display:grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items:center;
+  gap:var(--col-gap);
+}
+.index-row > *{ min-width:0; }
+.field{ width:100%; max-width:100%; min-width:0; }
+
+/* Slightly tighter vertical rhythm within Market card */
+.card.market .market-stack{ row-gap:16px; }
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
