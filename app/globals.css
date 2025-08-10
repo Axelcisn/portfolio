@@ -531,19 +531,16 @@ html.dark .modal-sheet{ box-shadow: 0 30px 80px rgba(0,0,0,.6); }
 .sg-th{ font-size:12px; opacity:.7; }
 .sg-td{}
 
-/* ===== Company Hero (refined) ===== */
+/* ===== Company Hero (refined hierarchy) ===== */
 .company-hero{
   display:grid;
-  grid-template-columns: auto 1fr auto; /* avatar | identity | price */
+  grid-template-columns: auto 1fr; /* avatar | content */
   gap:16px;
-  align-items:end;                      /* align baselines between name & price */
+  align-items:center;
   margin-bottom: 8px;
 }
-@media (max-width:880px){
-  .company-hero{
-    grid-template-columns: auto 1fr;    /* avatar | identity */
-    align-items:center;
-  }
+@media (max-width:640px){
+  .company-hero{ gap:12px; }
 }
 
 .ch-avatar{
@@ -558,47 +555,43 @@ html:not(.dark) .ch-avatar{
 .avatar-img{ width:70%; height:70%; object-fit:contain; filter:contrast(1.05) saturate(.9); }
 .avatar-mono{ font-weight:800; font-size:28px; color:var(--text); opacity:.9; }
 
-.ch-id{ min-width:0; }
+.ch-content{ min-width:0; }
 .ch-name{
   font-size:32px; line-height:1.05; font-weight:800; letter-spacing:-.2px;
   margin:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.id-group{ margin-top:8px; }
-.id-pill{
-  display:inline-flex; align-items:center; gap:8px;
-  height:34px; padding:0 12px; border-radius:12px;
-  border:1px solid var(--border); background:var(--bg);
-  font-weight:600;
+
+/* Ticker • Exchange line (slightly smaller than name) */
+.id-line{
+  margin-top:6px;
+  font-size:14px;
+  color:var(--muted);
+  display:flex; align-items:center; gap:8px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
-.id-symbol{ letter-spacing:.2px; }
-.id-dot{ opacity:.6; }
+.id-symbol{ font-weight:700; color:var(--text); opacity:.9; }
+.id-dot{ opacity:.55; }
 .id-exch{ opacity:.9; }
 
-.ch-priceblock{ text-align:right; }
+/* Price cluster placed BELOW identity line */
+.price-stack{ margin-top:10px; }
 .price-row{
-  display:flex; align-items:baseline; gap:10px; white-space:nowrap;
+  display:flex; align-items:baseline; gap:8px; white-space:nowrap;
 }
 .price-int{ font-size:42px; font-weight:800; letter-spacing:-.3px; line-height:1; }
 .price-dec{ font-size:28px; font-weight:700; opacity:.9; line-height:1; transform: translateY(1px); }
 .price-ccy{ margin-left:2px; font-weight:600; opacity:.85; }
-.price-change{ margin-left:10px; font-weight:700; }
+
+.price-change{ margin-top:4px; font-weight:700; }
 .price-change.pos{ color:#16a34a; }
 .price-change.neg{ color:#ef4444; }
 .price-change.flat{ opacity:.75; }
 
-.ch-status{ margin-top:4px; color:var(--muted); text-align:right; }
+/* Subtle status line under price (session + time) */
+.ch-status{ margin-top:2px; color:var(--muted); }
 
+/* Responsive rules */
 @media (max-width:880px){
-  .ch-priceblock{
-    grid-column: 1 / -1;   /* push price under identity */
-    text-align:left;
-  }
   .price-row{ flex-wrap:wrap; gap:8px; }
-}
-
-/* Visually hidden text for screen readers */
-.sr-only{
-  position:absolute !important; width:1px; height:1px; padding:0; margin:-1px;
-  overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
 }
