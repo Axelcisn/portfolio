@@ -73,7 +73,7 @@ export default function CompanyHero({ company }) {
 
   const { int: intPart, dec: decPart } = formatParts(price);
   const dir = Number.isFinite(chAbs) ? (chAbs > 0 ? "pos" : chAbs < 0 ? "neg" : "flat") : "flat";
-  const session = marketSession || "As of";
+  const session = marketSession || "At close";
 
   // Accessible spoken line
   const srLine =
@@ -83,7 +83,7 @@ export default function CompanyHero({ company }) {
 
   return (
     <div className="company-hero" aria-live="polite">
-      {/* avatar / logo */}
+      {/* avatar / logo (neutral monogram fallback) */}
       <div className="ch-avatar" aria-hidden="true">
         {logoUrl ? (
           <img src={logoUrl} alt="" className="avatar-img" />
@@ -92,32 +92,35 @@ export default function CompanyHero({ company }) {
         )}
       </div>
 
-      {/* identity (name + ticker•exchange) */}
-      <div className="ch-id">
-        <h1 className="ch-name" title={name || symbol}>{name || symbol}</h1>
-        <div className="id-group" title={`${symbol}${exchangeLabel ? " • " + exchangeLabel : ""}`}>
-          <span className="id-pill">
-            <span className="id-symbol">{symbol}</span>
-            {exchangeLabel && <span className="id-dot">•</span>}
-            {exchangeLabel && <span className="id-exch">{exchangeLabel}</span>}
-          </span>
-        </div>
-      </div>
+      {/* content: name → ticker•exchange → price (below) */}
+      <div className="ch-content">
+        <h1 className="ch-name" title={name || symbol}>
+          {name || symbol}
+        </h1>
 
-      {/* price cluster */}
-      <div className="ch-priceblock" aria-label={srLine}>
-        <div className="price-row">
-          <span className="price-int">{intPart}</span>
-          {decPart && <span className="price-dec">{decPart}</span>}
-          <span className="price-ccy">{currency}</span>
-          {Number.isFinite(chAbs) && Number.isFinite(chPct) && (
-            <span className={`price-change ${dir}`}>
-              {absStr(chAbs)}&nbsp;&nbsp;{pctStr(chPct)}
-            </span>
-          )}
+        <div className="id-line" title={`${symbol}${exchangeLabel ? " • " + exchangeLabel : ""}`}>
+          <span className="id-symbol">{symbol}</span>
+          {exchangeLabel && <span className="id-dot">•</span>}
+          {exchangeLabel && <span className="id-exch">{exchangeLabel}</span>}
         </div>
-        <div className="ch-status small">
-          {session} {new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} {tzNow()}
+
+        {/* PRICE placed BELOW ticker/exchange line */}
+        <div className="price-stack" aria-label={srLine}>
+          <div className="price-row">
+            <span className="price-int">{intPart}</span>
+            {decPart && <span className="price-dec">{decPart}</span>}
+            <span className="price-ccy">{currency}</span>
+          </div>
+
+          {Number.isFinite(chAbs) && Number.isFinite(chPct) && (
+            <div className={`price-change ${dir}`}>
+              {absStr(chAbs)}&nbsp;&nbsp;{pctStr(chPct)}
+            </div>
+          )}
+
+          <div className="ch-status small">
+            {session} • {new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} {tzNow()}
+          </div>
         </div>
       </div>
     </div>
