@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import TickerSearch from "./TickerSearch";
 
-/* Pretty exchange labels for the "Selected:" line */
+/* Exchange pretty labels */
 const EX_NAMES = {
   NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
   NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
@@ -13,7 +13,6 @@ const EX_NAMES = {
 };
 
 const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
-
 function fmtMoney(v, ccy = "") {
   const n = Number(v);
   if (!Number.isFinite(n)) return "";
@@ -60,17 +59,23 @@ export default function CompanyCard({
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
+  /* =========================
+     API helpers (robust, with fallbacks)
+     ========================= */
+
   async function fetchCompany(sym) {
     const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
       cache: "no-store",
     });
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
+
     setCurrency(j.currency || "");
     setSpot(Number(j.spot || 0));
     setExchangeLabel(
       picked?.exchange ? EX_NAMES[picked.exchange] || picked.exchange : ""
     );
+
     onConfirm?.({
       symbol: j.symbol,
       name: j.name,
@@ -83,25 +88,57 @@ export default function CompanyCard({
     });
   }
 
-  async function getVolatility(sym, source, d) {
-    if (!sym) return;
-    if (source === "manual") {
-      onIvSourceChange?.("manual");
-      onIvValueChange?.(sigma);
-      return;
-    }
-    try {
-      const url = `/api/volatility?symbol=${encodeURIComponent(sym)}&source=${encodeURIComponent(source)}&days=${encodeURIComponent(d)}`;
-      const r = await fetch(url, { cache: "no-store" });
+  /**
+   * Try to obtain annualized sigma from:
+   *  1) /api/volatility using either ?source=live|historical or ?volSource=...
+   *  2) fallback: /api/company/autoFields (it returns sigma too)
+   */
+  async function fetchSigma(sym, uiSource, d) {
+    const mapped = uiSource === "hist" ? "historical" : "live";
+
+    // attempt A: /api/volatility?source=live|historical
+    const tryVol = async (paramName) => {
+      const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${paramName}=${encodeURIComponent(
+        mapped
+      )}&days=${encodeURIComponent(d)}`;
+      const r = await fetch(u, { cache: "no-store" });
       const j = await r.json();
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
+      return j;
+    };
 
+    try {
+      let j;
+      try {
+        j = await tryVol("source");
+      } catch {
+        // some deployments used volSource instead of source
+        j = await tryVol("volSource");
+      }
       setSigma(j?.sigmaAnnual ?? null);
       setVolMeta(j?.meta || null);
-      onIvSourceChange?.(source === "iv" ? "live" : "historical");
+      onIvSourceChange?.(mapped === "live" ? "live" : "historical");
       onIvValueChange?.(j?.sigmaAnnual ?? null);
-    } catch (e) {
-      setMsg(String(e?.message || e));
+      return;
+    } catch (e1) {
+      // attempt B: /api/company/autoFields
+      try {
+        const url = `/api/company/autoFields?symbol=${encodeURIComponent(
+          sym
+        )}&days=${encodeURIComponent(d)}&volSource=${encodeURIComponent(mapped)}`;
+        const r = await fetch(url, { cache: "no-store" });
+        const j = await r.json();
+        if (!r.ok || j?.ok === false) throw new Error(j?.error || `AutoFields ${r.status}`);
+
+        const s = j?.sigmaAnnual ?? j?.sigma ?? null;
+        setSigma(s);
+        setVolMeta(j?.meta || null);
+        onIvSourceChange?.(mapped === "live" ? "live" : "historical");
+        onIvValueChange?.(s);
+        return;
+      } catch (e2) {
+        throw e2;
+      }
     }
   }
 
@@ -111,7 +148,12 @@ export default function CompanyCard({
     setLoading(true); setMsg("");
     try {
       await fetchCompany(s);
-      await getVolatility(s, volSrc, days);
+      if (volSrc === "manual") {
+        onIvSourceChange?.("manual");
+        onIvValueChange?.(sigma);
+      } else {
+        await fetchSigma(s, volSrc, days);
+      }
     } catch (e) {
       setMsg(String(e?.message || e));
     } finally {
@@ -126,7 +168,9 @@ export default function CompanyCard({
     if (!selSymbol || volSrc === "manual") return;
     clearTimeout(daysTimer.current);
     daysTimer.current = setTimeout(() => {
-      getVolatility(selSymbol, volSrc, days);
+      fetchSigma(selSymbol, volSrc, days).catch((e) =>
+        setMsg(String(e?.message || e))
+      );
     }, 400);
     return () => clearTimeout(daysTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
