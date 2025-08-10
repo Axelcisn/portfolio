@@ -1,86 +1,91 @@
-// app/api/volatility/route.js
 import { NextResponse } from "next/server";
-import { yahooDailyCloses, yahooLiveIv } from "../../../lib/yahoo";
+import { fetchHistSigma, fetchIvATM } from "../../../lib/volatility.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// sample stdev (population)
-function stdev(arr) {
-  const n = arr.length;
-  if (!n) return null;
-  const mean = arr.reduce((a, b) => a + b, 0) / n;
-  const variance = arr.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
-  return Math.sqrt(variance);
-}
+const cacheHeaders = {
+  "Cache-Control": "s-maxage=60, stale-while-revalidate=30",
+};
 
-// closes -> daily log returns
-function logReturns(closes) {
-  const out = [];
-  for (let i = 1; i < closes.length; i++) {
-    const p0 = closes[i - 1].close;
-    const p1 = closes[i].close;
-    if (p0 > 0 && p1 > 0) out.push(Math.log(p1 / p0));
-  }
-  return out;
-}
-
-async function histVolAnnualized(symbol, days) {
-  // pull enough history depending on window
-  const range = days <= 60 ? "6mo" : days <= 250 ? "1y" : "2y";
-  const arr = await yahooDailyCloses(symbol, range, "1d");
-  if (!arr.length) return { sigmaAnnual: null, pointsUsed: 0 };
-  // take a tail a bit larger than requested window
-  const tail = arr.slice(-Math.max(5, Math.min(arr.length, days + 5)));
-  const rets = logReturns(tail);
-  const sd = stdev(rets);
-  if (sd == null) return { sigmaAnnual: null, pointsUsed: rets.length };
-  // daily -> annualized (≈252 trading days)
-  const sigmaAnnual = sd * Math.sqrt(252);
-  return { sigmaAnnual, pointsUsed: rets.length };
-}
+const clamp = (x, lo, hi) => Math.min(Math.max(Number(x) || 0, lo), hi);
 
 export async function GET(req) {
+  const t0 = Date.now();
   try {
     const { searchParams } = new URL(req.url);
-    const symbol = String(searchParams.get("symbol") || "").trim();
-    const source = (searchParams.get("source") || "hist").toLowerCase(); // 'iv' | 'hist'
-    const days = Math.max(1, Math.min(365, Number(searchParams.get("days") || 30)));
+    const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
+    const sourceRaw = (searchParams.get("source") || "iv").toLowerCase(); // "iv" | "hist"
+    const days = clamp(searchParams.get("days") || 30, 1, 365);
 
     if (!symbol) {
-      return NextResponse.json({ error: "symbol required" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: { code: "SYMBOL_REQUIRED", message: "symbol required" } },
+        { status: 400, headers: cacheHeaders }
+      );
     }
 
-    if (source === "iv") {
-      // try Yahoo options IV nearest to days
-      const iv = await yahooLiveIv(symbol, days);
-      if (iv?.iv) {
-        return NextResponse.json({
-          source: "iv",
-          sigmaAnnual: iv.iv, // annualized decimal
-          meta: { expiry: iv.expiry, fallback: false },
-        });
+    // Normalize source
+    const wantIv = sourceRaw === "iv";
+    const wantHist = sourceRaw === "hist";
+
+    let chosen = null; // { sigmaAnnual, meta? }
+    let used = null;   // "iv" | "hist"
+    let meta = null;
+
+    if (wantIv) {
+      const iv = await fetchIvATM(symbol, days);
+      if (iv?.sigmaAnnual != null) {
+        chosen = iv;
+        used = "iv";
+      } else {
+        const hv = await fetchHistSigma(symbol, days);
+        if (hv?.sigmaAnnual != null) {
+          chosen = { ...hv, meta: { ...(hv.meta || {}), fallback: true } };
+          used = "hist";
+        }
       }
-      // fallback to historical if IV unavailable/throttled
-      const hv = await histVolAnnualized(symbol, days);
-      return NextResponse.json({
-        source: "iv",
-        sigmaAnnual: hv.sigmaAnnual,
-        meta: { expiry: null, pointsUsed: hv.pointsUsed, fallback: true },
-      });
+    } else if (wantHist) {
+      const hv = await fetchHistSigma(symbol, days);
+      if (hv?.sigmaAnnual != null) {
+        chosen = hv;
+        used = "hist";
+      } else {
+        const iv = await fetchIvATM(symbol, days);
+        if (iv?.sigmaAnnual != null) {
+          chosen = { ...iv, meta: { ...(iv.meta || {}), fallback: true } };
+          used = "iv";
+        }
+      }
     }
 
-    // Historical
-    const hv = await histVolAnnualized(symbol, days);
-    return NextResponse.json({
-      source: "hist",
-      sigmaAnnual: hv.sigmaAnnual,
-      meta: { pointsUsed: hv.pointsUsed, windowDays: days, fallback: false },
-    });
+    if (!chosen || chosen.sigmaAnnual == null) {
+      return NextResponse.json(
+        { ok: false, error: { code: "VOL_UNAVAILABLE", message: "volatility unavailable" } },
+        { status: 502, headers: cacheHeaders }
+      );
+    }
+
+    meta = {
+      ...(chosen.meta || {}),
+      days,
+      sourceRequested: wantIv ? "iv" : "hist",
+      sourceUsed: used,
+    };
+
+    // Backward-compatible: expose top-level fields while also returning a standard envelope
+    const data = { sigmaAnnual: chosen.sigmaAnnual, meta };
+    const payload = { ok: true, data, ...data, _ms: Date.now() - t0 };
+
+    return NextResponse.json(payload, { status: 200, headers: cacheHeaders });
   } catch (e) {
     return NextResponse.json(
-      { error: String(e?.message || e) },
-      { status: 500 }
+      {
+        ok: false,
+        error: { code: "INTERNAL_ERROR", message: String(e?.message ?? e) },
+        _ms: Date.now() - t0,
+      },
+      { status: 500, headers: cacheHeaders }
     );
   }
 }
