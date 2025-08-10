@@ -2,243 +2,420 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Chart from "./Chart";
 import DirectionBadge from "./DirectionBadge";
-import StrategySpecs from "./StrategySpecs";
-import StrategyConfigTable from "./StrategyConfigTable";
-import { fmtCur, fmtPct } from "../../utils/format";
 
-/* ------------------------
-   Helpers
--------------------------*/
+/* ---------- helpers ---------- */
 
-// build legs object used by Chart/Config from a strategy template
-const initLegsFromRows = (rows = [], spot = 0, direction = "Neutral") => {
-  const base = { enabled: false, K: null, qty: 0, premium: null };
-  const legs = { lc: { ...base }, sc: { ...base }, lp: { ...base }, sp: { ...base } };
-
-  const guess = (pos) => {
-    if (!spot) return spot;
-    if (pos.includes("Call")) return direction === "Bullish" ? spot * 1.05 : spot * 1.03;
-    if (pos.includes("Put")) return direction === "Bearish" ? spot * 0.95 : spot * 0.97;
-    return spot;
-  };
-
-  rows.forEach((r) => {
-    const strike = Number(r.strike);
-    const qty = Number(r.volume ?? 1);
-    const prem = Number(r.premium ?? 0);
-    const K = Number.isFinite(strike) ? strike : Math.round(guess(r.position) * 100) / 100;
-
-    switch (r.position) {
-      case "Long Call":
-        legs.lc = { enabled: qty > 0, K, qty, premium: prem };
-        break;
-      case "Short Call":
-        legs.sc = { enabled: qty > 0, K, qty, premium: prem };
-        break;
-      case "Long Put":
-        legs.lp = { enabled: qty > 0, K, qty, premium: prem };
-        break;
-      case "Short Put":
-        legs.sp = { enabled: qty > 0, K, qty, premium: prem };
-        break;
-      default:
-        break;
-    }
-  });
-
-  return legs;
+const POS_MAP = {
+  "Long Call": { key: "lc", sign: +1 },
+  "Short Call": { key: "sc", sign: -1 },
+  "Long Put": { key: "lp", sign: +1 },
+  "Short Put": { key: "sp", sign: -1 },
 };
 
-const netPremiumFromLegs = (legs) => {
-  const sgn = { lc: +1, lp: +1, sc: -1, sp: -1 };
-  return ["lc", "lp", "sc", "sp"].reduce((acc, k) => {
-    const l = legs?.[k];
-    const qty = Number(l?.qty ?? 0);
-    const prem = Number(l?.premium ?? 0);
-    if (!qty || !Number.isFinite(prem)) return acc;
-    return acc + sgn[k] * qty * prem;
-  }, 0);
+const clamp = (x, lo, hi) => Math.min(Math.max(Number(x) || 0, lo), hi);
+const fmtMoney = (n, ccy = "USD") => {
+  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
+  if (!Number.isFinite(+n)) return "—";
+  const v = Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2);
+  return `${sign}${v}`;
 };
 
-const pickChartLeg = (l) =>
-  !l
-    ? { enabled: false, K: NaN, qty: 0 }
-    : { enabled: !!l.enabled && Number.isFinite(l.K) && Number(l.qty) !== 0, K: Number(l.K), qty: Number(l.qty ?? 0) };
+/** P&L at expiration for a single leg (per 1 contract). Premium is cost (long) / credit (short). */
+function legPnLAtExpiry(row, S) {
+  const K = Number(row.strike);
+  const q = Number(row.volume || 0);
+  const prem = Number(row.premium || 0);
 
-/* ------------------------
-   Modal
--------------------------*/
+  if (!Number.isFinite(K) || !Number.isFinite(q)) return 0;
+
+  const pos = row.position || "";
+  let payoff = 0;
+
+  if (pos === "Long Call") payoff = Math.max(S - K, 0) - prem;
+  else if (pos === "Short Call") payoff = -Math.max(S - K, 0) + prem;
+  else if (pos === "Long Put") payoff = Math.max(K - S, 0) - prem;
+  else if (pos === "Short Put") payoff = -Math.max(K - S, 0) + prem;
+
+  return payoff * q;
+}
+
+function sumPnL(rows, S) {
+  return rows.reduce((acc, r) => acc + legPnLAtExpiry(r, S), 0);
+}
+
+/** simple bell curve centered at spot, scaled just for display */
+function bellY(x, mu, sigmaLike, amp) {
+  const s = sigmaLike > 0 ? sigmaLike : mu > 0 ? 0.12 * mu : 1;
+  const v = Math.exp(-0.5 * ((x - mu) / s) ** 2);
+  return amp * v;
+}
+
+/* ---------- chart (inline SVG, no external deps) ---------- */
+
+function MiniPayoffChart({ rows, spot = 0, sigma = 0.25, currency = "USD" }) {
+  // sample domain around strikes & spot
+  const { xs, ysExp, ysCur, yMin, yMax } = useMemo(() => {
+    const Ks = rows
+      .map((r) => Number(r.strike))
+      .filter((v) => Number.isFinite(v) && v > 0);
+
+    const haveAnyK = Ks.length > 0;
+    const lo = Math.max(0, Math.min(...(haveAnyK ? Ks : [spot || 100])) * 0.8);
+    const hi = Math.max(...(haveAnyK ? Ks : [spot || 100])) * 1.2;
+    const a = lo === hi ? [Math.max(1, (spot || 100) * 0.8), (spot || 100) * 1.2] : [lo, hi];
+
+    const N = 180;
+    const xs = Array.from({ length: N }, (_, i) => a[0] + (i * (a[1] - a[0])) / (N - 1));
+
+    // expiration P&L
+    const ysExp = xs.map((x) => sumPnL(rows, x));
+
+    // "current" line = same curve for structure (we'll wire live greeks later)
+    const ysCur = ysExp.slice();
+
+    const yMin = Math.min(...ysExp);
+    const yMax = Math.max(...ysExp);
+
+    return { xs, ysExp, ysCur, yMin, yMax };
+  }, [rows, spot]);
+
+  // dimensions & scales
+  const W = 1080; // wide canvas; will scale in CSS
+  const H = 420;
+  const pad = { t: 24, r: 64, b: 48, l: 64 };
+
+  const xMin = xs[0] ?? 0;
+  const xMax = xs[xs.length - 1] ?? 1;
+
+  const ySpan = Math.max(1, (yMax - yMin) || 1);
+  const yMinPad = yMin - 0.08 * ySpan;
+  const yMaxPad = yMax + 0.08 * ySpan;
+
+  const xToPx = (x) => pad.l + ((x - xMin) / (xMax - xMin)) * (W - pad.l - pad.r);
+  const yToPx = (y) => H - pad.b - ((y - yMinPad) / (yMaxPad - yMinPad)) * (H - pad.t - pad.b);
+
+  // lines
+  const pathFrom = (arr) =>
+    arr
+      .map((y, i) => `${i ? "L" : "M"} ${xToPx(xs[i]).toFixed(2)} ${yToPx(y).toFixed(2)}`)
+      .join(" ");
+
+  const pathExp = pathFrom(ysExp);
+  const pathCur = pathFrom(ysCur);
+
+  // ticks
+  const xTicks = 8;
+  const yTicks = 6;
+  const xTickVals = Array.from({ length: xTicks }, (_, i) => xMin + (i * (xMax - xMin)) / (xTicks - 1));
+  const yTickVals = Array.from({ length: yTicks }, (_, i) => yMinPad + (i * (yMaxPad - yMinPad)) / (yTicks - 1));
+
+  // bell (orange dashed)
+  const amp = (yMaxPad - yMinPad) * 0.22;
+  const bell = xs.map((x) => bellY(x, spot || (xMin + xMax) / 2, (xMax - xMin) * 0.12, amp) + yMinPad);
+  const pathBell = pathFrom(bell);
+
+  return (
+    <div className="sg-chart-wrap" style={{ width: "100%" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "360px", display: "block" }}>
+        {/* grid */}
+        <g stroke="var(--border)" opacity="0.5">
+          {xTickVals.map((x, i) => (
+            <line key={`x-${i}`} x1={xToPx(x)} x2={xToPx(x)} y1={pad.t} y2={H - pad.b} />
+          ))}
+          {yTickVals.map((y, i) => (
+            <line key={`y-${i}`} x1={pad.l} x2={W - pad.r} y1={yToPx(y)} y2={yToPx(y)} />
+          ))}
+        </g>
+
+        {/* axes */}
+        <line x1={pad.l} x2={W - pad.r} y1={H - pad.b} y2={H - pad.b} stroke="var(--text)" opacity="0.5" />
+        <line x1={pad.l} x2={pad.l} y1={pad.t} y2={H - pad.b} stroke="var(--text)" opacity="0.5" />
+
+        {/* zero line */}
+        <line
+          x1={pad.l}
+          x2={W - pad.r}
+          y1={yToPx(0)}
+          y2={yToPx(0)}
+          stroke="var(--text)"
+          opacity="0.35"
+          strokeWidth="1"
+        />
+
+        {/* spot marker */}
+        {Number.isFinite(spot) && spot > 0 && (
+          <g stroke="var(--text)" opacity="0.5">
+            <line
+              x1={xToPx(spot)}
+              x2={xToPx(spot)}
+              y1={pad.t}
+              y2={H - pad.b}
+              strokeDasharray="4 4"
+            />
+          </g>
+        )}
+
+        {/* curves */}
+        <path d={pathExp} fill="none" stroke="#ff2d55" strokeWidth="2.2" /> {/* Expiration (pink) */}
+        <path d={pathCur} fill="none" stroke="#0a84ff" strokeWidth="2" strokeDasharray="4 3" /> {/* Current (dotted) */}
+        <path d={pathBell} fill="none" stroke="#ff9f0a" strokeWidth="2" strokeDasharray="7 6" opacity="0.9" /> {/* Bell */}
+
+        {/* x ticks */}
+        <g fill="var(--text)" fontSize="11" opacity="0.85">
+          {xTickVals.map((x, i) => (
+            <text key={`xt-${i}`} x={xToPx(x)} y={H - pad.b + 16} textAnchor="middle">
+              {Math.round(x)}
+            </text>
+          ))}
+        </g>
+
+        {/* y ticks */}
+        <g fill="var(--text)" fontSize="11" opacity="0.85">
+          {yTickVals.map((y, i) => (
+            <text key={`yt-${i}`} x={pad.l - 8} y={yToPx(y) + 4} textAnchor="end">
+              {fmtMoney(y, currency)}
+            </text>
+          ))}
+        </g>
+
+        {/* legend */}
+        <g fontSize="12" fill="var(--text)">
+          <circle cx={pad.l + 8} cy={pad.t + 6} r="4" fill="#0a84ff" />
+          <text x={pad.l + 18} y={pad.t + 10}>Current P&L</text>
+          <circle cx={pad.l + 120} cy={pad.t + 6} r="4" fill="#ff2d55" />
+          <text x={pad.l + 130} y={pad.t + 10}>Expiration P&L</text>
+          <circle cx={pad.l + 250} cy={pad.t + 6} r="4" fill="#ff9f0a" />
+          <text x={pad.l + 260} y={pad.t + 10}>Bell (placeholder)</text>
+        </g>
+      </svg>
+
+      {/* metrics row (bottom of chart) */}
+      <div className="sg-metrics" style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginTop: 8 }}>
+        <div className="tile small">
+          <div className="sublabel">Underlying</div>
+          <div className="value">{fmtMoney(spot, currency)}</div>
+        </div>
+        <div className="tile small">
+          <div className="sublabel">Max Profit</div>
+          <div className="value">—</div>
+        </div>
+        <div className="tile small">
+          <div className="sublabel">Max Loss</div>
+          <div className="value">—</div>
+        </div>
+        <div className="tile small">
+          <div className="sublabel">Win Rate</div>
+          <div className="value">—</div>
+        </div>
+        <div className="tile small">
+          <div className="sublabel">Breakeven</div>
+          <div className="value">—</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- modal ---------- */
 
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, sigma, T, riskFree, mcStats, currency } = env || {};
+  const { spot, sigma, T, riskFree, currency } = env || {};
 
-  // legs state used across chart/specs/config
-  const [legs, setLegs] = useState(() =>
-    initLegsFromRows(strategy.legs, Number(spot) || 0, strategy.direction)
-  );
+  // start with the four rows so the table matches your legacy structure
+  const [rows, setRows] = useState(() => {
+    const base = [
+      { position: "Long Call", strike: "", volume: 0, premium: 0 },
+      { position: "Short Call", strike: "", volume: 0, premium: 0 },
+      { position: "Long Put", strike: "", volume: 0, premium: 0 },
+      { position: "Short Put", strike: "", volume: 0, premium: 0 },
+    ];
+    // merge any legs coming from the tile
+    (strategy?.legs || []).forEach((leg) => {
+      const idx = base.findIndex((b) => b.position === leg.position);
+      if (idx >= 0) base[idx] = { ...base[idx], ...leg };
+    });
+    return base;
+  });
 
-  const netPrem = useMemo(() => netPremiumFromLegs(legs), [legs]);
-
-  // keyboard + body lock
-  const sheetRef = useRef(null);
+  // accessibility & closing
   useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose?.();
-    window.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
+    const onEsc = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onEsc);
     document.body.style.overflow = "hidden";
     return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev || "";
+      window.removeEventListener("keydown", onEsc);
+      document.body.style.overflow = "";
     };
   }, [onClose]);
 
-  const canPlot =
-    Number(spot) > 0 &&
-    (legs.lc?.enabled || legs.lp?.enabled || legs.sc?.enabled || legs.sp?.enabled) &&
-    [legs.lc, legs.lp, legs.sc, legs.sp].some((l) => l?.enabled && Number.isFinite(l?.K));
+  const edit = (i, field, v) =>
+    setRows((prev) => {
+      const next = [...prev];
+      next[i] = { ...next[i], [field]: v === "" ? "" : Number(v) };
+      return next;
+    });
 
-  const apply = () =>
-    onApply?.(
-      {
-        lc: pickChartLeg(legs.lc),
-        lp: pickChartLeg(legs.lp),
-        sc: pickChartLeg(legs.sc),
-        sp: pickChartLeg(legs.sp),
-      },
-      netPrem
-    );
+  // prepare legs + premium for "Apply"
+  const legsForApply = useMemo(() => {
+    const empty = { enabled: false, K: NaN, qty: 0 };
+    const obj = { lc: { ...empty }, sc: { ...empty }, lp: { ...empty }, sp: { ...empty } };
+    rows.forEach((r) => {
+      const map = POS_MAP[r.position];
+      if (!map) return;
+      const K = Number(r.strike);
+      const qty = Number(r.volume || 0);
+      if (Number.isFinite(K) && Number.isFinite(qty) && qty > 0) {
+        obj[map.key] = { enabled: true, K, qty };
+      }
+    });
+    const netPrem = rows.reduce((acc, r) => {
+      const p = Number(r.premium || 0);
+      const q = Number(r.volume || 0);
+      const m = POS_MAP[r.position];
+      if (!m) return acc;
+      return acc + (m.sign * p * q);
+    }, 0);
+    return { legs: obj, netPremium: netPrem };
+  }, [rows]);
 
   return (
-    <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sgm-title">
+    <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
       <div className="modal-backdrop" onClick={onClose} />
-      <div className="modal-sheet" ref={sheetRef} onClick={(e) => e.stopPropagation()}>
+      <div className="modal-sheet" style={{ maxWidth: 1120 }}>
         {/* Header */}
         <div className="modal-head">
           <div className="mh-left">
             <div className="mh-icon">{strategy.icon && <strategy.icon aria-hidden="true" />}</div>
             <div className="mh-meta">
-              <div id="sgm-title" className="mh-name">{strategy.name}</div>
+              <div id="sg-modal-title" className="mh-name">{strategy.name}</div>
               <DirectionBadge value={strategy.direction} />
             </div>
           </div>
           <div className="mh-actions">
-            <button className="button ghost" type="button" onClick={() => { /* future: save preset */ }}>
-              Save
-            </button>
-            <button className="button" type="button" onClick={apply}>
+            <button className="button ghost" type="button">Save</button>
+            <button
+              className="button"
+              type="button"
+              onClick={() => onApply?.(legsForApply.legs, legsForApply.netPremium)}
+            >
               Apply
             </button>
-            <button className="button ghost" type="button" onClick={onClose}>
-              Close
-            </button>
+            <button className="button ghost" type="button" onClick={onClose}>Close</button>
           </div>
         </div>
 
-        {/* Body — full‑width chart, then specs, then config */}
-        <div className="modal-body vertical">
-          {/* Chart */}
-          <section className="card padless canvas white-surface">
-            <div className="chart-wrap">
-              {canPlot ? (
-                <Chart
-                  spot={Number(spot) || 0}
-                  legs={{
-                    lc: pickChartLeg(legs.lc),
-                    lp: pickChartLeg(legs.lp),
-                    sc: pickChartLeg(legs.sc),
-                    sp: pickChartLeg(legs.sp),
-                  }}
-                  riskFree={riskFree ?? 0}
-                  carryPremium={false}
-                  mu={null}
-                  // guard values so the chart always renders
-                  sigma={Number.isFinite(sigma) && sigma > 0 ? sigma : 0.20}
-                  T={Number.isFinite(T) && T > 0 ? T : 30 / 365}
-                  mcStats={mcStats}
-                  netPremium={netPrem}
-                />
-              ) : (
-                <div className="chart-empty">
-                  Add at least one leg with a strike to preview the payoff.
-                </div>
-              )}
+        {/* Chart — full width, no card */}
+        <section style={{ marginTop: 8, marginBottom: 16 }}>
+          <MiniPayoffChart rows={rows} spot={spot} sigma={sigma} currency={currency} />
+        </section>
+
+        {/* Architecture */}
+        <section className="card dense" style={{ marginBottom: 16 }}>
+          <div className="section-title">Architecture</div>
+          <div className="sg-specs" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+            <div className="tile">
+              <div className="sublabel">Composition</div>
+              <div className="value">
+                {rows
+                  .filter((r) => Number(r.volume) > 0)
+                  .map((r) => `${r.position}×${r.volume}`)
+                  .join(" · ") || "—"}
+              </div>
             </div>
-
-            {/* Metric strip under the chart (keep Breakeven empty for now) */}
-            <div className="metric-strip">
-              <Metric k="Underlying" v={fmtCur(spot ?? 0, currency)} />
-              <Metric k="Max Profit" v="—" />
-              <Metric k="Max Loss" v="—" />
-              <Metric k="Win Rate" v={fmtPct(mcStats?.pWin ?? null)} />
-              <Metric k="Breakeven" v="—" />
+            <div className="tile">
+              <div className="sublabel">Breakeven(s)</div>
+              {/* keep empty until you drop the formula */}
+              <div className="value">—</div>
             </div>
-          </section>
+            <div className="tile">
+              <div className="sublabel">Max Profit</div>
+              <div className="value">—</div>
+            </div>
+            <div className="tile">
+              <div className="sublabel">Max Loss</div>
+              <div className="value">—</div>
+            </div>
+            <div className="tile">
+              <div className="sublabel">Risk Profile</div>
+              <div className="value">{strategy.direction || "—"}</div>
+            </div>
+            <div className="tile">
+              <div className="sublabel">Greeks Exposure</div>
+              <div className="value">Δ/Γ/Θ/ν —</div>
+            </div>
+            <div className="tile">
+              <div className="sublabel">Margin Requirement</div>
+              <div className="value">—</div>
+            </div>
+          </div>
+        </section>
 
-          {/* Architecture / Specs (breakevens intentionally empty) */}
-          <StrategySpecs
-            strategy={strategy}
-            legs={legs}
-            currency={currency || "USD"}
-            breakevens={[]}             // <— show nothing until we add the formula
-            maxProfit={null}
-            maxLoss={null}
-          />
+        {/* Configuration */}
+        <section className="card dense">
+          <div className="section-title">Configuration</div>
+          <div className="sg-table">
+            <div className="sg-th">Position</div>
+            <div className="sg-th">Strike</div>
+            <div className="sg-th">Volume</div>
+            <div className="sg-th">Premium</div>
 
-          {/* Configuration (editable, updates chart live) */}
-          <StrategyConfigTable
-            legs={legs}
-            currency={currency || "USD"}
-            onChange={(next) => setLegs(next)}
-          />
-        </div>
+            {rows.map((r, i) => (
+              <Row
+                key={i}
+                row={r}
+                onStrike={(v) => edit(i, "strike", v)}
+                onVol={(v) => edit(i, "volume", v)}
+                onPremium={(v) => edit(i, "premium", v)}
+                currency={currency}
+              />
+            ))}
+          </div>
+        </section>
       </div>
-
-      <style jsx>{`
-        .modal-root{ position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; }
-        .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.45); }
-        .modal-sheet{
-          position:relative; width:min(1000px, 96vw); max-height:90vh;
-          display:flex; flex-direction:column; gap:14px;
-          background:var(--bg); border:1px solid var(--border);
-          border-radius:18px; box-shadow:0 30px 120px rgba(0,0,0,.35); padding:16px;
-        }
-        .modal-head{ display:flex; align-items:center; justify-content:space-between; gap:12px;
-          padding:4px 2px 10px 2px; border-bottom:1px solid var(--border); }
-        .mh-left{ display:flex; align-items:center; gap:12px; }
-        .mh-icon{ width:40px; height:40px; border-radius:12px; display:flex; align-items:center; justify-content:center;
-          background:var(--card); border:1px solid var(--border); }
-        .mh-name{ font-weight:700; font-size:18px; line-height:1.2; }
-        .mh-meta{ display:flex; flex-direction:column; gap:6px; }
-        .mh-actions{ display:flex; gap:8px; }
-
-        .modal-body.vertical{ overflow:auto; padding-top:8px; display:flex; flex-direction:column; gap:16px; }
-
-        .chart-wrap{ height:360px; min-height:360px; width:100%; }
-        @media (max-width: 640px){ .chart-wrap{ height:300px; min-height:300px; } }
-        .chart-empty{ height:100%; display:flex; align-items:center; justify-content:center; font-size:14px; opacity:.8; }
-
-        .metric-strip{
-          display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:10px;
-          padding:12px; border-top:1px dashed var(--border); background:transparent;
-        }
-        @media (max-width: 900px){ .metric-strip{ grid-template-columns: 1fr 1fr; } }
-        .metric{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-        .metric .k{ font-size:12px; opacity:.75; }
-        .metric .v{ font-weight:600; padding:6px 10px; border-radius:9999px; border:1px solid var(--border); background:var(--card); white-space:nowrap; }
-        .white-surface{ background:var(--card); }
-      `}</style>
     </div>
   );
 }
 
-/* small metric element */
-function Metric({ k, v }) {
+/* ---------- table row ---------- */
+function Row({ row, onStrike, onVol, onPremium, currency }) {
   return (
-    <div className="metric">
-      <span className="k">{k}</span>
-      <span className="v">{v ?? "—"}</span>
-    </div>
+    <>
+      <div className="sg-td strong">{row.position}</div>
+      <div className="sg-td">
+        <input
+          className="field"
+          type="number"
+          step="0.01"
+          placeholder="Strike"
+          value={row.strike ?? ""}
+          onChange={(e) => onStrike(e.target.value)}
+        />
+      </div>
+      <div className="sg-td">
+        <input
+          className="field"
+          type="number"
+          step="1"
+          min="0"
+          placeholder="0"
+          value={row.volume ?? ""}
+          onChange={(e) => onVol(e.target.value)}
+        />
+      </div>
+      <div className="sg-td">
+        <div style={{ display: "grid", gridTemplateColumns: "16px 1fr", alignItems: "center", gap: 6 }}>
+          <span className="muted" style={{ justifySelf: "center" }}>$</span>
+          <input
+            className="field"
+            type="number"
+            step="0.01"
+            placeholder="0"
+            value={row.premium ?? ""}
+            onChange={(e) => onPremium(e.target.value)}
+          />
+        </div>
+      </div>
+    </>
   );
 }
