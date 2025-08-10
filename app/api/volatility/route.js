@@ -4,11 +4,16 @@ import { fetchHistSigma, fetchIvATM } from "../../../lib/volatility.js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const cacheHeaders = {
-  "Cache-Control": "s-maxage=60, stale-while-revalidate=30",
-};
-
+const cacheHeaders = { "Cache-Control": "s-maxage=60, stale-while-revalidate=30" };
 const clamp = (x, lo, hi) => Math.min(Math.max(Number(x) || 0, lo), hi);
+
+function err(status, code, message) {
+  // Back-compat: plain string `error` (prevents "[object Object]"), plus structured details
+  return NextResponse.json(
+    { ok: false, error: message, errorObj: { code, message } },
+    { status, headers: cacheHeaders }
+  );
+}
 
 export async function GET(req) {
   const t0 = Date.now();
@@ -18,74 +23,65 @@ export async function GET(req) {
     const sourceRaw = (searchParams.get("source") || "iv").toLowerCase(); // "iv" | "hist"
     const days = clamp(searchParams.get("days") || 30, 1, 365);
 
-    if (!symbol) {
-      return NextResponse.json(
-        { ok: false, error: { code: "SYMBOL_REQUIRED", message: "symbol required" } },
-        { status: 400, headers: cacheHeaders }
-      );
-    }
+    if (!symbol) return err(400, "SYMBOL_REQUIRED", "symbol required");
 
-    // Normalize source
     const wantIv = sourceRaw === "iv";
     const wantHist = sourceRaw === "hist";
 
     let chosen = null; // { sigmaAnnual, meta? }
     let used = null;   // "iv" | "hist"
-    let meta = null;
 
     if (wantIv) {
-      const iv = await fetchIvATM(symbol, days);
-      if (iv?.sigmaAnnual != null) {
-        chosen = iv;
-        used = "iv";
-      } else {
-        const hv = await fetchHistSigma(symbol, days);
-        if (hv?.sigmaAnnual != null) {
-          chosen = { ...hv, meta: { ...(hv.meta || {}), fallback: true } };
-          used = "hist";
-        }
-      }
-    } else if (wantHist) {
-      const hv = await fetchHistSigma(symbol, days);
-      if (hv?.sigmaAnnual != null) {
-        chosen = hv;
-        used = "hist";
-      } else {
+      try {
         const iv = await fetchIvATM(symbol, days);
         if (iv?.sigmaAnnual != null) {
-          chosen = { ...iv, meta: { ...(iv.meta || {}), fallback: true } };
-          used = "iv";
+          chosen = iv; used = "iv";
         }
+      } catch { /* tolerate */ }
+      if (!chosen) {
+        try {
+          const hv = await fetchHistSigma(symbol, days);
+          if (hv?.sigmaAnnual != null) {
+            chosen = { ...hv, meta: { ...(hv.meta || {}), fallback: true } };
+            used = "hist";
+          }
+        } catch { /* tolerate */ }
+      }
+    } else if (wantHist) {
+      try {
+        const hv = await fetchHistSigma(symbol, days);
+        if (hv?.sigmaAnnual != null) {
+          chosen = hv; used = "hist";
+        }
+      } catch { /* tolerate */ }
+      if (!chosen) {
+        try {
+          const iv = await fetchIvATM(symbol, days);
+          if (iv?.sigmaAnnual != null) {
+            chosen = { ...iv, meta: { ...(iv.meta || {}), fallback: true } };
+            used = "iv";
+          }
+        } catch { /* tolerate */ }
       }
     }
 
     if (!chosen || chosen.sigmaAnnual == null) {
-      return NextResponse.json(
-        { ok: false, error: { code: "VOL_UNAVAILABLE", message: "volatility unavailable" } },
-        { status: 502, headers: cacheHeaders }
-      );
+      return err(502, "VOL_UNAVAILABLE", "volatility unavailable");
     }
 
-    meta = {
+    const meta = {
       ...(chosen.meta || {}),
       days,
       sourceRequested: wantIv ? "iv" : "hist",
       sourceUsed: used,
     };
 
-    // Backward-compatible: expose top-level fields while also returning a standard envelope
     const data = { sigmaAnnual: chosen.sigmaAnnual, meta };
-    const payload = { ok: true, data, ...data, _ms: Date.now() - t0 };
-
-    return NextResponse.json(payload, { status: 200, headers: cacheHeaders });
-  } catch (e) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: { code: "INTERNAL_ERROR", message: String(e?.message ?? e) },
-        _ms: Date.now() - t0,
-      },
-      { status: 500, headers: cacheHeaders }
+      { ok: true, data, ...data, _ms: Date.now() - t0 },
+      { status: 200, headers: cacheHeaders }
     );
+  } catch (e) {
+    return err(500, "INTERNAL_ERROR", String(e?.message ?? e));
   }
 }
