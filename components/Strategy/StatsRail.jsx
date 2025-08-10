@@ -44,9 +44,9 @@ export default function StatsRail({
         <div className="section-title">Strategy</div>
         <div className="dense-grid">
           <div className="card dense">
-            <div className="small">Net Premium (EV)</div>
-            <div className="strong">{expectancy == null ? "—" : fmtCur(expectancy, currency)}</div>
-            <div className="small">{expReturn == null ? "" : `(${fmtPct(expReturn)} expected return)`}</div>
+            <div className="small">Expected Value</div>
+            <div className="value">{expectancy == null ? "—" : fmtCur(expectancy, currency)}</div>
+            <div className="small muted">{expReturn == null ? "" : `(${fmtPct(expReturn)} expected return)`}</div>
           </div>
           <div className="card dense">
             <div className="small">Probability of Profit</div>
@@ -74,7 +74,7 @@ export default function StatsRail({
             return (
               <div key={label} className="tile">
                 <div className="small">{label}</div>
-                <div className="strong">{fmtNum(val, 2)} <span className="muted">({fmtPct(pct)})</span></div>
+                <div className="value">{fmtNum(val, 2)} <span className="muted">({fmtPct(pct)})</span></div>
               </div>
             );
           })}
