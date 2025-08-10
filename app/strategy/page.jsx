@@ -1,45 +1,44 @@
+// app/strategy/page.jsx
 "use client";
+
 import { useEffect, useMemo, useState } from "react";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
-import CompanyHero from "../../components/Strategy/CompanyHero";
 import MarketCard from "../../components/Strategy/MarketCard";
-import MiniCards from "../../components/Strategy/MiniCards";
-import StatsRail from "../../components/Strategy/StatsRail";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
+import StatsRail from "../../components/Strategy/StatsRail";
 
 import RomeClock from "../../components/RomeClock";
 import ThemeToggle from "../../components/ThemeToggle";
 import useDebounce from "../../hooks/useDebounce";
 
 export default function Strategy() {
-  // Company / market
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
 
-  // IV
   const [ivSource, setIvSource] = useState("live");
-  const [ivValue, setIvValue] = useState(null); // annualized decimal
+  const [ivValue, setIvValue] = useState(null);
 
-  // Market rates
-  const [market, setMarket] = useState({ riskFree: null, mrp: null, indexAnn: null });
+  const [market, setMarket] = useState({
+    riskFree: null,
+    mrp: null,
+    indexAnn: null,
+  });
 
-  // Legs + premium (driven by StrategyGallery Apply)
   const [netPremium, setNetPremium] = useState(0);
   const [legsUi, setLegsUi] = useState(null);
 
-  // MC outputs
   const [mcStats, setMcStats] = useState(null);
   const [probProfit, setProbProfit] = useState(null);
   const [expectancy, setExpectancy] = useState(null);
   const [expReturn, setExpReturn] = useState(null);
 
   const spot = company?.spot || null;
-  const sigma = ivValue ?? null;                 // annualized decimal
-  const T = horizon > 0 ? horizon / 365 : null;  // years
+  const sigma = ivValue ?? null;
+  const T = horizon > 0 ? horizon / 365 : null;
 
-  /* ---------- helpers ---------- */
+  // helpers -------------------------------------------------------------
   const num = (v) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : NaN;
@@ -50,7 +49,6 @@ export default function Strategy() {
     qty: Number.isFinite(+leg?.qty) ? +leg.qty : 0,
   });
 
-  // Normalize legs coming from UI for API/Stats
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
     const sc = toLegAPI(legsUi?.sc || {});
@@ -59,7 +57,6 @@ export default function Strategy() {
     return { lc, sc, lp, sp };
   }, [legsUi]);
 
-  // Build MC request input when all key params are present
   const mcInput = useMemo(() => {
     if (!(spot > 0) || !(T > 0) || !(sigma >= 0)) return null;
     return {
@@ -75,15 +72,19 @@ export default function Strategy() {
     };
   }, [spot, T, sigma, horizon, legs, netPremium, market.riskFree]);
 
-  // Debounce to avoid spamming while the user types
-  const debouncedPayload = useDebounce(mcInput ? JSON.stringify(mcInput) : "", 250);
+  const debouncedPayload = useDebounce(
+    mcInput ? JSON.stringify(mcInput) : "",
+    250
+  );
 
-  // Fire Monte Carlo whenever inputs change (debounced)
   useEffect(() => {
     let aborted = false;
     async function run() {
       if (!debouncedPayload) {
-        setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
+        setMcStats(null);
+        setProbProfit(null);
+        setExpectancy(null);
+        setExpReturn(null);
         return;
       }
       const body = JSON.parse(debouncedPayload);
@@ -96,10 +97,15 @@ export default function Strategy() {
         });
         const j = await r.json();
         if (aborted) return;
+
         if (!r.ok || j?.ok === false) {
-          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
+          setMcStats(null);
+          setProbProfit(null);
+          setExpectancy(null);
+          setExpReturn(null);
           return;
         }
+
         const src = j?.data || j || {};
         const nextStats = {
           meanST: src.meanST ?? null,
@@ -117,50 +123,76 @@ export default function Strategy() {
         setExpReturn(Number.isFinite(src.evPct) ? src.evPct : null);
       } catch {
         if (!aborted) {
-          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
+          setMcStats(null);
+          setProbProfit(null);
+          setExpectancy(null);
+          setExpReturn(null);
         }
       }
     }
     run();
-    return () => { aborted = true; };
+    return () => {
+      aborted = true;
+    };
   }, [debouncedPayload]);
+
+  // Strategy tile -> Apply callback (writes legs + premium)
+  const handleApply = (legsObj, netPrem) => {
+    setLegsUi(legsObj || {});
+    setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
+  };
 
   return (
     <div className="container">
-      {/* Header: default intro UNTIL a company is selected; then show Apple‑style hero */}
       <header className="page-header">
-        {company?.symbol ? (
-          <CompanyHero company={company} />
-        ) : (
-          <div className="titles">
-            <div className="eyebrow">Portfolio</div>
-            <h1 className="page-title">Strategy</h1>
-            <p className="subtitle">Build, compare, and validate your options strategy.</p>
-          </div>
-        )}
+        <div className="titles">
+          <div className="eyebrow">Portfolio</div>
+          <h1 className="page-title">Strategy</h1>
+          <p className="subtitle">
+            Build, compare, and validate your options strategy.
+          </p>
+        </div>
         <div className="header-tools">
           <RomeClock />
-          <button aria-label="Toggle theme" className="toggle"><ThemeToggle /></button>
+          <button aria-label="Toggle theme" className="toggle">
+            <ThemeToggle />
+          </button>
         </div>
       </header>
 
-      {/* Company — full width, above the 2‑column grid */}
+      {/* Company — full width */}
       <CompanyCard
         value={company}
         market={market}
-        onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
+        onConfirm={(c) => {
+          setCompany(c);
+          setCurrency(c.currency || "EUR");
+        }}
         onHorizonChange={(d) => setHorizon(d)}
         onIvSourceChange={(s) => setIvSource(s)}
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      <div className="tv-layout">
-        {/* Main column */}
-        <div className="page-stack">
-          {/* Market (same width as below sections) */}
+      {/* First row: Market (left) + Key Stats (right) */}
+      <div className="layout-2col">
+        <div className="g-item">
           <MarketCard onRates={(r) => setMarket(r)} />
+        </div>
 
-          {/* Strategy Gallery (replaces old Legs card) */}
+        {/* Right column: ONLY Key Stats, scrolls normally (no sticky) */}
+        <div className="g-item">
+          <StatsRail
+            spot={spot}
+            currency={currency}
+            company={company}
+            iv={sigma}
+            market={market}
+            // removed: distribution + strategy summary
+          />
+        </div>
+
+        {/* Second row: Strategy gallery spans both columns (full width) */}
+        <div className="g-span">
           <StrategyGallery
             spot={spot}
             currency={currency}
@@ -168,40 +200,34 @@ export default function Strategy() {
             T={T}
             riskFree={market.riskFree ?? 0}
             mcStats={mcStats}
-            onApply={(legsObj, netPrem) => {
-              setLegsUi({
-                lc: legsObj?.lc || { enabled: false, K: NaN, qty: 0 },
-                sc: legsObj?.sc || { enabled: false, K: NaN, qty: 0 },
-                lp: legsObj?.lp || { enabled: false, K: NaN, qty: 0 },
-                sp: legsObj?.sp || { enabled: false, K: NaN, qty: 0 },
-              });
-              setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
-            }}
-          />
-
-          {/* Quick actions / Monte Carlo triggers */}
-          <MiniCards
-            disabled={!company?.symbol}
-            defaultHorizon={horizon}
-            onRun={(cfg) =>
-              console.log("run MC (manual)", cfg, { ivSource, ivValue, market })
-            }
+            onApply={handleApply}
           />
         </div>
-
-        {/* Right rail (Monte Carlo summaries, stats, KPIs) */}
-        <StatsRail
-          spot={spot}
-          currency={currency}
-          company={company}
-          iv={sigma}
-          market={market}
-          mcStats={mcStats}
-          probProfit={probProfit}
-          expectancy={expectancy}
-          expReturn={expReturn}
-        />
       </div>
+
+      <style jsx>{`
+        .layout-2col {
+          display: grid;
+          grid-template-columns: 1fr 320px;
+          gap: var(--row-gap);
+          align-items: start;
+        }
+        .g-item {
+          min-width: 0;
+        }
+        .g-span {
+          grid-column: 1 / -1;
+          min-width: 0;
+        }
+        @media (max-width: 1100px) {
+          .layout-2col {
+            grid-template-columns: 1fr;
+          }
+          .g-span {
+            grid-column: 1 / -1;
+          }
+        }
+      `}</style>
     </div>
   );
 }
