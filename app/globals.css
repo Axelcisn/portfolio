@@ -1,209 +1,60 @@
-/* =========================
-   Global Styles (Portfolio)
-   ========================= */
-
-/* ===== Design Tokens ===== */
+/* ===== Design tokens used by StatsRail & TV layout ===== */
 :root{
-  --bg:#ffffff;
-  --text:#111827;
-  --card:#f6f7f8;
-  --border:#e5e7eb;
-
-  --accent:#007aff;        /* Apple blue */
-  --accent-hover:#006ee6;  /* hover (~-6%)  */
-  --accent-active:#005ec2; /* active (~-10%)*/
-
-  --radius:14px;
-
-  --row-gap:16px;          /* vertical spacing between blocks */
-  --col-gap:12px;          /* horizontal spacing within rows  */
-
-  /* Focus ring (slimmer = ~2/3 of old 3px) */
-  --focus-w:2px;
-  --focus-offset:2px;
+  --card: #ffffff;
+  --border: #e5e5ea;
+  --radius: 12px;
+  --accent: #2563eb;
 }
-html.dark{
-  --bg:#0b0b0c;
-  --text:#ffffff;          /* high-contrast text in dark */
-  --card:#14161a;          /* darker card for contrast   */
-  --border:#2b2f36;
-
-  --accent:#007aff;
-  --accent-hover:#006ee6;
-  --accent-active:#005ec2;
-}
-@media (prefers-contrast: more){
-  :root{ --focus-w:3px; }  /* accessibility bump */
+.dark :root, .dark{
+  --card: #111113;
+  --border: #2a2a2e;
+  --accent: #3b82f6;
 }
 
-/* ===== Base ===== */
-*{ box-sizing:border-box; }
-::selection{ background:rgba(0,122,255,.25); }
+/* Base primitives (non-invasive; safe overrides) */
+.card{ background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
+.small{ font-size: 12px; opacity: .75; }
+.strong{ font-weight: 600; }
+.grid{ display: grid; gap: 12px; }
+.grid-2{ grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px){ .grid-2{ grid-template-columns: 1fr; } }
 
-body{
-  margin:0;
-  font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
-  background:var(--bg);
-  color:var(--text);
-  min-height:100vh;
-}
-
-a{ color:inherit; text-decoration:none; }
-label{ font-weight:500; opacity:.95; }
-h3{ margin:0 0 12px 0; font-weight:600; letter-spacing:.2px; }
-
-.small{ font-size:12px; opacity:.9; }
-.value{ font-weight:600; font-size:1.1rem; line-height:1; }
-
-/* ===== Layout ===== */
-.container{ max-width:1100px; margin:0 auto; padding:24px; }
-
-.navbar{
-  position:sticky; top:0; z-index:50;
-  display:flex; align-items:center; justify-content:space-between; gap:12px;
-  padding:12px 16px;
-  border-bottom:1px solid var(--border);
-  backdrop-filter:blur(8px);
-  background:rgba(0,0,0,0.03);
-}
-html.dark .navbar{ background:rgba(0,0,0,0.35); }
-
-.nav-left{ display:flex; align-items:center; gap:12px; }
-.nav-title{ font-weight:700; letter-spacing:.2px; }
-.nav-links{ display:flex; gap:8px; flex-wrap:wrap; }
-.nav-link{ padding:8px 12px; border-radius:10px; }
-.nav-link.active{ background:var(--card); border:1px solid var(--border); }
-.right{ display:flex; align-items:center; gap:12px; }
-
-/* Cards */
-.card{
-  border:1px solid var(--border);
-  border-radius:var(--radius);
-  padding:16px;
-  background:var(--card);
-}
-.card > * + *{ margin-top:12px; }
-
-/* Market card — symmetric paddings & stacked rows */
-.card.market{ padding:20px 24px; }         /* py-5 px-6 */
-.market-stack{ display:grid; row-gap:20px; }  /* gap-y-5 */
-
-/* Grids */
-.grid{ display:grid; gap:var(--row-gap); }
-.grid-2{ grid-template-columns:repeat(2,minmax(0,1fr)); }
-.grid-3{ grid-template-columns:repeat(3,minmax(0,1fr)); }
-@media (max-width:900px){
-  .grid-2,.grid-3{ grid-template-columns:1fr; }
-}
-
-/* Row patterns */
-.row{ display:flex; align-items:center; gap:var(--col-gap); }
-.row-right{ display:flex; align-items:center; gap:var(--col-gap); justify-content:flex-end; }
-
-/* Left controls + right value (same line) */
-.index-row{
+/* ===== TradingView-like layout (compact rail) ===== */
+.tv-layout{
   display:grid;
-  grid-template-columns:1fr auto;
-  align-items:center;
-  gap:var(--col-gap);
+  grid-template-columns: 1fr 320px;
+  gap:16px;
+  align-items:start;
 }
-
-/* Vertical group — extra space between label and the control */
-.vgroup{
-  display:flex;
-  flex-direction:column;
-  row-gap:12px; /* ≈ mt-3 separation */
+@media (max-width: 1100px){
+  .tv-layout{ grid-template-columns: 1fr; }
+  .stats-rail{ position: static; }
 }
-
-/* Optional columns with sublabels (kept for reuse) */
-.col{ display:flex; flex-direction:column; align-items:stretch; }
-.sublabel{ font-size:12px; opacity:.9; margin-bottom:6px; }
-
-/* ===== Controls ===== */
-input,select,textarea{
-  color:var(--text);
-  caret-color:var(--text);
+.stats-rail{
+  position: sticky; top: 72px;
+  display: grid; gap: 12px;
 }
-input::placeholder,textarea::placeholder{ color:rgba(17,24,39,.55); }
-html.dark input::placeholder,
-html.dark textarea::placeholder{ color:rgba(255,255,255,.78); }
-
-/* Unified field size */
-.field{
-  display:inline-flex; align-items:center;
-  height:40px; padding:10px 14px;
-  border-radius:12px; border:1px solid var(--border);
-  background:var(--card); color:var(--text);
-  width:100%;
+.card.dense{ padding: 12px; }
+.dense-grid{
+  display:grid; grid-template-columns: 1fr 1fr; gap:10px;
 }
-
-/* Slim, consistent focus ring across interactive elements */
-.field:focus,
-select.field:focus,
-textarea.field:focus,
-.button:focus,
-.button.ghost:focus,
-.toggle:focus,
-input[type="checkbox"]:focus,
-.nav-link:focus{
-  outline:var(--focus-w) solid var(--accent);
-  outline-offset:var(--focus-offset);
-}
-
-/* ===== Buttons ===== */
-.button{
-  display:inline-flex; align-items:center; justify-content:center;
-  height:40px; padding:10px 14px;
-  border-radius:12px;
-  border:1px solid var(--accent);
-  background:var(--accent);
-  color:#fff;
-  cursor:pointer;
-  transition:background .12s ease, filter .12s ease, opacity .12s ease;
-}
-.button:hover{ background:var(--accent-hover); }
-.button:active{ background:var(--accent-active); }
-.button[disabled]{ opacity:.6; cursor:not-allowed; }
-
-/* Ghost button (chips) */
-.button.ghost{
-  background:transparent;
+.tile{
   border:1px solid var(--border);
-  color:var(--text);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--card);
 }
-.button.ghost:hover{ background:var(--card); }
+.section-title{ font-size:12px; opacity:.8; margin-bottom:6px; }
+.stat-row{
+  display:flex; align-items:baseline; justify-content:space-between;
+  padding: 6px 0; border-bottom: 1px dashed var(--border);
+}
+.stat-row:last-child{ border-bottom: 0; }
+.stat-row .k{ font-size:12px; opacity:.75; }
+.stat-row .v{ font-variant-numeric: tabular-nums; font-weight:600; }
+.progress{ height: 8px; background: var(--border); border-radius: 9999px; overflow: hidden; margin-top: 6px; }
+.progress .bar{ height: 100%; background: var(--accent); }
+.muted{ opacity:.7; }
 
-/* ===== Checkbox — solid blue, no checkmark ===== */
-input[type="checkbox"]{
-  -webkit-appearance:none; appearance:none;
-  width:20px; height:20px; border-radius:9999px;
-  border:1px solid var(--border); background:transparent;
-  cursor:pointer; transition:background .12s ease, border-color .12s ease;
-}
-input[type="checkbox"]:checked{
-  background:var(--accent); border-color:var(--accent);
-}
-
-/* ===== Small theme toggle ===== */
-.toggle{
-  width:36px; height:36px; border-radius:9999px;
-  border:1px solid var(--border);
-  background:rgba(0,0,0,.04);
-  display:inline-flex; align-items:center; justify-content:center;
-  transition:background .12s ease, filter .12s ease;
-}
-html.dark .toggle{ background:rgba(255,255,255,.08); }
-.toggle:hover{ filter:brightness(0.96); }
-.toggle:active{ filter:brightness(0.90); }
-html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
-
-/* ===== Badges (optional) ===== */
-.badge{
-  display:inline-flex; align-items:center;
-  height:28px; padding:2px 10px;
-  border-radius:9999px;
-  border:1px solid var(--accent);
-  color:var(--accent);
-  background:transparent;
-  font-size:12px;
-}
+/* Hide Chart's built-in distribution tiles in compact layout */
+.tv-chart .card > .grid.grid-3{ display:none; }
