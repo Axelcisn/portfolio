@@ -531,20 +531,20 @@ html.dark .modal-sheet{ box-shadow: 0 30px 80px rgba(0,0,0,.6); }
 .sg-th{ font-size:12px; opacity:.7; }
 .sg-td{}
 
-/* ===== Company Hero (layout per spec) ===== */
+/* ===== Company Hero (pill ticker + price aligned to logo) ===== */
 .company-hero{
   display:grid;
-  grid-template-columns: auto 1fr; /* logo | content */
-  gap:16px;
-  align-items:start;               /* logo top-left, content aligned to top */
+  grid-template-columns: auto 1fr;      /* logo | content */
+  grid-template-rows: auto auto;        /* (name+pill) , price row */
+  column-gap:16px;
+  row-gap:10px;
+  align-items:start;                    /* keep logo at top-left */
   margin-bottom: 8px;
-}
-@media (max-width:640px){
-  .company-hero{ gap:12px; }
 }
 
 /* Logo */
 .ch-avatar{
+  grid-column:1; grid-row:1;
   width:76px; height:76px; border-radius:20px;
   background: radial-gradient(85% 85% at 25% 20%, #1e232a, #0f1115);
   display:grid; place-items:center; overflow:hidden;
@@ -556,44 +556,46 @@ html:not(.dark) .ch-avatar{
 .avatar-img{ width:70%; height:70%; object-fit:contain; filter:contrast(1.05) saturate(.9); }
 .avatar-mono{ font-weight:800; font-size:28px; color:var(--text); opacity:.9; }
 
-/* Content */
-.ch-content{ min-width:0; }
+/* Right of logo: name and ticker pill */
+.ch-content{ grid-column:2; grid-row:1; min-width:0; }
 .ch-name{
   font-size:32px; line-height:1.05; font-weight:800; letter-spacing:-.2px;
-  margin:0;
+  margin:0 0 6px 0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 
-/* Ticker • Exchange (slightly smaller) */
-.id-line{
-  margin-top:6px;
-  font-size:14px;
-  color:var(--muted);
-  display:flex; align-items:center; gap:8px;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+/* Ticker • Exchange pill */
+.id-pill{
+  display:inline-flex; align-items:center; gap:8px;
+  height:34px; padding:0 12px; border-radius:9999px;
+  border:1px solid var(--border);
+  background:var(--bg);                 /* clear, high contrast */
+  font-size:14px; color:var(--muted);
 }
-.id-symbol{ font-weight:700; color:var(--text); opacity:.9; }
+.id-symbol{ font-weight:700; color:var(--text); opacity:.95; }
 .id-dot{ opacity:.55; }
 .id-exch{ opacity:.9; }
 
-/* Price cluster below identity */
-.price-stack{ margin-top:10px; }
+/* Price block spans both columns so its left edge == logo left edge */
+.price-stack{
+  grid-column:1 / -1; grid-row:2;       /* span across -> aligns to container left */
+  text-align:left;
+}
 .price-row{
   display:flex; align-items:baseline; gap:8px; white-space:nowrap;
 }
 .price-int{ font-size:42px; font-weight:800; letter-spacing:-.3px; line-height:1; }
 .price-dec{ font-size:28px; font-weight:700; opacity:.9; line-height:1; transform: translateY(1px); }
 .price-ccy{ margin-left:2px; font-weight:600; opacity:.85; }
-
-/* Colour‑coded movement (kept next to price) */
 .price-change{ margin-left:8px; font-weight:700; }
 .price-change.pos{ color:#16a34a; }
 .price-change.neg{ color:#ef4444; }
 .price-change.flat{ opacity:.75; }
 
-/* MARKET_STATUS • DATE, TIME TZ under price */
+/* MARKET_STATUS • DATE, TIME TZ below price */
 .ch-status{ margin-top:4px; color:var(--muted); }
 
-@media (max-width:880px){
+@media (max-width:640px){
+  .company-hero{ column-gap:12px; row-gap:8px; }
   .price-row{ flex-wrap:wrap; gap:8px; }
 }
