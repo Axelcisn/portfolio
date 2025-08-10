@@ -1,7 +1,7 @@
 // components/Strategy/StrategyGallery.jsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import StrategyFilters from "./StrategyFilters";
 import StrategyTile from "./StrategyTile";
 import StrategyModal from "./StrategyModal";
@@ -10,7 +10,7 @@ import { ALL_STRATEGIES } from "./icons";
 /**
  * Props:
  *  - spot, currency, sigma, T, riskFree, mcStats
- *  - onApply(legsObj, netPremium) -> writes into app state (replaces old Legs)
+ *  - onApply(legsObj, netPremium)
  */
 export default function StrategyGallery({
   spot = null,
@@ -27,6 +27,18 @@ export default function StrategyGallery({
   const [dirFilter, setDirFilter] = useState(new Set());   // Bullish/Bearish/Neutral
   const [kindFilter, setKindFilter] = useState(new Set()); // Single/Multi
   const [active, setActive] = useState(null);              // selected Strategy (opens modal)
+
+  // header search popover
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef(null);
+  useEffect(() => {
+    const onEsc = (e) => e.key === "Escape" && setSearchOpen(false);
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, []);
+  useEffect(() => {
+    if (searchOpen) setTimeout(() => searchRef.current?.focus(), 0);
+  }, [searchOpen]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -68,10 +80,41 @@ export default function StrategyGallery({
 
   return (
     <section className="card sg-card">
-      <div className="row sg-header">
+      {/* Header: title left, search icon right (aligned to card edges) */}
+      <div className="sg-header">
         <h3 className="sg-title">Strategy</h3>
+        <button
+          type="button"
+          className="icon-btn sg-search-btn"
+          aria-label="Search strategies"
+          onClick={() => setSearchOpen((v) => !v)}
+        >
+          <svg className="ico" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M21 21l-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+
+        {/* Lightweight popover search (shares the same query state) */}
+        {searchOpen && (
+          <div className="sg-search-pop" role="dialog" aria-label="Search strategies">
+            <input
+              ref={searchRef}
+              className="field search-input"
+              placeholder="Search strategies…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
+      {/* Filters row (now begins with an 'All' button) */}
       <StrategyFilters
         query={query}
         setQuery={setQuery}
@@ -83,6 +126,7 @@ export default function StrategyGallery({
         setKindFilter={setKindFilter}
       />
 
+      {/* Grid of strategies */}
       <div className="sg-grid">
         {filtered.map((s) => (
           <StrategyTile key={s.id} item={s} onOpen={() => setActive(s)} />
