@@ -19,10 +19,6 @@ const EX_NAMES = {
 };
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
-/* Remove legal suffixes (Inc., Corp., etc.) for cleaner hero name */
-const cleanName = (n = "") =>
-  n.replace(/\b(incorporated|inc\.?|corp\.?|corporation|plc|s\.p\.a\.|sa|nv)\b/gi, "").trim();
-
 export default function Strategy() {
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
@@ -113,7 +109,7 @@ export default function Strategy() {
     setLegsUi(legsObj || {}); setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
-  // derive a robust exchange label for the hero pill
+  // robust exchange label for the hero pill
   const exLabel = useMemo(() => {
     const raw =
       company?.exchange ||
@@ -124,9 +120,12 @@ export default function Strategy() {
     return prettyEx(raw);
   }, [company]);
 
+  /* Prefer the real company name in the hero (fallback to ticker) */
+  const heroName = company?.name || company?.longName || company?.symbol || "";
+
   return (
     <div className="container">
-      {/* Hero header (ticker • exchange). No clock / theme toggle here. */}
+      {/* Hero header (Company name, then TICKER • EXCHANGE) */}
       {company?.symbol ? (
         <section className="hero">
           <div className="hero-id">
@@ -134,7 +133,7 @@ export default function Strategy() {
               {String(company?.symbol || "?").slice(0, 1)}
             </div>
             <div className="hero-texts">
-              <h1 className="hero-name">{cleanName(company?.name || company?.symbol)}</h1>
+              <h1 className="hero-name">{heroName}</h1>
               <div className="hero-pill" aria-label="Ticker and exchange">
                 <span className="tkr">{company.symbol}</span>
                 {exLabel && (
@@ -240,13 +239,12 @@ export default function Strategy() {
         /* Grid below — stretch so both cards share the same height */
         .layout-2col{
           display:grid; grid-template-columns: 1fr 320px;
-          gap: var(--row-gap); align-items: stretch; /* <— equal height */
+          gap: var(--row-gap); align-items: stretch;
         }
         .g-item{ min-width:0; }
         .g-span{ grid-column: 1 / -1; min-width:0; }
-
-        /* Make the child .card fill available height */
         .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
+
         @media (max-width:1100px){
           .layout-2col{ grid-template-columns: 1fr; }
           .g-span{ grid-column: 1 / -1; }
