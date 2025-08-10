@@ -24,6 +24,7 @@ const fmtCur = (v, ccy = "USD") => {
       maximumFractionDigits: 2,
     }).format(n);
   } catch {
+    // very defensive fallback
     return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + n.toFixed(2);
   }
 };
@@ -86,7 +87,7 @@ function ChartCanvas({ spot, rows, height = 380 }) {
   const minX = strikes.length ? Math.min(...strikes) : Number.isFinite(s) ? s * 0.8 : 180;
   const maxX = strikes.length ? Math.max(...strikes) : Number.isFinite(s) ? s * 1.2 : 275;
 
-  // Y-domain placeholder
+  // Y-domain placeholder for now
   const minY = -0.08;
   const maxY = 0.08;
 
@@ -115,7 +116,6 @@ function ChartCanvas({ spot, rows, height = 380 }) {
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
       <svg width={width} height={height} role="img" aria-label="Strategy payoff chart">
-        {/* transparent bg to keep the chart visually integrated */}
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
         {/* grid Y */}
@@ -170,7 +170,7 @@ function ChartCanvas({ spot, rows, height = 380 }) {
           />
         )}
 
-        {/* legends (minimal) */}
+        {/* legends */}
         <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
           <circle r="4" fill="#60a5fa" />
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
@@ -210,7 +210,12 @@ function ChartCanvas({ spot, rows, height = 380 }) {
    Modal
    ========================= */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, currency } = env || {};
+  // Pull 52W values if available (env.high52/low52 or env.company.*)
+  const { spot, currency, company } = env || {};
+  const high52 =
+    env?.high52 ?? env?.hi52 ?? company?.high52 ?? company?.hi52 ?? null;
+  const low52 =
+    env?.low52 ?? env?.lo52 ?? company?.low52 ?? company?.lo52 ?? null;
 
   // initialise editable rows
   const [rows, setRows] = useState(() => {
@@ -267,7 +272,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           overflowY: "auto",
           WebkitOverflowScrolling: "touch",
           overscrollBehavior: "contain",
-          padding: 16, // consistent inner gutter
+          padding: 16,
         }}
       >
         {/* Header */}
@@ -332,8 +337,26 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             <Spec title="Composition">
               {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
             </Spec>
-            <Spec title="Breakeven(s)">—{/* empty until formula is provided */}</Spec>
+
+            <Spec title="Breakeven(s)">—{/* fill later when formula provided */}</Spec>
+
             <Spec title="Max Profit">—</Spec>
+
+            {/* New: 52W High / Low in one box with a divider */}
+            <Spec title="52W High / Low">
+              <div style={{ display: "grid", gridTemplateRows: "auto 1px auto", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                  <span className="small muted">High</span>
+                  <span className="value">{fmtCur(high52, currency || "USD")}</span>
+                </div>
+                <div style={{ height: 1, background: "var(--border)" }} />
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                  <span className="small muted">Low</span>
+                  <span className="value">{fmtCur(low52, currency || "USD")}</span>
+                </div>
+              </div>
+            </Spec>
+
             <Spec title="Max Loss">—</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
             <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
