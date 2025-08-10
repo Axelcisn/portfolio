@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
+import CompanyHero from "../../components/Strategy/CompanyHero"; // NEW
 import MarketCard from "../../components/Strategy/MarketCard";
 import Chart from "../../components/Strategy/Chart";
 import MiniCards from "../../components/Strategy/MiniCards";
@@ -127,13 +128,17 @@ export default function Strategy() {
 
   return (
     <div className="container">
-      {/* Page header */}
+      {/* Header: default intro UNTIL a company is selected; then show Apple‑style hero */}
       <header className="page-header">
-        <div className="titles">
-          <div className="eyebrow">Portfolio</div>
-          <h1 className="page-title">Strategy</h1>
-          <p className="subtitle">Build, compare, and validate your options strategy.</p>
-        </div>
+        {company?.symbol ? (
+          <CompanyHero company={company} />
+        ) : (
+          <div className="titles">
+            <div className="eyebrow">Portfolio</div>
+            <h1 className="page-title">Strategy</h1>
+            <p className="subtitle">Build, compare, and validate your options strategy.</p>
+          </div>
+        )}
         <div className="header-tools">
           <RomeClock />
           <button aria-label="Toggle theme" className="toggle"><ThemeToggle /></button>
