@@ -13,7 +13,7 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const q = (searchParams.get("q") || "").trim();
 
-    // Backward-compatible: empty query → empty results (200)
+    // Back-compat: empty query → empty results (200)
     if (!q) {
       const payload = { ok: true, data: { results: [] }, results: [] };
       return NextResponse.json(payload, { status: 200, headers: cacheHeaders });
@@ -21,7 +21,7 @@ export async function GET(req) {
 
     const results = await yahooSearch(q);
 
-    // Backward-compatible shape: keep top-level `results` while adding { ok, data }
+    // Back-compat: keep top-level `results` while adding { ok, data }
     const payload = { ok: true, data: { results }, results };
     return NextResponse.json(payload, { status: 200, headers: cacheHeaders });
   } catch (e) {
@@ -29,7 +29,6 @@ export async function GET(req) {
       ok: false,
       error: { code: "UPSTREAM_ERROR", message: String(e?.message ?? e) },
     };
-    // Proper status on failure; clients that ignore status will still see no `results`
     return NextResponse.json(payload, { status: 502, headers: cacheHeaders });
   }
 }
