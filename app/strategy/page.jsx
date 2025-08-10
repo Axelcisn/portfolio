@@ -37,8 +37,7 @@ export default function Strategy() {
   const [expectancy, setExpectancy] = useState(null);
   const [expReturn, setExpReturn] = useState(null);
 
-  // ---------------- derived inputs ----------------
-  const rawSpot = Number(company?.spot);
+  const spot = company?.spot || null;
   const sigma = ivValue ?? null;
   const T = horizon > 0 ? horizon / 365 : null;
 
@@ -62,20 +61,13 @@ export default function Strategy() {
   }, [legsUi]);
 
   const mcInput = useMemo(() => {
-    const spotEff = rawSpot > 0 ? rawSpot : null;
-    if (!(spotEff > 0) || !(T > 0) || !(sigma >= 0)) return null;
+    if (!(spot > 0) || !(T > 0) || !(sigma >= 0)) return null;
     return {
-      spot: spotEff,
-      mu: 0,
-      sigma,
-      Tdays: horizon,
-      paths: 15000,
-      legs,
-      netPremium: Number.isFinite(netPremium) ? netPremium : 0,
-      carryPremium: false,
-      riskFree: market.riskFree ?? 0,
+      spot, mu: 0, sigma, Tdays: horizon, paths: 15000,
+      legs, netPremium: Number.isFinite(netPremium) ? netPremium : 0,
+      carryPremium: false, riskFree: market.riskFree ?? 0,
     };
-  }, [rawSpot, T, sigma, horizon, legs, netPremium, market.riskFree]);
+  }, [spot, T, sigma, horizon, legs, netPremium, market.riskFree]);
 
   const debouncedPayload = useDebounce(mcInput ? JSON.stringify(mcInput) : "", 250);
 
@@ -113,54 +105,11 @@ export default function Strategy() {
     return () => { aborted = true; };
   }, [debouncedPayload]);
 
-  /** ---------------- Price fallback ----------------
-   * Some tickers occasionally return 0 spot from /api/company.
-   * If that happens, fetch the last close from /api/chart and use it in the hero + stats.
-   */
-  const [fallbackSpot, setFallbackSpot] = useState(null);
-  useEffect(() => {
-    let cancel = false;
-    setFallbackSpot(null);
-    if (!company?.symbol) return;
-    if (rawSpot > 0) return; // we already have a good price
+  const handleApply = (legsObj, netPrem) => {
+    setLegsUi(legsObj || {}); setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
+  };
 
-    (async () => {
-      try {
-        const u = `/api/chart?symbol=${encodeURIComponent(company.symbol)}&range=5d&interval=1d`;
-        const r = await fetch(u, { cache: "no-store" });
-        const j = await r.json();
-        if (cancel) return;
-
-        let last = null;
-        // try several common shapes
-        const arrs = [
-          j?.closes,
-          j?.close,
-          j?.data?.closes,
-          j?.data?.close,
-          j?.prices?.map((p) => p?.close ?? p?.c),
-          j?.series?.map((p) => p?.close ?? p?.c),
-        ].filter(Array.isArray);
-        for (const a of arrs) {
-          if (a && a.length) { last = Number(a[a.length - 1]); break; }
-        }
-        if (!Number.isFinite(last) && Number.isFinite(j?.lastClose)) last = Number(j.lastClose);
-        if (!Number.isFinite(last) && Number.isFinite(j?.data?.lastClose)) last = Number(j.data.lastClose);
-
-        if (Number.isFinite(last) && last > 0) setFallbackSpot(last);
-      } catch {
-        /* swallow */
-      }
-    })();
-
-    return () => { cancel = true; };
-  }, [company?.symbol, rawSpot]);
-
-  const spotEff = useMemo(
-    () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
-    [rawSpot, fallbackSpot]
-  );
-
+  // robust exchange label for the hero pill
   const exLabel = useMemo(() => {
     const raw =
       company?.exchange ||
@@ -171,14 +120,12 @@ export default function Strategy() {
     return prettyEx(raw);
   }, [company]);
 
+  /* Prefer the real company name in the hero (fallback to ticker) */
   const heroName = company?.name || company?.longName || company?.symbol || "";
 
-  // ------------------------------------------------------------
-  // UI
-  // ------------------------------------------------------------
   return (
     <div className="container">
-      {/* Hero header (Company name, then TICKER • EXCHANGE). */}
+      {/* Hero header (Company name, then TICKER • EXCHANGE) */}
       {company?.symbol ? (
         <section className="hero">
           <div className="hero-id">
@@ -201,7 +148,7 @@ export default function Strategy() {
 
           <div className="hero-price">
             <div className="p-big">
-              {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
+              {Number.isFinite(spot) ? Number(spot).toFixed(2) : "0.00"}
               <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
             </div>
             <div className="p-sub">
@@ -236,15 +183,15 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* Row 1: Market (left) + Data (right). Same height; no sticky. */}
+      {/* Row 1: Market (left) + Key stats (right). Same height; no sticky. */}
       <div className="layout-2col">
         <div className="g-item">
           <MarketCard onRates={(r) => setMarket(r)} />
         </div>
         <div className="g-item">
           <StatsRail
-            spot={spotEff}                {/* <— pass effective spot */}
-            currency={company?.currency || currency}
+            spot={spot}
+            currency={currency}
             company={company}
             iv={sigma}
             market={market}
@@ -254,7 +201,7 @@ export default function Strategy() {
         {/* Row 2: Strategy gallery spans full width */}
         <div className="g-span">
           <StrategyGallery
-            spot={spotEff}
+            spot={spot}
             currency={currency}
             sigma={sigma}
             T={T}
