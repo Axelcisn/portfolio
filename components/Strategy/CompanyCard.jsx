@@ -24,6 +24,28 @@ function parsePctInput(str) {
   return Number.isFinite(v) ? v / 100 : NaN;
 }
 
+/* --- robust close/last extraction from various API shapes --- */
+function pickLastClose(j) {
+  const candidates = [
+    j?.data?.c,
+    j?.c,
+    j?.close,
+    j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+    j?.result?.[0]?.indicators?.quote?.[0]?.close,
+  ];
+  for (const arr of candidates) {
+    if (Array.isArray(arr) && arr.length) {
+      const last = [...arr].filter((x) => Number.isFinite(x)).pop();
+      if (Number.isFinite(last)) return last;
+    }
+  }
+  const metaPx =
+    j?.meta?.regularMarketPrice ??
+    j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
+    j?.regularMarketPrice;
+  return Number.isFinite(metaPx) ? metaPx : null;
+}
+
 export default function CompanyCard({
   value = null,
   market = null,
@@ -36,7 +58,7 @@ export default function CompanyCard({
   const [typed, setTyped] = useState(value?.symbol || "");
   const [picked, setPicked] = useState(null); // {symbol, name, exchange}
   const selSymbol = useMemo(
-    () => (picked?.symbol || typed || "").trim(),
+    () => (picked?.symbol || typed || "").trim().toUpperCase(),
     [picked, typed]
   );
 
@@ -63,6 +85,19 @@ export default function CompanyCard({
      API helpers (robust, with fallbacks)
      ========================= */
 
+  async function fetchSpotFromChart(sym) {
+    try {
+      const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
+      const r = await fetch(u, { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `Chart ${r.status}`);
+      const last = pickLastClose(j);
+      return Number.isFinite(last) ? last : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function fetchCompany(sym) {
     const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
       cache: "no-store",
@@ -71,17 +106,26 @@ export default function CompanyCard({
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
 
     setCurrency(j.currency || "");
-    setSpot(Number(j.spot || 0));
+    let px = Number(j.spot);
+    if (!Number.isFinite(px) || px <= 0) {
+      // fallback to chart endpoint if quote failed/blocked
+      px = await fetchSpotFromChart(sym);
+    }
+    setSpot(px ?? null);
+
     setExchangeLabel(
-      picked?.exchange ? EX_NAMES[picked.exchange] || picked.exchange : ""
+      picked?.exchange
+        ? EX_NAMES[picked.exchange] || picked.exchange
+        : j.exchange || j.exchangeName || ""
     );
 
+    // Bubble up so the header can show a live price
     onConfirm?.({
-      symbol: j.symbol,
+      symbol: j.symbol || sym,
       name: j.name,
-      exchange: picked?.exchange || null,
+      exchange: picked?.exchange || j.exchange || null,
       currency: j.currency,
-      spot: j.spot,
+      spot: px ?? null,
       high52: j.high52 ?? null,
       low52: j.low52 ?? null,
       beta: j.beta ?? null,
@@ -162,7 +206,7 @@ export default function CompanyCard({
   }
   function confirm(){ return confirmSymbol(selSymbol); }
 
-  /* Re-fetch when source or days change (debounced) */
+  /* Re-fetch sigma when source or days change (debounced) */
   const daysTimer = useRef(null);
   useEffect(() => {
     if (!selSymbol || volSrc === "manual") return;
@@ -175,6 +219,34 @@ export default function CompanyCard({
     return () => clearTimeout(daysTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
+
+  /* Lightweight live price poll (15s). Uses chart endpoint only; safe for 401s. */
+  useEffect(() => {
+    if (!selSymbol) return;
+    let stop = false;
+    let id;
+    const tick = async () => {
+      const px = await fetchSpotFromChart(selSymbol);
+      if (!stop && Number.isFinite(px)) {
+        setSpot(px);
+        // bubble updated price upward so the header shows it
+        onConfirm?.({
+          symbol: selSymbol,
+          name: picked?.name || value?.name || "",
+          exchange: picked?.exchange || null,
+          currency,
+          spot: px,
+          high52: value?.high52 ?? null,
+          low52: value?.low52 ?? null,
+          beta: value?.beta ?? null,
+        });
+      }
+      id = setTimeout(tick, 15000);
+    };
+    tick();
+    return () => { stop = true; clearTimeout(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selSymbol]);
 
   return (
     <section className="company-block">
