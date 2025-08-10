@@ -26,22 +26,23 @@ export default function StrategyFilters({
     { id: "az", label: "A–Z" },
   ];
 
+  const isAll = dirFilter.size === 0 && kindFilter.size === 0;
+
   return (
-    <section className="sg2-filters sg-filters" role="region" aria-label="Strategy filters">
-      {/* Row 1: search + quick toggles */}
+    <section className="sg2-filters" role="region" aria-label="Strategy filters">
+      {/* Row 1: All button + direction + leg kind */}
       <div className="sg2-row">
-        <div className="searchbar">
-          <svg className="search-ico" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M21 21l-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
-          </svg>
-          <input
-            className="field search-input"
-            placeholder="Search strategies (e.g., Iron Condor, Straddle)…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search strategies"
-          />
-        </div>
+        <button
+          type="button"
+          className={`chip all ${isAll ? "on" : ""}`}
+          aria-pressed={isAll}
+          onClick={() => {
+            setDirFilter(new Set());
+            setKindFilter(new Set());
+          }}
+        >
+          All
+        </button>
 
         <div className="seg seg-dir" role="group" aria-label="Direction">
           {["Bullish", "Neutral", "Bearish"].map((d) => (
