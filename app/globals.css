@@ -718,7 +718,7 @@ html:not(.dark) .ch-avatar{
 /* Popover */
 .fpop{
   position:absolute; top:calc(100% + 8px); left:0;
-  width:min(460px, 92vw);
+  width:min(480px, 92vw);
   background:var(--bg);
   border:1px solid var(--border);
   border-radius:14px;
@@ -747,10 +747,10 @@ html:not(.dark) .ch-avatar{
   display:flex; flex-wrap:wrap; gap:8px; align-items:center;
 }
 
-/* Option pill buttons — with small gap even when selected (avoid merging) */
+/* Option pills — reduced left padding; check reserve appears only when selected */
 .fopt{
   display:inline-flex; align-items:center; gap:8px;
-  height:34px; padding:0 12px;
+  height:34px; padding:0 12px 0 10px;          /* <— reduced left padding */
   border-radius:9999px;
   border:1px solid var(--border);
   background:transparent;
@@ -765,20 +765,28 @@ html:not(.dark) .ch-avatar{
   border-color:var(--accent);
 }
 .fopt:active{ transform: translateY(1px); }
-.fopt-check{ width:12px; display:inline-block; text-align:center; }
-.fopt-label{ white-space:nowrap; }
 
-/* Panel footer */
-.factions{
-  display:flex; justify-content:flex-end; align-items:center; gap:8px;
-  margin-top:8px;
+/* the check "slot" collapses when not selected, so labels sit closer to the left edge */
+.fopt-check{
+  width:0; margin-right:0; overflow:hidden; transition: width .12s ease, margin-right .12s ease;
 }
-.factions .link{
-  background:transparent; border:0; color:var(--accent); cursor:pointer; font-weight:600;
+.fopt.on .fopt-check{
+  width:10px; margin-right:6px;
 }
-.factions .link:hover{ text-decoration:underline; }
+
+/* 'All' pill for the Direction menu */
+.fopt.all{
+  background:transparent;
+  border:1px dashed var(--border);
+  color:var(--text);
+}
+.fopt.all.on{
+  background:var(--card);
+  color:var(--text);
+  border-style:solid;
+}
 
 /* Motion safety */
 @media (prefers-reduced-motion: reduce){
-  .fpop, .fbtn, .fbtn-caret, .fopt{ transition:none !important; }
+  .fpop, .fbtn, .fbtn-caret, .fopt, .fopt-check{ transition:none !important; }
 }
