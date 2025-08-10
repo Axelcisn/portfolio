@@ -531,3 +531,49 @@ html.dark .modal-sheet{ box-shadow: 0 30px 80px rgba(0,0,0,.6); }
 .sg-th{ font-size:12px; opacity:.7; }
 .sg-td{}
 
+/* ===== Company Hero (Apple‑style) ===== */
+.company-hero{
+  display:grid;
+  grid-template-columns: 1fr auto;
+  gap:16px;
+  align-items:center;
+}
+.ch-left{ display:flex; align-items:center; gap:14px; min-width:0; }
+.avatar-lg{
+  width:88px; height:88px; border-radius:50%;
+  background: radial-gradient(80% 80% at 30% 20%, #1f2937, #0b0c0f);
+  display:grid; place-items:center; color:#fff;
+  box-shadow: 0 10px 24px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06);
+}
+html:not(.dark) .avatar-lg{
+  background: radial-gradient(85% 85% at 25% 20%, #0b74ff, #0a58d6);
+}
+.avatar-text{ font-size:36px; font-weight:700; letter-spacing:.2px; }
+.ch-meta{ min-width:0; }
+.ch-title{ font-size:34px; line-height:1; font-weight:800; letter-spacing:-.2px; margin-bottom:6px; }
+.ch-line{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.pill-badge{
+  display:inline-flex; align-items:center; height:36px; padding:0 12px;
+  border-radius:12px; border:1px solid var(--border); background:var(--card);
+  font-weight:600;
+}
+.ch-actions{ display:flex; gap:8px; }
+.icon-sq{
+  width:36px; height:36px; border-radius:12px; border:1px solid var(--border);
+  background:var(--card);
+}
+.icon-sq:focus{ outline:var(--focus-w) solid var(--accent); outline-offset:var(--focus-offset); }
+
+.ch-right{ text-align:right; }
+.ch-price .price{ font-size:44px; font-weight:800; letter-spacing:-.3px; }
+.ch-price .ccy{ margin-left:6px; font-weight:600; opacity:.85; }
+.ch-change{ margin-top:4px; font-weight:700; }
+.ch-change.pos{ color:#16a34a; }
+.ch-change.neg{ color:#ef4444; }
+.ch-change.flat{ opacity:.8; }
+.ch-sub{ margin-top:6px; }
+
+@media (max-width:880px){
+  .company-hero{ grid-template-columns: 1fr; }
+  .ch-right{ text-align:left; }
+}
