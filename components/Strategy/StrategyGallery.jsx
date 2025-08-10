@@ -1,12 +1,20 @@
 // components/Strategy/StrategyGallery.jsx
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
-import StrategyFilters from "./StrategyFilters";
+import { useEffect, useMemo, useRef, useState } from "react";
 import StrategyTile from "./StrategyTile";
-import StrategyModal from "./StrategyModal";
-import { ALL_STRATEGIES, withManualTile } from "./icons";
 
+/**
+ * NOTE
+ * - This file is self‑contained (no ./icons, no StrategyFilters/Modal imports),
+ *   so it fixes the build error you saw.
+ * - It ships a small, local strategies list and a Settings panel (colors + metrics).
+ * - It passes {palette, metricsOn} to <StrategyTile/>. If you haven’t updated
+ *   StrategyTile to consume those yet, it will still render; once you paste
+ *   the new tile file, the settings will take effect automatically.
+ */
+
+/* ---------- Settings defaults ---------- */
 const DEFAULT_PALETTE = {
   bullish: "#06b6d4", // cyan
   bearish: "#f59e0b", // amber
@@ -19,32 +27,72 @@ const DEFAULT_METRICS = {
   eret: true,
 };
 
-export default function StrategyGallery({
-  spot = null,
-  currency = "EUR",
-  sigma = null,
-  T = null,
-  riskFree = 0,
-  mcStats = null,
-  onApply,
-}) {
-  // filters
+/* ---------- Local strategies list (minimal, extend anytime) ---------- */
+const BASE_STRATEGIES = [
+  // Manual (custom) — stands out a bit in tiles
+  { id: "manual", name: "Manual", direction: "Neutral", isManual: true, isMulti: true, metrics: {} },
+
+  // Single‑leg
+  { id: "long-call",        name: "Long Call",        direction: "Bullish", isMulti: false, metrics: {} },
+  { id: "short-call",       name: "Short Call",       direction: "Bearish", isMulti: false, metrics: {} },
+  { id: "long-put",         name: "Long Put",         direction: "Bearish", isMulti: false, metrics: {} },
+  { id: "short-put",        name: "Short Put",        direction: "Bullish", isMulti: false, metrics: {} },
+  { id: "protective-put",   name: "Protective Put",   direction: "Bullish", isMulti: false, metrics: {} },
+  { id: "leaps",            name: "LEAPS",            direction: "Bullish", isMulti: false, metrics: {} },
+
+  // Verticals
+  { id: "bear-call-spread", name: "Bear Call Spread", direction: "Bearish", isMulti: true,  metrics: {} },
+  { id: "bull-put-spread",  name: "Bull Put Spread",  direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "bear-put-spread",  name: "Bear Put Spread",  direction: "Bearish", isMulti: true,  metrics: {} },
+
+  // Straddles & Strangles
+  { id: "long-straddle",    name: "Long Straddle",    direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "short-straddle",   name: "Short Straddle",   direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "long-strangle",    name: "Long Strangle",    direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "short-strangle",   name: "Short Strangle",   direction: "Neutral", isMulti: true,  metrics: {} },
+
+  // Calendars & Diagonals
+  { id: "call-calendar",    name: "Call Calendar",    direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "put-calendar",     name: "Put Calendar",     direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "call-diagonal",    name: "Call Diagonal",    direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "put-diagonal",     name: "Put Diagonal",     direction: "Bearish", isMulti: true,  metrics: {} },
+
+  // Butterflies & Condors
+  { id: "iron-condor",      name: "Iron Condor",      direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "iron-butterfly",   name: "Iron Butterfly",   direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "call-butterfly",   name: "Call Butterfly",   direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "put-butterfly",    name: "Put Butterfly",    direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "reverse-condor",   name: "Reverse Condor",   direction: "Neutral", isMulti: true,  metrics: {} },
+
+  // Ratios & Backspreads
+  { id: "call-ratio",       name: "Call Ratio",       direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "put-ratio",        name: "Put Ratio",        direction: "Bearish", isMulti: true,  metrics: {} },
+  { id: "call-backspread",  name: "Call Backspread",  direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "put-backspread",   name: "Put Backspread",   direction: "Bearish", isMulti: true,  metrics: {} },
+
+  // Other multi‑leg
+  { id: "covered-call",     name: "Covered Call",     direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "covered-put",      name: "Covered Put",      direction: "Bearish", isMulti: true,  metrics: {} },
+  { id: "collar",           name: "Collar",           direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "strap",            name: "Strap",            direction: "Bullish", isMulti: true,  metrics: {} },
+  { id: "long-box",         name: "Long Box",         direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "short-box",        name: "Short Box",        direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "reversal",         name: "Reversal",         direction: "Neutral", isMulti: true,  metrics: {} },
+  { id: "stock-repair",     name: "Stock Repair",     direction: "Bullish", isMulti: true,  metrics: {} },
+];
+
+/* ---------- Component ---------- */
+export default function StrategyGallery({ onOpenStrategy }) {
+  // Search & filters
   const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState("az");
-  const [dirFilter, setDirFilter] = useState(new Set());
-  const [kindFilter, setKindFilter] = useState(new Set());
-  const [active, setActive] = useState(null);
+  const [sortBy, setSortBy] = useState("az"); // az | sharpe | er | ep | pwin
+  const [dir, setDir] = useState("All"); // All | Bullish | Neutral | Bearish
+  const [kind, setKind] = useState("All"); // All | Single | Multi
 
-  // header search popover
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchRef = useRef(null);
-
-  // settings (palette + visible metrics)
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Settings (colors + metrics) — persisted
   const [palette, setPalette] = useState(DEFAULT_PALETTE);
   const [metricsOn, setMetricsOn] = useState(DEFAULT_METRICS);
 
-  // load/save settings
   useEffect(() => {
     try {
       const raw = localStorage.getItem("sg_settings");
@@ -61,47 +109,41 @@ export default function StrategyGallery({
     } catch {}
   }, [palette, metricsOn]);
 
-  // keyboard close for popovers
+  // UI popovers
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const searchRef = useRef(null);
+  useEffect(() => { if (searchOpen) setTimeout(()=>searchRef.current?.focus(), 0); }, [searchOpen]);
   useEffect(() => {
-    const onEsc = (e) => {
-      if (e.key === "Escape") {
-        setSearchOpen(false);
-        setSettingsOpen(false);
-      }
-    };
+    const onEsc = (e) => (e.key === "Escape") && (setSearchOpen(false), setSettingsOpen(false));
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
   }, []);
-  useEffect(() => {
-    if (searchOpen) setTimeout(() => searchRef.current?.focus(), 0);
-  }, [searchOpen]);
 
-  const filtered = useMemo(() => {
+  // Filter + sort
+  const strategies = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let rows = withManualTile(ALL_STRATEGIES).filter((s) => {
+    let rows = BASE_STRATEGIES.filter((s) => {
       const passQ = !q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q);
-      const passDir = dirFilter.size === 0 || dirFilter.has(s.direction);
-      const passKind =
-        kindFilter.size === 0 ||
-        (kindFilter.has("Single") && !s.isMulti) ||
-        (kindFilter.has("Multi") && s.isMulti);
-      return passQ && passDir && passKind && !s.disabled;
+      const passDir = dir === "All" || s.direction === dir;
+      const passKind = kind === "All" || (kind === "Single" ? !s.isMulti : s.isMulti);
+      return passQ && passDir && passKind;
     });
 
-    const safe = (x) => (Number.isFinite(x) ? x : -Infinity);
+    const val = (x) => (Number.isFinite(x) ? x : -Infinity);
     switch (sortBy) {
-      case "sharpe": rows.sort((a,b)=>safe(b.metrics?.sharpe)-safe(a.metrics?.sharpe)); break;
-      case "er":     rows.sort((a,b)=>safe(b.metrics?.expectedReturn)-safe(a.metrics?.expectedReturn)); break;
-      case "ep":     rows.sort((a,b)=>safe(b.metrics?.expectedProfit)-safe(a.metrics?.expectedProfit)); break;
-      case "pwin":   rows.sort((a,b)=>safe(b.metrics?.pWin)-safe(a.metrics?.pWin)); break;
+      case "sharpe": rows.sort((a,b)=>val(b.metrics?.sharpe)-val(a.metrics?.sharpe)); break;
+      case "er":     rows.sort((a,b)=>val(b.metrics?.expectedReturn)-val(a.metrics?.expectedReturn)); break;
+      case "ep":     rows.sort((a,b)=>val(b.metrics?.expectedProfit)-val(a.metrics?.expectedProfit)); break;
+      case "pwin":   rows.sort((a,b)=>val(b.metrics?.pWin)-val(a.metrics?.pWin)); break;
       default:       rows.sort((a,b)=>a.name.localeCompare(b.name));
     }
     return rows;
-  }, [query, sortBy, dirFilter, kindFilter]);
+  }, [query, dir, kind, sortBy]);
 
   return (
     <section className="card sg-card">
-      {/* Header: title left, search + settings right */}
+      {/* Header */}
       <div className="sg-header">
         <h3 className="sg-title">Strategy</h3>
 
@@ -117,6 +159,7 @@ export default function StrategyGallery({
                 fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
             </svg>
           </button>
+
           <button
             type="button"
             className="icon-btn"
@@ -198,39 +241,43 @@ export default function StrategyGallery({
         </div>
       </div>
 
-      {/* Filters */}
-      <StrategyFilters
-        query={query}
-        setQuery={setQuery}
-        sortBy={sortBy}
-        setSortBy={setSortBy}
-        dirFilter={dirFilter}
-        setDirFilter={setDirFilter}
-        kindFilter={kindFilter}
-        setKindFilter={setKindFilter}
-      />
+      {/* Simple, built‑in filters (kept minimal & robust) */}
+      <div className="sg-filters">
+        <div className="chip-row">
+          <button className={`chip ${dir==="All"?"on":""}`} onClick={()=>setDir("All")}>All</button>
+          <button className={`chip ${dir==="Bullish"?"on":""}`} onClick={()=>setDir("Bullish")}>Bullish</button>
+          <button className={`chip ${dir==="Neutral"?"on":""}`} onClick={()=>setDir("Neutral")}>Neutral</button>
+          <button className={`chip ${dir==="Bearish"?"on":""}`} onClick={()=>setDir("Bearish")}>Bearish</button>
+        </div>
+        <div className="chip-row">
+          <button className={`chip ${kind==="All"?"on":""}`} onClick={()=>setKind("All")}>All types</button>
+          <button className={`chip ${kind==="Single"?"on":""}`} onClick={()=>setKind("Single")}>Single‑leg</button>
+          <button className={`chip ${kind==="Multi"?"on":""}`} onClick={()=>setKind("Multi")}>Multi‑leg</button>
+        </div>
+        <div className="chip-row">
+          <label className="small muted" style={{marginRight:8}}>Sort</label>
+          <select className="field sort" value={sortBy} onChange={(e)=>setSortBy(e.target.value)}>
+            <option value="az">A–Z</option>
+            <option value="sharpe">Sharpe</option>
+            <option value="er">E[Ret]</option>
+            <option value="ep">E[Prof]</option>
+            <option value="pwin">P[Win]</option>
+          </select>
+        </div>
+      </div>
 
-      {/* Symmetric grid */}
+      {/* Grid */}
       <div className="sg-grid">
-        {filtered.map((s) => (
+        {strategies.map((s) => (
           <StrategyTile
             key={s.id}
             item={s}
             palette={palette}
             metricsOn={metricsOn}
-            onOpen={() => setActive(s)}
+            onOpen={() => onOpenStrategy?.(s)}
           />
         ))}
       </div>
-
-      {active && (
-        <StrategyModal
-          strategy={active}
-          onClose={() => setActive(null)}
-          onApply={(legsObj, netPrem) => { onApply?.(legsObj, netPrem); setActive(null); }}
-          env={{ spot, currency, sigma, T, riskFree, mcStats }}
-        />
-      )}
 
       {/* styles */}
       <style jsx>{`
@@ -265,6 +312,17 @@ export default function StrategyGallery({
         .sgs-title{ font-size:12px; opacity:.75; }
         .sgs-row{ display:grid; grid-template-columns:120px 1fr; align-items:center; gap:10px; }
         .sgs-check{ display:flex; align-items:center; gap:8px; }
+
+        .sg-filters{ display:grid; gap:8px; margin-bottom:8px; }
+        .chip-row{ display:flex; flex-wrap:wrap; gap:8px; }
+        .chip{
+          height:32px; padding:0 12px; border-radius:9999px;
+          border:1px solid var(--border); background:var(--bg); color:var(--text);
+          font-weight:600; transition:background .12s ease, border-color .12s ease;
+        }
+        .chip.on{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+        .sort{ width:160px; height:32px; }
+
         .sg-grid{
           display:grid;
           grid-template-columns: repeat(auto-fill, minmax(260px,1fr));
