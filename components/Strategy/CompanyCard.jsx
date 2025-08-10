@@ -2,292 +2,254 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import TickerSearch from "./TickerSearch";
 
-/* Exchange pretty labels */
-const EX_NAMES = {
-  NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
-  NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
-  MIL: "Milan", LSE: "London", EBS: "Swiss", SWX: "Swiss",
-  TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
-};
-
-const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
-function fmtMoney(v, ccy = "") {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
-  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
-  return sign + n.toFixed(2);
-}
-function parsePctInput(str) {
-  const v = Number(String(str).replace("%", "").trim());
-  return Number.isFinite(v) ? v / 100 : NaN;
-}
-
+/**
+ * CompanyCard
+ * - Full‑width search bar + Confirm
+ * - Below: one responsive row with Currency · Spot (S) · Time (days) · Volatility
+ * - Emits:
+ *    onConfirm(companyObj)
+ *    onHorizonChange(days)
+ *    onIvSourceChange(source)   // "live" | "manual"
+ *    onIvValueChange(value)     // decimal annualized σ (e.g., 0.30)
+ */
 export default function CompanyCard({
   value = null,
-  market = null,
+  market = null, // not used here, kept for API parity
   onConfirm,
   onHorizonChange,
   onIvSourceChange,
   onIvValueChange,
 }) {
-  /* -------- search state -------- */
-  const [typed, setTyped] = useState(value?.symbol || "");
-  const [picked, setPicked] = useState(null); // {symbol, name, exchange}
-  const selSymbol = useMemo(
-    () => (picked?.symbol || typed || "").trim(),
-    [picked, typed]
+  /* ---------- local state ---------- */
+  const [symbol, setSymbol] = useState(value?.symbol || "");
+  const [company, setCompany] = useState(value || null);
+
+  const [currency, setCurrency] = useState(value?.currency || "");
+  const [spot, setSpot] = useState(
+    Number.isFinite(+value?.spot) ? +value.spot : null
   );
 
-  /* -------- basic facts -------- */
-  const [currency, setCurrency] = useState(value?.currency || "");
-  const [spot, setSpot] = useState(value?.spot || null);
-  const [exchangeLabel, setExchangeLabel] = useState("");
+  const [horizon, setHorizon] = useState(30);
 
-  /* -------- horizon (days) -------- */
-  const [days, setDays] = useState(30);
+  const [ivSource, setIvSource] = useState("live"); // "live" | "manual"
+  const [ivManual, setIvManual] = useState("");     // text box; parse to decimal
+  const [ivLive, setIvLive] = useState(null);       // last fetched IV (decimal)
 
-  /* -------- volatility UI state -------- */
-  // 'iv' = Implied Volatility, 'hist' = Historical, 'manual' = typed-in
-  const [volSrc, setVolSrc] = useState("iv");
-  // sigma is annualized *decimal* (e.g., 0.30 → 30%)
-  const [sigma, setSigma] = useState(null);
-  const [volMeta, setVolMeta] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  /* -------- status -------- */
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  /* ---------- helpers ---------- */
+  const num = (v) => {
+    const n = parseFloat(String(v ?? "").replace(",", "."));
+    return Number.isFinite(n) ? n : NaN;
+  };
 
-  /* =========================
-     API helpers (robust, with fallbacks)
-     ========================= */
+  const pretty = (n, d = 2) =>
+    Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) : "—";
 
-  async function fetchCompany(sym) {
-    const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
-      cache: "no-store",
-    });
-    const j = await r.json();
-    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
-
-    setCurrency(j.currency || "");
-    setSpot(Number(j.spot || 0));
-    setExchangeLabel(
-      picked?.exchange ? EX_NAMES[picked.exchange] || picked.exchange : ""
-    );
-
-    onConfirm?.({
-      symbol: j.symbol,
-      name: j.name,
-      exchange: picked?.exchange || null,
-      currency: j.currency,
-      spot: j.spot,
-      high52: j.high52 ?? null,
-      low52: j.low52 ?? null,
-      beta: j.beta ?? null,
-    });
-  }
-
-  /**
-   * Try to obtain annualized sigma from:
-   *  1) /api/volatility using either ?source=live|historical or ?volSource=...
-   *  2) fallback: /api/company/autoFields (it returns sigma too)
-   */
-  async function fetchSigma(sym, uiSource, d) {
-    const mapped = uiSource === "hist" ? "historical" : "live";
-
-    // attempt A: /api/volatility?source=live|historical
-    const tryVol = async (paramName) => {
-      const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${paramName}=${encodeURIComponent(
-        mapped
-      )}&days=${encodeURIComponent(d)}`;
-      const r = await fetch(u, { cache: "no-store" });
-      const j = await r.json();
-      if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
-      return j;
-    };
-
-    try {
-      let j;
-      try {
-        j = await tryVol("source");
-      } catch {
-        // some deployments used volSource instead of source
-        j = await tryVol("volSource");
-      }
-      setSigma(j?.sigmaAnnual ?? null);
-      setVolMeta(j?.meta || null);
-      onIvSourceChange?.(mapped === "live" ? "live" : "historical");
-      onIvValueChange?.(j?.sigmaAnnual ?? null);
-      return;
-    } catch (e1) {
-      // attempt B: /api/company/autoFields
-      try {
-        const url = `/api/company/autoFields?symbol=${encodeURIComponent(
-          sym
-        )}&days=${encodeURIComponent(d)}&volSource=${encodeURIComponent(mapped)}`;
-        const r = await fetch(url, { cache: "no-store" });
-        const j = await r.json();
-        if (!r.ok || j?.ok === false) throw new Error(j?.error || `AutoFields ${r.status}`);
-
-        const s = j?.sigmaAnnual ?? j?.sigma ?? null;
-        setSigma(s);
-        setVolMeta(j?.meta || null);
-        onIvSourceChange?.(mapped === "live" ? "live" : "historical");
-        onIvValueChange?.(s);
-        return;
-      } catch (e2) {
-        throw e2;
-      }
+  const ivShown = useMemo(() => {
+    if (ivSource === "manual") {
+      const n = num(ivManual);
+      return Number.isFinite(n) ? n : null;
     }
-  }
+    return Number.isFinite(ivLive) ? ivLive : null;
+  }, [ivSource, ivManual, ivLive]);
 
-  async function confirmSymbol(sym) {
-    const s = (sym || selSymbol || "").toUpperCase();
-    if (!s) return;
-    setLoading(true); setMsg("");
-    try {
-      await fetchCompany(s);
-      if (volSrc === "manual") {
-        onIvSourceChange?.("manual");
-        onIvValueChange?.(sigma);
-      } else {
-        await fetchSigma(s, volSrc, days);
-      }
-    } catch (e) {
-      setMsg(String(e?.message || e));
-    } finally {
-      setLoading(false);
-    }
-  }
-  function confirm(){ return confirmSymbol(selSymbol); }
-
-  /* Re-fetch when source or days change (debounced) */
-  const daysTimer = useRef(null);
+  /* propagate outward whenever inputs change */
   useEffect(() => {
-    if (!selSymbol || volSrc === "manual") return;
-    clearTimeout(daysTimer.current);
-    daysTimer.current = setTimeout(() => {
-      fetchSigma(selSymbol, volSrc, days).catch((e) =>
-        setMsg(String(e?.message || e))
-      );
-    }, 400);
-    return () => clearTimeout(daysTimer.current);
+    onHorizonChange?.(Number.isFinite(+horizon) ? +horizon : 30);
+  }, [horizon, onHorizonChange]);
+
+  useEffect(() => {
+    onIvSourceChange?.(ivSource);
+  }, [ivSource, onIvSourceChange]);
+
+  useEffect(() => {
+    onIvValueChange?.(ivShown ?? null);
+  }, [ivShown, onIvValueChange]);
+
+  /* ---------- actions ---------- */
+  async function fetchCompany(symRaw) {
+    const sym = (symRaw || symbol || "").trim().toUpperCase();
+    if (!sym) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, {
+        cache: "no-store",
+      });
+      const j = await r.json();
+
+      // API always returns a normalized top-level object
+      const next = {
+        symbol: j.symbol || sym,
+        name: j.name || sym,
+        exchange: j.exchange || "",
+        currency: j.currency || "",
+        spot: Number.isFinite(+j.spot) ? +j.spot : null,
+        prevClose: Number.isFinite(+j.prevClose) ? +j.prevClose : null,
+        change: Number.isFinite(+j.change) ? +j.change : null,
+        changePct: Number.isFinite(+j.changePct) ? +j.changePct : null,
+        marketSession: j.marketSession || "At close",
+        logoUrl: j.logoUrl || null,
+      };
+
+      setCompany(next);
+      setCurrency(next.currency || "");
+      setSpot(next.spot ?? null);
+      setSymbol(next.symbol);
+
+      // Optional: try live IV if available on your backend
+      try {
+        const vi = await fetch(`/api/volatility?symbol=${encodeURIComponent(next.symbol)}`, { cache: "no-store" });
+        if (vi.ok) {
+          const vj = await vi.json();
+          // accept common shapes: {iv:0.3} or {data:{iv:0.3}}
+          const val = Number(
+            vj?.iv ?? vj?.data?.iv ?? vj?.data?.ivAnnual ?? vj?.sigma
+          );
+          if (Number.isFinite(val)) setIvLive(val);
+        }
+      } catch {
+        /* ignore IV errors silently */
+      }
+
+      onConfirm?.(next);
+    } catch {
+      // If the API is unreachable, keep previous values (no red error in UI)
+      onConfirm?.(company || null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Update outward company when user edits Spot manually (instant feedback)
+  useEffect(() => {
+    if (!company) return;
+    const next = { ...company, spot: Number.isFinite(+spot) ? +spot : null };
+    onConfirm?.(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, volSrc, selSymbol]);
+  }, [spot]);
 
+  /* ---------- UI ---------- */
   return (
-    <section className="company-block">
-      <h2 className="company-title">Company</h2>
+    <section className="card" aria-labelledby="company-title">
+      <h3 id="company-title">Company</h3>
 
-      {/* Search bar */}
-      <div className="company-search">
-        <TickerSearch
-          value={typed}
-          onPick={(it) => {
-            setPicked(it);
-            setTyped(it.symbol || "");
-            setMsg("");
-            if (it?.symbol) confirmSymbol(it.symbol);
+      {/* Search bar + Confirm (Google‑style full width + side button) */}
+      <div className="row" style={{ gap: 12 }}>
+        <input
+          className="field"
+          placeholder="Type a ticker (e.g., AAPL, AMZN)…"
+          value={symbol}
+          onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") fetchCompany(e.currentTarget.value);
           }}
-          onEnter={() => confirm()}
-          placeholder="Search by ticker or company (e.g., AAPL, ENEL.MI)…"
+          aria-label="Ticker"
+          style={{ flex: 1, borderRadius: 9999 }}
         />
         <button
-          type="button"
-          onClick={confirm}
-          className="button company-confirm"
-          disabled={!selSymbol || loading}
-          aria-label="Confirm ticker"
+          className="button"
+          onClick={() => fetchCompany(symbol)}
+          disabled={!symbol || busy}
+          aria-label="Confirm company"
+          style={{ minWidth: 110, borderRadius: 14 }}
         >
-          {loading ? "Loading…" : "Confirm"}
+          {busy ? "Loading…" : "Confirm"}
         </button>
       </div>
 
       {/* Selected line */}
-      {selSymbol && (
-        <div className="company-selected small">
-          <span className="muted">Selected:</span> <strong>{selSymbol}</strong>
-          {picked?.name ? ` — ${picked.name}` : ""}
-          {exchangeLabel ? ` • ${exchangeLabel}` : ""}
+      {company && (
+        <div className="small" style={{ marginTop: 8 }}>
+          <span className="muted">Selected:&nbsp;</span>
+          <strong>{company.symbol}</strong> — {company.name}
+          {company.exchange ? ` · ${company.exchange}` : ""}
         </div>
       )}
-      {msg && <div className="small" style={{ color: "#ef4444" }}>{msg}</div>}
 
-      {/* Inline facts/controls */}
-      <div className="company-fields">
-        {/* Currency */}
-        <div className="fg">
-          <label>Currency</label>
-          <input className="field" value={currency || ""} readOnly />
-        </div>
-
-        {/* Spot S */}
-        <div className="fg">
-          <label>S</label>
-          <input className="field" value={fmtMoney(spot, currency)} readOnly />
-        </div>
-
-        {/* Time (days) */}
-        <div className="fg">
-          <label>Time</label>
+      {/* Controls row: Currency · S · Time · Volatility */}
+      <div
+        className="company-grid"
+        style={{
+          display: "grid",
+          gap: 12,
+          marginTop: 12,
+          gridTemplateColumns: "repeat(4, minmax(160px, 1fr))",
+        }}
+      >
+        {/* Currency (readonly hint) */}
+        <div className="vgroup">
+          <label className="sublabel">Currency</label>
           <input
             className="field"
-            type="number"
-            min={1}
-            max={365}
-            value={days}
-            onChange={(e) => {
-              const v = clamp(e.target.value, 1, 365);
-              setDays(v);
-              onHorizonChange?.(v);
-            }}
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            aria-label="Currency"
+            placeholder="—"
           />
         </div>
 
-        {/* Volatility */}
-        <div className="fg">
-          <label>Volatility</label>
-          <div className="vol-wrap">
+        {/* Spot (S) */}
+        <div className="vgroup">
+          <label className="sublabel">S</label>
+          <input
+            className="field"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={spot ?? ""}
+            onChange={(e) => setSpot(num(e.target.value))}
+            aria-label="Spot price"
+          />
+        </div>
+
+        {/* Time (days) */}
+        <div className="vgroup">
+          <label className="sublabel">Time</label>
+          <input
+            className="field"
+            inputMode="numeric"
+            value={horizon}
+            onChange={(e) => setHorizon(Math.max(1, parseInt(e.target.value || "0", 10) || 0))}
+            aria-label="Time in days"
+          />
+        </div>
+
+        {/* Volatility (source + value) */}
+        <div className="vgroup">
+          <label className="sublabel">Volatility</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", rowGap: 8 }}>
             <select
               className="field"
-              value={volSrc}
-              onChange={(e) => setVolSrc(e.target.value)}
+              value={ivSource}
+              onChange={(e) => setIvSource(e.target.value)}
+              aria-label="Volatility source"
             >
-              <option value="iv">Implied Volatility</option>
-              <option value="hist">Historical Volatility</option>
+              <option value="live">Implied Volatility</option>
               <option value="manual">Manual</option>
             </select>
-            {volSrc === "manual" ? (
+
+            {ivSource === "manual" ? (
               <input
                 className="field"
+                inputMode="decimal"
                 placeholder="0.30 = 30%"
-                value={Number.isFinite(sigma) ? (sigma ?? 0) : ""}
-                onChange={(e) => {
-                  const v = parsePctInput(e.target.value);
-                  setSigma(Number.isFinite(v) ? v : null);
-                  onIvSourceChange?.("manual");
-                  onIvValueChange?.(Number.isFinite(v) ? v : null);
-                }}
+                value={ivManual}
+                onChange={(e) => setIvManual(e.target.value)}
+                aria-label="Manual volatility (decimal)"
               />
             ) : (
               <input
                 className="field"
-                readOnly
                 value={
-                  Number.isFinite(sigma)
-                    ? `${(sigma * 100).toFixed(0)}%`
-                    : ""
+                  ivShown != null
+                    ? `${pretty(ivShown, 2)} = ${(ivShown * 100).toFixed(0)}%`
+                    : "—"
                 }
+                readOnly
+                aria-label="Live implied volatility"
               />
             )}
-          </div>
-          <div className="small muted">
-            {volSrc === "iv" && volMeta?.expiry
-              ? `IV @ ${volMeta.expiry}${volMeta?.fallback ? " · fallback used" : ""}`
-              : volSrc === "hist" && volMeta?.pointsUsed
-              ? `Hist ${days}d (n=${volMeta.pointsUsed})${volMeta?.fallback ? " · fallback used" : ""}`
-              : ""}
           </div>
         </div>
       </div>
