@@ -3,34 +3,29 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
-import Chart from "./Chart";
 
-/* -------------------------
-   Small local format helpers
-   ------------------------- */
-const ccySign = (ccy) =>
-  ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
-function fmtCur(v, ccy = "USD") {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  const sign = ccySign(ccy);
-  return `${sign}${n.toFixed(Math.abs(n) >= 100 ? 0 : 2)}`;
-}
-function fmtPct(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  return `${(n * 100).toFixed(0)}%`;
-}
-
-/* -------------------------
-   Position → chart-legs map
-   ------------------------- */
+/* =========================
+   Helpers
+   ========================= */
 const POS_MAP = {
   "Long Call": { key: "lc", sign: +1 },
   "Short Call": { key: "sc", sign: -1 },
   "Long Put": { key: "lp", sign: +1 },
   "Short Put": { key: "sp", sign: -1 },
+};
+
+const fmtCur = (v, ccy = "USD") => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: ccy,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + n.toFixed(2);
+  }
 };
 
 function toChartLegs(rows) {
@@ -42,8 +37,8 @@ function toChartLegs(rows) {
     if (!map) return;
     const qty = Number(r.volume || 0);
     const k = Number(r.strike);
-    const on = !!r.enabled && qty > 0 && Number.isFinite(k);
-    obj[map.key] = { enabled: on, K: on ? k : NaN, qty: on ? qty : 0 };
+    if (!Number.isFinite(qty) || !Number.isFinite(k)) return;
+    obj[map.key] = { enabled: qty > 0, K: k, qty };
   });
   return obj;
 }
@@ -55,76 +50,189 @@ function netPremium(rows) {
     if (!map) return;
     const vol = Number(r.volume || 0);
     const prem = Number(r.premium || 0);
-    if (r.enabled && Number.isFinite(vol) && Number.isFinite(prem)) {
+    if (Number.isFinite(vol) && Number.isFinite(prem)) {
       sum += map.sign * vol * prem;
     }
   });
   return sum;
 }
 
-/* -------------------------
-   Small UI atoms
-   ------------------------- */
-function MetricTile({ label, value }) {
+/* =========================
+   Lightweight SVG chart (no card/border)
+   ========================= */
+function useSize(ref, fallbackW = 960) {
+  const [w, setW] = useState(fallbackW);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((es) => {
+      for (const e of es) {
+        setW(Math.max(320, e.contentRect.width));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return w;
+}
+
+function ChartCanvas({ spot, rows, height = 380 }) {
+  const wrapRef = useRef(null);
+  const width = useSize(wrapRef);
+
+  // X-domain from strikes (fallback ±20% around spot)
+  const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
+  const s = Number(spot);
+  const minX = strikes.length ? Math.min(...strikes) : Number.isFinite(s) ? s * 0.8 : 180;
+  const maxX = strikes.length ? Math.max(...strikes) : Number.isFinite(s) ? s * 1.2 : 275;
+
+  // Y-domain placeholder
+  const minY = -0.08;
+  const maxY = 0.08;
+
+  // paddings
+  const P = { t: 18, r: 16, b: 40, l: 56 };
+  const W = width - P.l - P.r;
+  const H = height - P.t - P.b;
+
+  const x = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
+  const y = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
+
+  // grid ticks
+  const yTicks = 6;
+  const xTicks = 8;
+
+  // placeholder bell
+  const center = Number.isFinite(s) ? s : (minX + maxX) / 2;
+  const bell = [];
+  for (let i = 0; i <= 80; i++) {
+    const p = minX + (i / 80) * (maxX - minX);
+    const u = (p - center) / ((maxX - minX) / 6);
+    const val = -0.08 + Math.exp(-0.5 * u * u) * 0.06;
+    bell.push([x(p), y(val)]);
+  }
+
   return (
-    <div className="card dense" style={{ padding: 14 }}>
-      <div className="small muted" style={{ marginBottom: 6 }}>{label}</div>
-      <div className="value">{value ?? "—"}</div>
+    <div ref={wrapRef} style={{ width: "100%" }}>
+      <svg width={width} height={height} role="img" aria-label="Strategy payoff chart">
+        {/* transparent bg to keep the chart visually integrated */}
+        <rect x="0" y="0" width={width} height={height} fill="transparent" />
+
+        {/* grid Y */}
+        {Array.from({ length: yTicks + 1 }).map((_, i) => {
+          const yy = P.t + (i / yTicks) * H;
+          const val = maxY - (i / yTicks) * (maxY - minY);
+          return (
+            <g key={`gy${i}`}>
+              <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
+              <text
+                x={P.l - 8}
+                y={yy + 4}
+                textAnchor="end"
+                fontSize="10"
+                fill="rgba(255,255,255,.6)"
+              >
+                {val >= 0 ? `$ ${val.toFixed(2)}` : `-$ ${Math.abs(val).toFixed(2)}`}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* grid X */}
+        {Array.from({ length: xTicks + 1 }).map((_, i) => {
+          const xx = P.l + (i / xTicks) * W;
+          const val = minX + (i / xTicks) * (maxX - minX);
+          return (
+            <g key={`gx${i}`}>
+              <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
+              <text
+                x={xx}
+                y={height - 12}
+                textAnchor="middle"
+                fontSize="10"
+                fill="rgba(255,255,255,.6)"
+              >
+                {Math.round(val)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* underlying vertical */}
+        {Number.isFinite(s) && s >= minX && s <= maxX && (
+          <line
+            x1={x(s)}
+            y1={P.t}
+            x2={x(s)}
+            y2={height - P.b}
+            stroke="rgba(255,255,255,.35)"
+            strokeDasharray="4 4"
+          />
+        )}
+
+        {/* legends (minimal) */}
+        <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
+          <circle r="4" fill="#60a5fa" />
+          <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
+          <circle cx="90" r="4" fill="#f472b6" />
+          <text x="98" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
+          <circle cx="200" r="4" fill="#f59e0b" />
+          <text x="208" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Bell (placeholder)</text>
+        </g>
+
+        {/* placeholder curves */}
+        <polyline
+          fill="none"
+          stroke="#60a5fa"
+          strokeWidth="2"
+          points={`${P.l},${y(-0.015)} ${width - P.r},${y(-0.015)}`}
+        />
+        <polyline
+          fill="none"
+          stroke="#f472b6"
+          strokeWidth="2"
+          strokeDasharray="4 3"
+          points={`${P.l},${y(-0.015)} ${width - P.r},${y(-0.015)}`}
+        />
+        <polyline
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth="2"
+          strokeDasharray="6 5"
+          points={bell.map(([px, py]) => `${px},${py}`).join(" ")}
+        />
+      </svg>
     </div>
   );
 }
 
-function Spec({ title, children }) {
-  return (
-    <div className="card dense">
-      <div className="small muted" style={{ marginBottom: 8 }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-/* =======================================================
-   Strategy Modal
-   ======================================================= */
+/* =========================
+   Modal
+   ========================= */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const {
-    spot = null,
-    sigma = null,
-    T = null,
-    riskFree = 0,
-    mcStats = null,
-    currency = "USD",
-    high52 = null,
-    low52 = null,
-  } = env || {};
+  const { spot, currency } = env || {};
 
-  // Initialize editable rows
+  // initialise editable rows
   const [rows, setRows] = useState(() => {
     const s = Number(spot) || 0;
     return (strategy?.legs || []).map((r) => {
-      let strike = r.strike;
-      if (!Number.isFinite(strike) && s > 0) {
-        // light heuristic defaults around spot
+      if (!Number.isFinite(r.strike) && s > 0) {
         const dir = strategy?.direction;
-        if (r.position.includes("Call")) strike = Math.round((dir === "Bullish" ? s * 1.05 : s * 1.03) * 100) / 100;
-        if (r.position.includes("Put")) strike = Math.round((dir === "Bearish" ? s * 0.95 : s * 0.97) * 100) / 100;
+        const pos = r.position;
+        let k = s;
+        if (pos.includes("Call")) k = dir === "Bullish" ? s * 1.05 : s * 1.03;
+        if (pos.includes("Put")) k = dir === "Bearish" ? s * 0.95 : s * 0.97;
+        return { ...r, strike: Math.round(k * 100) / 100, volume: r.volume ?? 1 };
       }
-      return {
-        position: r.position,
-        strike: strike ?? "",
-        volume: r.volume ?? 1,
-        premium: r.premium ?? 0,
-        enabled: r.enabled ?? true,
-      };
+      return { ...r, volume: r.volume ?? 1 };
     });
   });
 
-  // Derived
   const chartLegs = useMemo(() => toChartLegs(rows), [rows]);
   const totalPrem = useMemo(() => netPremium(rows), [rows]);
 
-  // Close on ESC & backdrop; lock background scroll
-  const sheetRef = useRef(null);
+  // Close on ESC + lock background
+  const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onEsc);
@@ -132,289 +240,201 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onEsc);
-      document.body.style.overflow = prev;
+      document.body.style.overflow = prev || "";
     };
   }, [onClose]);
 
-  // Edit helpers
-  const setField = (i, key, val) =>
+  const edit = (i, field, v) => {
     setRows((prev) => {
       const next = [...prev];
-      next[i] = { ...next[i], [key]: key === "enabled" ? !!val : val === "" ? "" : Number(val) };
+      next[i] = { ...next[i], [field]: v === "" ? "" : Number(v) };
       return next;
     });
+  };
+
+  // unified spacing
+  const GAP = 14;
 
   return (
     <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
       <div className="modal-backdrop" onClick={onClose} />
-
-      {/* Sheet: grid for header / scrollable body */}
       <div
         className="modal-sheet"
-        ref={sheetRef}
+        ref={dialogRef}
         style={{
-          display: "grid",
-          gridTemplateRows: "auto 1fr",
-          height: "92vh",
-          maxHeight: "92vh",
-          width: "min(1200px, 94vw)",
+          maxWidth: 1120,
+          maxHeight: "calc(100vh - 96px)",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
+          padding: 16, // consistent inner gutter
         }}
       >
         {/* Header */}
-        <div
-          className="modal-head"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "14px 16px",
-            borderBottom: "1px solid var(--border)",
-            gap: 12,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div className="mh-icon">{strategy?.icon && <strategy.icon aria-hidden="true" />}</div>
-            <div>
-              <div id="sg-modal-title" className="mh-name" style={{ fontWeight: 700 }}>
+        <div className="modal-head" style={{ marginBottom: GAP }}>
+          <div className="mh-left">
+            <div className="mh-icon">
+              {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
+            </div>
+            <div className="mh-meta">
+              <div id="sg-modal-title" className="mh-name">
                 {strategy?.name || "Strategy"}
               </div>
               <DirectionBadge value={strategy?.direction || "Neutral"} />
             </div>
           </div>
-          <div className="mh-actions" style={{ display: "flex", gap: 8 }}>
-            <button className="button ghost" type="button" onClick={() => { /* future: save preset */ }}>Save</button>
+          <div className="mh-actions">
+            <button className="button ghost" type="button" onClick={() => {}}>
+              Save
+            </button>
             <button
               className="button"
               type="button"
-              onClick={() => onApply?.(toChartLegs(rows), netPremium(rows))}
-              disabled={!spot || !Number.isFinite(sigma) || !Number.isFinite(T)}
+              onClick={() => onApply?.(chartLegs, totalPrem)}
             >
               Apply
             </button>
-            <button className="button ghost" type="button" onClick={onClose}>Close</button>
+            <button className="button ghost" type="button" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
-        {/* Scrollable body */}
+        {/* CHART — no card/border, full bleed to the modal padding */}
+        <div style={{ marginBottom: GAP }}>
+          <ChartCanvas spot={spot} rows={rows} height={380} />
+        </div>
+
+        {/* Metrics under chart */}
         <div
-          className="modal-body"
+          className="metric-strip"
           style={{
-            overflowY: "auto",
-            padding: 16,
             display: "grid",
-            gap: 16,
+            gridTemplateColumns: "repeat(5, minmax(0,1fr))",
+            gap: GAP,
+            marginBottom: GAP,
           }}
         >
-          {/* ===== Chart (no box, integrated) ===== */}
-          <div className="sgm-chart" style={{ paddingTop: 6 }}>
-            <div style={{ height: 380 }}>
-              <Chart
-                spot={Number(spot) || 0}
-                legs={chartLegs}
-                riskFree={riskFree ?? 0}
-                carryPremium={false}
-                mu={null}
-                sigma={Number.isFinite(sigma) ? sigma : 0}
-                T={Number.isFinite(T) ? T : 0}
-                mcStats={mcStats}
-                netPremium={totalPrem}
-              />
-            </div>
-          </div>
+          <MetricBox label="Underlying" value={fmtCur(spot, currency || "USD")} />
+          <MetricBox label="Max Profit" value="—" />
+          <MetricBox label="Max Loss" value="—" />
+          <MetricBox label="Win Rate" value="—" />
+          <MetricBox label="Breakeven" value="—" />
+        </div>
 
-          {/* Metric strip */}
+        {/* Architecture */}
+        <div className="card dense" style={{ marginBottom: GAP }}>
+          <div className="section-title">Architecture</div>
           <div
-            className="grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, minmax(0,1fr))",
-              gap: 12,
-            }}
+            className="grid-3"
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: GAP }}
           >
-            <MetricTile label="Underlying" value={fmtCur(spot, currency)} />
-            <MetricTile label="Max Profit" value="—" />
-            <MetricTile label="Max Loss" value="—" />
-            <MetricTile label="Win Rate" value="—" />
-            <MetricTile label="Breakeven" value="—" />
+            <Spec title="Composition">
+              {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
+            </Spec>
+            <Spec title="Breakeven(s)">—{/* empty until formula is provided */}</Spec>
+            <Spec title="Max Profit">—</Spec>
+            <Spec title="Max Loss">—</Spec>
+            <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
+            <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
+            <Spec title="Margin Requirement">—</Spec>
+          </div>
+        </div>
+
+        {/* Configuration */}
+        <div className="card dense" style={{ marginBottom: 8 }}>
+          <div className="section-title">Configuration</div>
+          <div className="sg-table">
+            <div className="sg-th">Position</div>
+            <div className="sg-th">Strike</div>
+            <div className="sg-th">Volume</div>
+            <div className="sg-th">Premium</div>
+
+            {rows.map((r, i) => (
+              <RowEditor
+                key={i}
+                row={r}
+                onStrike={(v) => edit(i, "strike", v)}
+                onVol={(v) => edit(i, "volume", v)}
+                onPremium={(v) => edit(i, "premium", v)}
+                currency={currency || "USD"}
+              />
+            ))}
           </div>
 
-          {/* ===== Architecture ===== */}
-          <section className="card" style={{ padding: 16 }}>
-            <div className="section-title" style={{ marginBottom: 10 }}>Architecture</div>
-            <div
-              className="grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0,1fr))",
-                gap: 12,
-              }}
-            >
-              <Spec title="Composition">
-                <div className="value" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {rows.length ? rows.map((r) => `${r.position}×${r.enabled ? r.volume ?? 0 : 0}`).join(" · ") : "—"}
-                </div>
-              </Spec>
-
-              <Spec title="Breakeven(s)">
-                <div className="value">—</div>
-              </Spec>
-
-              <Spec title="Max Profit">
-                <div className="value">—</div>
-              </Spec>
-
-              <Spec title="Max Loss">
-                <div className="value">—</div>
-              </Spec>
-
-              <Spec title="Risk Profile">
-                <div className="value">{strategy?.direction || "—"}</div>
-              </Spec>
-
-              <Spec title="Greeks Exposure">
-                <div className="value">Δ/Γ/Θ/ν —</div>
-              </Spec>
-
-              {/* 52W High / Low (vertical columns with a vertical divider) */}
-              <Spec title="52W High / Low">
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1px 1fr",
-                    alignItems: "stretch",
-                    gap: 12,
-                    minHeight: 52,
-                  }}
-                >
-                  {/* High */}
-                  <div style={{ display: "grid", gridTemplateRows: "auto auto", gap: 6 }}>
-                    <div className="small muted">High</div>
-                    <div className="value">{fmtCur(high52, currency)}</div>
-                  </div>
-
-                  {/* Divider */}
-                  <div style={{ width: 1, background: "var(--border)" }} />
-
-                  {/* Low */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateRows: "auto auto",
-                      gap: 6,
-                      textAlign: "right",
-                    }}
-                  >
-                    <div className="small muted">Low</div>
-                    <div className="value">{fmtCur(low52, currency)}</div>
-                  </div>
-                </div>
-              </Spec>
-
-              <Spec title="Margin Requirement">
-                <div className="value">—</div>
-              </Spec>
-            </div>
-          </section>
-
-          {/* ===== Configuration ===== */}
-          <section className="card" style={{ padding: 16 }}>
-            <div className="section-title" style={{ marginBottom: 12 }}>Configuration</div>
-
-            {/* Table header */}
-            <div
-              className="sg-table"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 0.8fr 1fr 60px",
-                gap: 10,
-                alignItems: "center",
-                marginBottom: 8,
-                fontWeight: 600,
-                opacity: 0.9,
-              }}
-            >
-              <div className="small">Position</div>
-              <div className="small">Strike</div>
-              <div className="small">Volume</div>
-              <div className="small">Premium</div>
-              <div className="small" style={{ textAlign: "center" }}>On</div>
-            </div>
-
-            {/* Rows */}
-            <div
-              style={{
-                display: "grid",
-                gridAutoRows: "minmax(40px,auto)",
-                rowGap: 10,
-              }}
-            >
-              {rows.map((r, i) => (
-                <div
-                  key={`${r.position}-${i}`}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr 0.8fr 1fr 60px",
-                    gap: 10,
-                    alignItems: "center",
-                  }}
-                >
-                  <div className="sg-td strong">{r.position}</div>
-
-                  <div className="sg-td">
-                    <input
-                      className="field"
-                      type="number"
-                      step="0.01"
-                      placeholder="Strike"
-                      value={r.strike}
-                      onChange={(e) => setField(i, "strike", e.target.value)}
-                    />
-                  </div>
-
-                  <div className="sg-td">
-                    <input
-                      className="field"
-                      type="number"
-                      step="1"
-                      placeholder="0"
-                      value={r.volume}
-                      onChange={(e) => setField(i, "volume", e.target.value)}
-                    />
-                  </div>
-
-                  <div className="sg-td">
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span className="small muted">{ccySign(currency)}</span>
-                      <input
-                        className="field"
-                        type="number"
-                        step="0.01"
-                        placeholder="0"
-                        value={r.premium}
-                        onChange={(e) => setField(i, "premium", e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="sg-td" style={{ textAlign: "center" }}>
-                    <input
-                      type="checkbox"
-                      checked={!!r.enabled}
-                      onChange={(e) => setField(i, "enabled", e.target.checked)}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Net premium */}
-            <div className="row-right small" style={{ marginTop: 12 }}>
-              <span className="muted">Net Premium:</span>&nbsp;
-              <strong>{fmtCur(totalPrem, currency)}</strong>
-            </div>
-          </section>
+          <div className="row-right small" style={{ marginTop: 10 }}>
+            <span className="muted">Net Premium:</span>&nbsp;
+            <strong>{fmtCur(totalPrem, currency || "USD")}</strong>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/* =========================
+   Subcomponents
+   ========================= */
+function MetricBox({ label, value }) {
+  return (
+    <div
+      className="card dense"
+      style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}
+    >
+      <div className="small muted">{label}</div>
+      <div className="value">{value}</div>
+    </div>
+  );
+}
+
+function Spec({ title, children }) {
+  return (
+    <div className="card dense" style={{ padding: 12 }}>
+      <div className="small muted">{title}</div>
+      <div style={{ marginTop: 6 }}>{children}</div>
+    </div>
+  );
+}
+
+function RowEditor({ row, onStrike, onVol, onPremium, currency }) {
+  return (
+    <>
+      <div className="sg-td strong">{row.position}</div>
+      <div className="sg-td">
+        <input
+          className="field"
+          type="number"
+          step="0.01"
+          value={row.strike ?? ""}
+          onChange={(e) => onStrike(e.target.value)}
+          placeholder="Strike"
+        />
+      </div>
+      <div className="sg-td">
+        <input
+          className="field"
+          type="number"
+          step="1"
+          value={row.volume ?? ""}
+          onChange={(e) => onVol(e.target.value)}
+          placeholder="0"
+        />
+      </div>
+      <div className="sg-td">
+        <div style={{ display: "grid", gridTemplateColumns: "12px 1fr", alignItems: "center" }}>
+          <span className="small muted" aria-hidden>
+            $
+          </span>
+          <input
+            className="field"
+            type="number"
+            step="0.01"
+            value={row.premium ?? ""}
+            onChange={(e) => onPremium(e.target.value)}
+            placeholder={currency}
+          />
+        </div>
+      </div>
+    </>
   );
 }
