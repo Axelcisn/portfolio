@@ -3,14 +3,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import StrategyTile from "./StrategyTile";
-import StrategyModal from "./StrategyModal"; // <— restore modal so click opens details
+import StrategyModal from "./StrategyModal";
 
 /**
- * Self‑contained, robust gallery.
- * - Opens the detailed StrategyModal exactly as before.
- * - Filter bar: only Sort + Bullish / Neutral / Bearish.
- * - Settings (engine) refined: presets + custom colors, clean spacing, subtle borders.
- * - Persists settings in localStorage.
+ * Segmented filter bar (All / Bullish / Neutral / Bearish) inside one capsule.
+ * Sort is aligned to the far-right of the SAME bar.
+ * Search lives in the bar: starts as an icon, expands smoothly into a field.
+ * Settings opens a minimal, refined panel (palette + metrics).
+ * Clicking a tile opens StrategyModal (unchanged behavior).
  */
 
 /* ---------- Settings defaults ---------- */
@@ -26,7 +26,7 @@ const DEFAULT_METRICS = {
   eret: true,
 };
 
-/* ---------- Local strategies list (extend freely) ---------- */
+/* ---------- Strategies (compact list; extend as needed) ---------- */
 const BASE_STRATEGIES = [
   { id: "manual", name: "Manual", direction: "Neutral", isManual: true, isMulti: true, metrics: {} },
   { id: "long-call", name: "Long Call", direction: "Bullish", isMulti: false, metrics: {} },
@@ -65,23 +65,21 @@ const BASE_STRATEGIES = [
   { id: "stock-repair", name: "Stock Repair", direction: "Bullish", isMulti: true, metrics: {} },
 ];
 
-/* ---------- Component ---------- */
 export default function StrategyGallery({
-  // env for the modal (kept compatible with your previous wiring)
   spot = null,
   currency = "EUR",
   sigma = null,
   T = null,
   riskFree = 0,
   mcStats = null,
-  onApply, // modal Apply -> bubble up
+  onApply,
 }) {
-  // Filter bar state
-  const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState("az"); // az | sharpe | er | ep | pwin
+  /* filters & sort */
   const [dir, setDir] = useState("All"); // All | Bullish | Neutral | Bearish
+  const [sortBy, setSortBy] = useState("az"); // az | sharpe | er | ep | pwin
+  const [query, setQuery] = useState("");
 
-  // Settings (palette + visible metrics) — persisted
+  /* settings (palette + metric visibility) */
   const [palette, setPalette] = useState(DEFAULT_PALETTE);
   const [metricsOn, setMetricsOn] = useState(DEFAULT_METRICS);
   useEffect(() => {
@@ -100,21 +98,23 @@ export default function StrategyGallery({
     } catch {}
   }, [palette, metricsOn]);
 
-  // Header icons popovers
+  /* bar ui: search expand + settings popover */
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const searchRef = useRef(null);
-  useEffect(() => { if (searchOpen) setTimeout(()=>searchRef.current?.focus(), 0); }, [searchOpen]);
+  const searchInputRef = useRef(null);
+  useEffect(() => {
+    if (searchOpen) setTimeout(() => searchInputRef.current?.focus(), 0);
+  }, [searchOpen]);
   useEffect(() => {
     const onEsc = (e) => (e.key === "Escape") && (setSearchOpen(false), setSettingsOpen(false));
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
   }, []);
 
-  // Modal open/close
+  /* modal */
   const [active, setActive] = useState(null);
 
-  // Filter + sort
+  /* filter + sort */
   const strategies = useMemo(() => {
     const q = query.trim().toLowerCase();
     let rows = BASE_STRATEGIES.filter((s) => {
@@ -122,49 +122,85 @@ export default function StrategyGallery({
       const passDir = dir === "All" || s.direction === dir;
       return passQ && passDir;
     });
-    const val = (x) => (Number.isFinite(x) ? x : -Infinity);
+    const v = (x) => (Number.isFinite(x) ? x : -Infinity);
     switch (sortBy) {
-      case "sharpe": rows.sort((a,b)=>val(b.metrics?.sharpe)-val(a.metrics?.sharpe)); break;
-      case "er":     rows.sort((a,b)=>val(b.metrics?.expectedReturn)-val(a.metrics?.expectedReturn)); break;
-      case "ep":     rows.sort((a,b)=>val(b.metrics?.expectedProfit)-val(a.metrics?.expectedProfit)); break;
-      case "pwin":   rows.sort((a,b)=>val(b.metrics?.pWin)-val(a.metrics?.pWin)); break;
+      case "sharpe": rows.sort((a,b)=>v(b.metrics?.sharpe)-v(a.metrics?.sharpe)); break;
+      case "er":     rows.sort((a,b)=>v(b.metrics?.expectedReturn)-v(a.metrics?.expectedReturn)); break;
+      case "ep":     rows.sort((a,b)=>v(b.metrics?.expectedProfit)-v(a.metrics?.expectedProfit)); break;
+      case "pwin":   rows.sort((a,b)=>v(b.metrics?.pWin)-v(a.metrics?.pWin)); break;
       default:       rows.sort((a,b)=>a.name.localeCompare(b.name));
     }
     return rows;
-  }, [query, dir, sortBy]);
+  }, [dir, sortBy, query]);
 
-  /* ---------- Preset palettes ---------- */
+  /* presets for palette */
   const PRESETS = [
-    { name: "Cyan/Violet/Amber", v: { bullish:"#06b6d4", neutral:"#8b5cf6", bearish:"#f59e0b" } },
-    { name: "Blue/Indigo/Orange", v: { bullish:"#3b82f6", neutral:"#6366f1", bearish:"#f97316" } },
-    { name: "Teal/Pink/Yellow",   v: { bullish:"#14b8a6", neutral:"#ec4899", bearish:"#eab308" } },
+    { name: "Cyan/Violet/Amber", p: { bullish:"#06b6d4", neutral:"#8b5cf6", bearish:"#f59e0b" } },
+    { name: "Blue/Indigo/Orange", p: { bullish:"#3b82f6", neutral:"#6366f1", bearish:"#f97316" } },
+    { name: "Teal/Pink/Yellow",   p: { bullish:"#14b8a6", neutral:"#ec4899", bearish:"#eab308" } },
   ];
-  const applyPreset = (p) =>
-    setPalette((cur) => ({ ...cur, bullish: p.bullish, neutral: p.neutral, bearish: p.bearish }));
 
   return (
     <section className="card sg-card">
-      {/* Header */}
-      <div className="sg-header">
-        <h3 className="sg-title">Strategy</h3>
+      <h3 className="sg-title" style={{ margin: 0, marginBottom: 10 }}>Strategy</h3>
 
-        <div className="sg-tools">
+      {/* Segmented control bar */}
+      <div className="segbar">
+        {/* Left: segmented filters */}
+        <div className="segments" role="tablist" aria-label="Direction filter">
+          {["All","Bullish","Neutral","Bearish"].map((k, i) => (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={dir===k}
+              className={`seg ${dir===k ? "on" : ""}`}
+              onClick={() => setDir(k)}
+              style={{ borderLeftWidth: i === 0 ? 0 : 1 }}
+            >
+              {k}
+            </button>
+          ))}
+        </div>
+
+        <div className="bar-spacer" />
+
+        {/* Search: icon → expanding field */}
+        <div className={`search-wrap ${searchOpen ? "open" : ""}`}>
           <button
             type="button"
-            className="icon-btn"
+            className="seg-icon"
             aria-label="Search strategies"
             onClick={() => setSearchOpen((v) => !v)}
           >
-            <svg className="ico" viewBox="0 0 24 24" aria-hidden="true">
+            <svg viewBox="0 0 24 24" className="ico" aria-hidden="true">
               <path d="M21 21l-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15z"
                 fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
             </svg>
           </button>
+          <input
+            ref={searchInputRef}
+            className="seg-search"
+            placeholder="Search…"
+            value={query}
+            onChange={(e)=>setQuery(e.target.value)}
+          />
+        </div>
 
+        {/* Sort select */}
+        <select className="seg-sort" value={sortBy} onChange={(e)=>setSortBy(e.target.value)} aria-label="Sort">
+          <option value="az">A–Z</option>
+          <option value="sharpe">Sharpe</option>
+          <option value="er">E[Ret]</option>
+          <option value="ep">E[Prof]</option>
+          <option value="pwin">P[Win]</option>
+        </select>
+
+        {/* Settings icon */}
+        <div className="settings">
           <button
             type="button"
-            className="icon-btn"
-            aria-label="Strategy settings"
+            className="seg-icon"
+            aria-label="Customize"
             onClick={() => setSettingsOpen((v) => !v)}
           >
             <svg className="ico" viewBox="0 0 24 24" aria-hidden="true">
@@ -173,114 +209,39 @@ export default function StrategyGallery({
             </svg>
           </button>
 
-          {/* Search popover */}
-          {searchOpen && (
-            <div className="sg-pop search" role="dialog" aria-label="Search strategies">
-              <input
-                ref={searchRef}
-                className="field"
-                placeholder="Search strategies…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-            </div>
-          )}
-
-          {/* Settings panel (engine) */}
           {settingsOpen && (
-            <div className="sg-pop settings" role="dialog" aria-label="Strategy settings">
-              <div className="sgs">
-                <div className="sgs-group">
-                  <div className="sgs-title">Presets</div>
-                  <div className="swatches">
-                    {PRESETS.map((p) => (
-                      <button
-                        key={p.name}
-                        className="swatch"
-                        onClick={() => applyPreset(p.v)}
-                        aria-label={`Apply ${p.name}`}
-                      >
-                        <span style={{ background: p.v.bullish }} />
-                        <span style={{ background: p.v.neutral }} />
-                        <span style={{ background: p.v.bearish }} />
-                      </button>
-                    ))}
-                  </div>
+            <div className="panel" role="dialog" aria-label="Settings">
+              <div className="p-group">
+                <div className="p-title">Presets</div>
+                <div className="swatches">
+                  {PRESETS.map((s)=>(
+                    <button key={s.name} className="swatch" onClick={()=>setPalette(p=>({...p, ...s.p}))} aria-label={s.name}>
+                      <span style={{ background:s.p.bullish }} />
+                      <span style={{ background:s.p.neutral }} />
+                      <span style={{ background:s.p.bearish }} />
+                    </button>
+                  ))}
                 </div>
-
-                <div className="sgs-group">
-                  <div className="sgs-title">Custom colors</div>
-                  <div className="sgs-row">
-                    <label>Neutral</label>
-                    <input type="color" value={palette.neutral}
-                      onChange={(e)=>setPalette(p=>({...p, neutral:e.target.value}))}/>
-                  </div>
-                  <div className="sgs-row">
-                    <label>Bullish</label>
-                    <input type="color" value={palette.bullish}
-                      onChange={(e)=>setPalette(p=>({...p, bullish:e.target.value}))}/>
-                  </div>
-                  <div className="sgs-row">
-                    <label>Bearish</label>
-                    <input type="color" value={palette.bearish}
-                      onChange={(e)=>setPalette(p=>({...p, bearish:e.target.value}))}/>
-                  </div>
-                </div>
-
-                <div className="sgs-group">
-                  <div className="sgs-title">Metrics</div>
-                  <div className="checks">
-                    <label className="sgs-check">
-                      <input type="checkbox" checked={!!metricsOn.sharpe}
-                        onChange={(e)=>setMetricsOn(m=>({...m, sharpe:e.target.checked}))}/>
-                      Sharpe
-                    </label>
-                    <label className="sgs-check">
-                      <input type="checkbox" checked={!!metricsOn.pwin}
-                        onChange={(e)=>setMetricsOn(m=>({...m, pwin:e.target.checked}))}/>
-                      P[Win]
-                    </label>
-                    <label className="sgs-check">
-                      <input type="checkbox" checked={!!metricsOn.eprof}
-                        onChange={(e)=>setMetricsOn(m=>({...m, eprof:e.target.checked}))}/>
-                      E[Prof]
-                    </label>
-                    <label className="sgs-check">
-                      <input type="checkbox" checked={!!metricsOn.eret}
-                        onChange={(e)=>setMetricsOn(m=>({...m, eret:e.target.checked}))}/>
-                      E[Ret]
-                    </label>
-                  </div>
-                </div>
-
-                <div className="row-right">
-                  <button className="button ghost" onClick={()=>{ setPalette(DEFAULT_PALETTE); setMetricsOn(DEFAULT_METRICS); }}>
-                    Reset
-                  </button>
-                  <button className="button" onClick={()=>setSettingsOpen(false)}>Close</button>
-                </div>
+              </div>
+              <div className="p-group">
+                <div className="p-title">Custom</div>
+                <div className="prow"><label>Neutral</label><input type="color" value={palette.neutral} onChange={(e)=>setPalette(p=>({...p, neutral:e.target.value}))}/></div>
+                <div className="prow"><label>Bullish</label><input type="color" value={palette.bullish} onChange={(e)=>setPalette(p=>({...p, bullish:e.target.value}))}/></div>
+                <div className="prow"><label>Bearish</label><input type="color" value={palette.bearish} onChange={(e)=>setPalette(p=>({...p, bearish:e.target.value}))}/></div>
+              </div>
+              <div className="p-group">
+                <div className="p-title">Metrics</div>
+                <label className="pcheck"><input type="checkbox" checked={!!metricsOn.sharpe} onChange={(e)=>setMetricsOn(m=>({...m, sharpe:e.target.checked}))}/> Sharpe</label>
+                <label className="pcheck"><input type="checkbox" checked={!!metricsOn.pwin}   onChange={(e)=>setMetricsOn(m=>({...m, pwin:e.target.checked}))}/> P[Win]</label>
+                <label className="pcheck"><input type="checkbox" checked={!!metricsOn.eprof}  onChange={(e)=>setMetricsOn(m=>({...m, eprof:e.target.checked}))}/> E[Prof]</label>
+                <label className="pcheck"><input type="checkbox" checked={!!metricsOn.eret}   onChange={(e)=>setMetricsOn(m=>({...m, eret:e.target.checked}))}/> E[Ret]</label>
+              </div>
+              <div className="p-actions">
+                <button className="button ghost" onClick={()=>{ setPalette(DEFAULT_PALETTE); setMetricsOn(DEFAULT_METRICS); }}>Reset</button>
+                <button className="button" onClick={()=>setSettingsOpen(false)}>Close</button>
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Filter bar — ONLY Sort + Direction */}
-      <div className="sg-filters">
-        <div className="chip-row">
-          <button className={`chip ${dir==="All"?"on":""}`} onClick={()=>setDir("All")}>All</button>
-          <button className={`chip ${dir==="Bullish"?"on":""}`} onClick={()=>setDir("Bullish")}>Bullish</button>
-          <button className={`chip ${dir==="Neutral"?"on":""}`} onClick={()=>setDir("Neutral")}>Neutral</button>
-          <button className={`chip ${dir==="Bearish"?"on":""}`} onClick={()=>setDir("Bearish")}>Bearish</button>
-          <div className="spacer" />
-          <label className="small muted">Sort</label>
-          <select className="field sort" value={sortBy} onChange={(e)=>setSortBy(e.target.value)}>
-            <option value="az">A–Z</option>
-            <option value="sharpe">Sharpe</option>
-            <option value="er">E[Ret]</option>
-            <option value="ep">E[Prof]</option>
-            <option value="pwin">P[Win]</option>
-          </select>
         </div>
       </div>
 
@@ -297,7 +258,7 @@ export default function StrategyGallery({
         ))}
       </div>
 
-      {/* Modal — open exactly like before */}
+      {/* Modal */}
       {active && (
         <StrategyModal
           strategy={active}
@@ -307,69 +268,93 @@ export default function StrategyGallery({
         />
       )}
 
-      {/* styles */}
       <style jsx>{`
-        .sg-header{
-          display:flex; align-items:center; justify-content:space-between;
+        /* Capsule bar */
+        .segbar{
+          display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+          padding:8px; border:1px solid var(--border); border-radius:14px;
+          background:var(--bg); box-shadow:0 1px 0 rgba(0,0,0,.04);
           margin-bottom:10px;
         }
-        .sg-title{ margin:0; }
-        .sg-tools{ position:relative; display:flex; align-items:center; gap:8px; }
-        .icon-btn{
-          width:36px; height:36px; border-radius:12px;
-          border:1px solid var(--border); background:var(--bg); color:var(--text);
-          display:inline-flex; align-items:center; justify-content:center;
-          transition:background .12s ease, transform .12s ease, border-color .12s ease, box-shadow .12s ease;
-          box-shadow: 0 1px 0 rgba(0,0,0,.04);
+        .bar-spacer{ flex:1 1 auto; }
+
+        /* Segmented buttons inside same capsule */
+        .segments{
+          display:flex; align-items:center; border-radius:9999px; overflow:hidden;
+          background:transparent;
         }
-        .icon-btn:hover{ background:var(--card); box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+        .seg{
+          height:34px; padding:0 14px; font-weight:700; letter-spacing:.2px;
+          background:transparent; color:var(--text);
+          border:0; border-left:1px solid var(--border);
+          transition:background .18s ease, color .18s ease, transform .18s ease, opacity .18s ease;
+          opacity:.86;
+        }
+        .seg:first-child{ border-left:0; }
+        .seg:hover{ background:var(--card); }
+        .seg.on{
+          background:var(--accent); color:#fff; opacity:1; transform: translateY(-0.5px) scale(1.01);
+        }
+
+        /* Search - icon that expands into an input */
+        .search-wrap{
+          display:flex; align-items:center; gap:8px;
+          width:36px; transition: width .22s ease;
+          border-radius:12px; overflow:hidden;
+          background:transparent;
+        }
+        .search-wrap.open{ width:240px; }
+        @media (max-width:560px){ .search-wrap.open{ width:100%; } }
+
+        .seg-icon{
+          width:36px; height:34px; border-radius:12px;
+          border:1px solid var(--border); background:var(--bg);
+          display:inline-flex; align-items:center; justify-content:center;
+          transition:background .12s ease, box-shadow .12s ease, transform .12s ease;
+        }
+        .seg-icon:hover{ background:var(--card); box-shadow:0 2px 10px rgba(0,0,0,.08); }
         .ico{ width:18px; height:18px; }
 
-        .sg-pop{
-          position:absolute; top:44px; right:0;
-          width:min(520px, 92vw);
-          background:var(--bg);
-          border:1px solid var(--border);
-          border-radius:14px;
-          box-shadow:0 12px 34px rgba(0,0,0,.18);
-          padding:14px;
-          z-index:60;
+        .seg-search{
+          flex:1; height:34px; padding:0 12px; border-radius:10px;
+          border:1px solid var(--border); background:var(--bg); color:var(--text);
+          opacity:0; transform: translateY(1px);
+          transition: opacity .18s ease;
         }
-        .sg-pop.search{ width:min(400px, 92vw); }
+        .search-wrap.open .seg-search{ opacity:1; }
 
-        .sgs{ display:grid; gap:16px; }
-        .sgs-group{ display:grid; gap:10px; }
-        .sgs-title{ font-size:12px; opacity:.75; }
+        /* Sort control styled to match */
+        .seg-sort{
+          height:34px; padding:0 12px; border-radius:10px;
+          border:1px solid var(--border); background:var(--bg); color:var(--text);
+          min-width:150px;
+        }
+
+        /* Settings popover (minimal, refined) */
+        .settings{ position:relative; }
+        .panel{
+          position:absolute; top:42px; right:0; z-index:60;
+          width:min(520px,92vw); background:var(--bg);
+          border:1px solid var(--border); border-radius:14px;
+          box-shadow:0 12px 34px rgba(0,0,0,.18);
+          padding:14px; display:grid; gap:16px;
+        }
+        .p-group{ display:grid; gap:10px; }
+        .p-title{ font-size:12px; opacity:.75; }
         .swatches{ display:flex; gap:10px; }
         .swatch{
-          display:inline-flex; align-items:center; gap:4px;
           padding:6px; border-radius:12px; border:1px solid var(--border);
-          background:var(--bg); box-shadow:0 1px 0 rgba(0,0,0,.04);
+          background:var(--bg); display:flex; gap:4px;
         }
         .swatch span{ width:16px; height:16px; border-radius:50%; display:inline-block; }
-        .sgs-row{ display:grid; grid-template-columns:120px 1fr; align-items:center; gap:12px; }
-        .checks{ display:flex; flex-wrap:wrap; gap:10px 16px; }
-        .sgs-check{ display:flex; align-items:center; gap:8px; }
+        .prow{ display:grid; grid-template-columns:110px 1fr; gap:10px; align-items:center; }
+        .pcheck{ display:flex; align-items:center; gap:8px; }
+        .p-actions{ display:flex; justify-content:flex-end; gap:8px; }
 
-        .sg-filters{ margin-bottom:10px; }
-        .chip-row{
-          display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-          border:1px solid var(--border); border-radius:12px; padding:8px; background:var(--bg);
-          box-shadow: 0 1px 0 rgba(0,0,0,.04);
-        }
-        .chip{
-          height:32px; padding:0 12px; border-radius:9999px;
-          border:1px solid var(--border); background:var(--bg); color:var(--text);
-          font-weight:600; transition:background .12s ease, border-color .12s ease, box-shadow .12s ease;
-        }
-        .chip.on{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background:var(--card); }
-        .spacer{ flex:1 1 auto; }
-        .sort{ width:160px; height:32px; }
-
+        /* Grid */
         .sg-grid{
-          display:grid;
+          display:grid; gap:14px;
           grid-template-columns: repeat(auto-fill, minmax(260px,1fr));
-          gap:14px;
         }
       `}</style>
     </section>
