@@ -4,8 +4,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
 
-/* ---------- helpers ---------- */
-
+/* =========================
+   Small helpers (local-only)
+   ========================= */
 const POS_MAP = {
   "Long Call": { key: "lc", sign: +1 },
   "Short Call": { key: "sc", sign: -1 },
@@ -13,346 +14,340 @@ const POS_MAP = {
   "Short Put": { key: "sp", sign: -1 },
 };
 
-const clamp = (x, lo, hi) => Math.min(Math.max(Number(x) || 0, lo), hi);
-const fmtMoney = (n, ccy = "USD") => {
-  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
-  if (!Number.isFinite(+n)) return "—";
-  const v = Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2);
-  return `${sign}${v}`;
+const fmtCur = (v, ccy = "USD") => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: ccy,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + n.toFixed(2);
+  }
 };
 
-/** P&L at expiration for a single leg (per 1 contract). Premium is cost (long) / credit (short). */
-function legPnLAtExpiry(row, S) {
-  const K = Number(row.strike);
-  const q = Number(row.volume || 0);
-  const prem = Number(row.premium || 0);
+function toChartLegs(rows) {
+  const empty = { enabled: false, K: NaN, qty: 0 };
+  const obj = { lc: { ...empty }, sc: { ...empty }, lp: { ...empty }, sp: { ...empty } };
 
-  if (!Number.isFinite(K) || !Number.isFinite(q)) return 0;
-
-  const pos = row.position || "";
-  let payoff = 0;
-
-  if (pos === "Long Call") payoff = Math.max(S - K, 0) - prem;
-  else if (pos === "Short Call") payoff = -Math.max(S - K, 0) + prem;
-  else if (pos === "Long Put") payoff = Math.max(K - S, 0) - prem;
-  else if (pos === "Short Put") payoff = -Math.max(K - S, 0) + prem;
-
-  return payoff * q;
+  rows.forEach((r) => {
+    const map = POS_MAP[r.position];
+    if (!map) return;
+    const qty = Number(r.volume || 0);
+    const k = Number(r.strike);
+    if (!Number.isFinite(qty) || !Number.isFinite(k)) return;
+    obj[map.key] = { enabled: qty > 0, K: k, qty };
+  });
+  return obj;
 }
 
-function sumPnL(rows, S) {
-  return rows.reduce((acc, r) => acc + legPnLAtExpiry(r, S), 0);
+function netPremium(rows) {
+  let sum = 0;
+  rows.forEach((r) => {
+    const map = POS_MAP[r.position];
+    if (!map) return;
+    const vol = Number(r.volume || 0);
+    const prem = Number(r.premium || 0);
+    if (Number.isFinite(vol) && Number.isFinite(prem)) {
+      sum += map.sign * vol * prem;
+    }
+  });
+  return sum;
 }
 
-/** simple bell curve centered at spot, scaled just for display */
-function bellY(x, mu, sigmaLike, amp) {
-  const s = sigmaLike > 0 ? sigmaLike : mu > 0 ? 0.12 * mu : 1;
-  const v = Math.exp(-0.5 * ((x - mu) / s) ** 2);
-  return amp * v;
+/* =========================
+   Lightweight SVG chart (scaffold)
+   - X: price (strike/underlying)
+   - Y: P&L (placeholder until wired)
+   ========================= */
+function useSize(ref, fallbackW = 960) {
+  const [w, setW] = useState(fallbackW);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((es) => {
+      for (const e of es) {
+        const box = e.contentRect;
+        setW(Math.max(320, box.width));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return w;
 }
 
-/* ---------- chart (inline SVG, no external deps) ---------- */
+function ChartCanvas({ spot, rows }) {
+  const wrapRef = useRef(null);
+  const width = useSize(wrapRef);
+  const height = 320;
 
-function MiniPayoffChart({ rows, spot = 0, sigma = 0.25, currency = "USD" }) {
-  // sample domain around strikes & spot
-  const { xs, ysExp, ysCur, yMin, yMax } = useMemo(() => {
-    const Ks = rows
-      .map((r) => Number(r.strike))
-      .filter((v) => Number.isFinite(v) && v > 0);
+  // X-domain from strikes (fallback ±20% around spot)
+  const strikes = rows
+    .map((r) => Number(r.strike))
+    .filter((n) => Number.isFinite(n));
+  const s = Number(spot);
+  const minX = strikes.length ? Math.min(...strikes) : Number.isFinite(s) ? s * 0.8 : 180;
+  const maxX = strikes.length ? Math.max(...strikes) : Number.isFinite(s) ? s * 1.2 : 275;
 
-    const haveAnyK = Ks.length > 0;
-    const lo = Math.max(0, Math.min(...(haveAnyK ? Ks : [spot || 100])) * 0.8);
-    const hi = Math.max(...(haveAnyK ? Ks : [spot || 100])) * 1.2;
-    const a = lo === hi ? [Math.max(1, (spot || 100) * 0.8), (spot || 100) * 1.2] : [lo, hi];
+  // Y-domain placeholder
+  const minY = -0.08;
+  const maxY = 0.08;
 
-    const N = 180;
-    const xs = Array.from({ length: N }, (_, i) => a[0] + (i * (a[1] - a[0])) / (N - 1));
+  // paddings
+  const P = { t: 18, r: 16, b: 36, l: 56 };
+  const W = width - P.l - P.r;
+  const H = height - P.t - P.b;
 
-    // expiration P&L
-    const ysExp = xs.map((x) => sumPnL(rows, x));
+  const x = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
+  const y = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
 
-    // "current" line = same curve for structure (we'll wire live greeks later)
-    const ysCur = ysExp.slice();
-
-    const yMin = Math.min(...ysExp);
-    const yMax = Math.max(...ysExp);
-
-    return { xs, ysExp, ysCur, yMin, yMax };
-  }, [rows, spot]);
-
-  // dimensions & scales
-  const W = 1080; // wide canvas; will scale in CSS
-  const H = 420;
-  const pad = { t: 24, r: 64, b: 48, l: 64 };
-
-  const xMin = xs[0] ?? 0;
-  const xMax = xs[xs.length - 1] ?? 1;
-
-  const ySpan = Math.max(1, (yMax - yMin) || 1);
-  const yMinPad = yMin - 0.08 * ySpan;
-  const yMaxPad = yMax + 0.08 * ySpan;
-
-  const xToPx = (x) => pad.l + ((x - xMin) / (xMax - xMin)) * (W - pad.l - pad.r);
-  const yToPx = (y) => H - pad.b - ((y - yMinPad) / (yMaxPad - yMinPad)) * (H - pad.t - pad.b);
-
-  // lines
-  const pathFrom = (arr) =>
-    arr
-      .map((y, i) => `${i ? "L" : "M"} ${xToPx(xs[i]).toFixed(2)} ${yToPx(y).toFixed(2)}`)
-      .join(" ");
-
-  const pathExp = pathFrom(ysExp);
-  const pathCur = pathFrom(ysCur);
-
-  // ticks
-  const xTicks = 8;
+  // grid ticks
   const yTicks = 6;
-  const xTickVals = Array.from({ length: xTicks }, (_, i) => xMin + (i * (xMax - xMin)) / (xTicks - 1));
-  const yTickVals = Array.from({ length: yTicks }, (_, i) => yMinPad + (i * (yMaxPad - yMinPad)) / (yTicks - 1));
+  const xTicks = 8;
 
-  // bell (orange dashed)
-  const amp = (yMaxPad - yMinPad) * 0.22;
-  const bell = xs.map((x) => bellY(x, spot || (xMin + xMax) / 2, (xMax - xMin) * 0.12, amp) + yMinPad);
-  const pathBell = pathFrom(bell);
+  // placeholder lines
+  const center = Number.isFinite(s) ? s : (minX + maxX) / 2;
+  const bell = [];
+  for (let i = 0; i <= 80; i++) {
+    const p = minX + (i / 80) * (maxX - minX);
+    const u = (p - center) / ((maxX - minX) / 6);
+    const val = -0.08 + Math.exp(-0.5 * u * u) * 0.06; // sits below zero a bit
+    bell.push([x(p), y(val)]);
+  }
 
   return (
-    <div className="sg-chart-wrap" style={{ width: "100%" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "360px", display: "block" }}>
-        {/* grid */}
-        <g stroke="var(--border)" opacity="0.5">
-          {xTickVals.map((x, i) => (
-            <line key={`x-${i}`} x1={xToPx(x)} x2={xToPx(x)} y1={pad.t} y2={H - pad.b} />
-          ))}
-          {yTickVals.map((y, i) => (
-            <line key={`y-${i}`} x1={pad.l} x2={W - pad.r} y1={yToPx(y)} y2={yToPx(y)} />
-          ))}
-        </g>
+    <div ref={wrapRef} style={{ width: "100%" }}>
+      <svg width={width} height={height} role="img" aria-label="Strategy payoff chart">
+        {/* bg */}
+        <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
-        {/* axes */}
-        <line x1={pad.l} x2={W - pad.r} y1={H - pad.b} y2={H - pad.b} stroke="var(--text)" opacity="0.5" />
-        <line x1={pad.l} x2={pad.l} y1={pad.t} y2={H - pad.b} stroke="var(--text)" opacity="0.5" />
+        {/* grid Y */}
+        {Array.from({ length: yTicks + 1 }).map((_, i) => {
+          const yy = P.t + (i / yTicks) * H;
+          const val = maxY - (i / yTicks) * (maxY - minY);
+          return (
+            <g key={`gy${i}`}>
+              <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
+              <text
+                x={P.l - 8}
+                y={yy + 4}
+                textAnchor="end"
+                fontSize="10"
+                fill="rgba(255,255,255,.6)"
+              >
+                {val >= 0 ? `$ ${val.toFixed(2)}` : `-$ ${Math.abs(val).toFixed(2)}`}
+              </text>
+            </g>
+          );
+        })}
 
-        {/* zero line */}
-        <line
-          x1={pad.l}
-          x2={W - pad.r}
-          y1={yToPx(0)}
-          y2={yToPx(0)}
-          stroke="var(--text)"
-          opacity="0.35"
-          strokeWidth="1"
-        />
+        {/* grid X */}
+        {Array.from({ length: xTicks + 1 }).map((_, i) => {
+          const xx = P.l + (i / xTicks) * W;
+          const val = minX + (i / xTicks) * (maxX - minX);
+          return (
+            <g key={`gx${i}`}>
+              <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
+              <text
+                x={xx}
+                y={height - 10}
+                textAnchor="middle"
+                fontSize="10"
+                fill="rgba(255,255,255,.6)"
+              >
+                {Math.round(val)}
+              </text>
+            </g>
+          );
+        })}
 
-        {/* spot marker */}
-        {Number.isFinite(spot) && spot > 0 && (
-          <g stroke="var(--text)" opacity="0.5">
-            <line
-              x1={xToPx(spot)}
-              x2={xToPx(spot)}
-              y1={pad.t}
-              y2={H - pad.b}
-              strokeDasharray="4 4"
-            />
-          </g>
+        {/* underlying vertical */}
+        {Number.isFinite(s) && s >= minX && s <= maxX && (
+          <line
+            x1={x(s)}
+            y1={P.t}
+            x2={x(s)}
+            y2={height - P.b}
+            stroke="rgba(255,255,255,.35)"
+            strokeDasharray="4 4"
+          />
         )}
 
-        {/* curves */}
-        <path d={pathExp} fill="none" stroke="#ff2d55" strokeWidth="2.2" /> {/* Expiration (pink) */}
-        <path d={pathCur} fill="none" stroke="#0a84ff" strokeWidth="2" strokeDasharray="4 3" /> {/* Current (dotted) */}
-        <path d={pathBell} fill="none" stroke="#ff9f0a" strokeWidth="2" strokeDasharray="7 6" opacity="0.9" /> {/* Bell */}
-
-        {/* x ticks */}
-        <g fill="var(--text)" fontSize="11" opacity="0.85">
-          {xTickVals.map((x, i) => (
-            <text key={`xt-${i}`} x={xToPx(x)} y={H - pad.b + 16} textAnchor="middle">
-              {Math.round(x)}
-            </text>
-          ))}
+        {/* legends */}
+        <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
+          <circle r="4" fill="#60a5fa" />
+          <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
+          <circle cx="90" r="4" fill="#f472b6" />
+          <text x="98" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
+          <circle cx="200" r="4" fill="#f59e0b" />
+          <text x="208" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Bell (placeholder)</text>
         </g>
 
-        {/* y ticks */}
-        <g fill="var(--text)" fontSize="11" opacity="0.85">
-          {yTickVals.map((y, i) => (
-            <text key={`yt-${i}`} x={pad.l - 8} y={yToPx(y) + 4} textAnchor="end">
-              {fmtMoney(y, currency)}
-            </text>
-          ))}
-        </g>
-
-        {/* legend */}
-        <g fontSize="12" fill="var(--text)">
-          <circle cx={pad.l + 8} cy={pad.t + 6} r="4" fill="#0a84ff" />
-          <text x={pad.l + 18} y={pad.t + 10}>Current P&L</text>
-          <circle cx={pad.l + 120} cy={pad.t + 6} r="4" fill="#ff2d55" />
-          <text x={pad.l + 130} y={pad.t + 10}>Expiration P&L</text>
-          <circle cx={pad.l + 250} cy={pad.t + 6} r="4" fill="#ff9f0a" />
-          <text x={pad.l + 260} y={pad.t + 10}>Bell (placeholder)</text>
-        </g>
+        {/* placeholder curves */}
+        <polyline
+          fill="none"
+          stroke="#60a5fa"
+          strokeWidth="2"
+          points={`${P.l},${y(-0.015)} ${width - P.r},${y(-0.015)}`}
+        />
+        <polyline
+          fill="none"
+          stroke="#f472b6"
+          strokeWidth="2"
+          strokeDasharray="4 3"
+          points={`${P.l},${y(-0.015)} ${width - P.r},${y(-0.015)}`}
+        />
+        <polyline
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth="2"
+          strokeDasharray="6 5"
+          points={bell.map(([px, py]) => `${px},${py}`).join(" ")}
+        />
       </svg>
-
-      {/* metrics row (bottom of chart) */}
-      <div className="sg-metrics" style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginTop: 8 }}>
-        <div className="tile small">
-          <div className="sublabel">Underlying</div>
-          <div className="value">{fmtMoney(spot, currency)}</div>
-        </div>
-        <div className="tile small">
-          <div className="sublabel">Max Profit</div>
-          <div className="value">—</div>
-        </div>
-        <div className="tile small">
-          <div className="sublabel">Max Loss</div>
-          <div className="value">—</div>
-        </div>
-        <div className="tile small">
-          <div className="sublabel">Win Rate</div>
-          <div className="value">—</div>
-        </div>
-        <div className="tile small">
-          <div className="sublabel">Breakeven</div>
-          <div className="value">—</div>
-        </div>
-      </div>
     </div>
   );
 }
 
-/* ---------- modal ---------- */
-
+/* =========================
+   Main modal
+   ========================= */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, sigma, T, riskFree, currency } = env || {};
+  const { spot, sigma, T, riskFree, mcStats, currency } = env || {};
 
-  // start with the four rows so the table matches your legacy structure
+  // initialise editable rows
   const [rows, setRows] = useState(() => {
-    const base = [
-      { position: "Long Call", strike: "", volume: 0, premium: 0 },
-      { position: "Short Call", strike: "", volume: 0, premium: 0 },
-      { position: "Long Put", strike: "", volume: 0, premium: 0 },
-      { position: "Short Put", strike: "", volume: 0, premium: 0 },
-    ];
-    // merge any legs coming from the tile
-    (strategy?.legs || []).forEach((leg) => {
-      const idx = base.findIndex((b) => b.position === leg.position);
-      if (idx >= 0) base[idx] = { ...base[idx], ...leg };
+    const s = Number(spot) || 0;
+    return (strategy?.legs || []).map((r) => {
+      if (!Number.isFinite(r.strike) && s > 0) {
+        const dir = strategy?.direction;
+        const pos = r.position;
+        let k = s;
+        if (pos.includes("Call")) k = dir === "Bullish" ? s * 1.05 : s * 1.03;
+        if (pos.includes("Put")) k = dir === "Bearish" ? s * 0.95 : s * 0.97;
+        return { ...r, strike: Math.round(k * 100) / 100, volume: r.volume ?? 1 };
+      }
+      return { ...r, volume: r.volume ?? 1 };
     });
-    return base;
   });
 
-  // accessibility & closing
+  const chartLegs = useMemo(() => toChartLegs(rows), [rows]);
+  const totalPrem = useMemo(() => netPremium(rows), [rows]);
+
+  // Close on ESC + lock background scroll
+  const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onEsc);
+    const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onEsc);
-      document.body.style.overflow = "";
+      document.body.style.overflow = prev || "";
     };
   }, [onClose]);
 
-  const edit = (i, field, v) =>
+  const edit = (i, field, v) => {
     setRows((prev) => {
       const next = [...prev];
       next[i] = { ...next[i], [field]: v === "" ? "" : Number(v) };
       return next;
     });
-
-  // prepare legs + premium for "Apply"
-  const legsForApply = useMemo(() => {
-    const empty = { enabled: false, K: NaN, qty: 0 };
-    const obj = { lc: { ...empty }, sc: { ...empty }, lp: { ...empty }, sp: { ...empty } };
-    rows.forEach((r) => {
-      const map = POS_MAP[r.position];
-      if (!map) return;
-      const K = Number(r.strike);
-      const qty = Number(r.volume || 0);
-      if (Number.isFinite(K) && Number.isFinite(qty) && qty > 0) {
-        obj[map.key] = { enabled: true, K, qty };
-      }
-    });
-    const netPrem = rows.reduce((acc, r) => {
-      const p = Number(r.premium || 0);
-      const q = Number(r.volume || 0);
-      const m = POS_MAP[r.position];
-      if (!m) return acc;
-      return acc + (m.sign * p * q);
-    }, 0);
-    return { legs: obj, netPremium: netPrem };
-  }, [rows]);
+  };
 
   return (
     <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
       <div className="modal-backdrop" onClick={onClose} />
-      <div className="modal-sheet" style={{ maxWidth: 1120 }}>
+      <div
+        className="modal-sheet"
+        ref={dialogRef}
+        /* --- SCROLL FIX --- */
+        style={{
+          maxWidth: 1120,
+          maxHeight: "calc(100vh - 96px)",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
+        }}
+      >
         {/* Header */}
         <div className="modal-head">
           <div className="mh-left">
-            <div className="mh-icon">{strategy.icon && <strategy.icon aria-hidden="true" />}</div>
+            <div className="mh-icon">
+              {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
+            </div>
             <div className="mh-meta">
-              <div id="sg-modal-title" className="mh-name">{strategy.name}</div>
-              <DirectionBadge value={strategy.direction} />
+              <div id="sg-modal-title" className="mh-name">
+                {strategy?.name || "Strategy"}
+              </div>
+              <DirectionBadge value={strategy?.direction || "Neutral"} />
             </div>
           </div>
           <div className="mh-actions">
-            <button className="button ghost" type="button">Save</button>
+            <button className="button ghost" type="button" onClick={() => {}}>
+              Save
+            </button>
             <button
               className="button"
               type="button"
-              onClick={() => onApply?.(legsForApply.legs, legsForApply.netPremium)}
+              onClick={() => onApply?.(chartLegs, totalPrem)}
             >
               Apply
             </button>
-            <button className="button ghost" type="button" onClick={onClose}>Close</button>
+            <button className="button ghost" type="button" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
-        {/* Chart — full width, no card */}
-        <section style={{ marginTop: 8, marginBottom: 16 }}>
-          <MiniPayoffChart rows={rows} spot={spot} sigma={sigma} currency={currency} />
-        </section>
+        {/* Chart */}
+        <div className="card padless canvas" style={{ padding: 0 }}>
+          <div style={{ padding: "8px 12px 0 12px" }}>
+            <ChartCanvas spot={spot} rows={rows} />
+          </div>
+        </div>
+
+        {/* Metrics under chart */}
+        <div
+          className="metric-strip"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(5, minmax(0,1fr))",
+            gap: 12,
+            padding: "10px 12px 0 12px",
+          }}
+        >
+          <MetricBox label="Underlying" value={fmtCur(spot, currency || "USD")} />
+          <MetricBox label="Max Profit" value="—" />
+          <MetricBox label="Max Loss" value="—" />
+          <MetricBox label="Win Rate" value="—" />
+          <MetricBox label="Breakeven" value="—" />
+        </div>
 
         {/* Architecture */}
-        <section className="card dense" style={{ marginBottom: 16 }}>
+        <div className="card dense" style={{ marginTop: 12 }}>
           <div className="section-title">Architecture</div>
-          <div className="sg-specs" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-            <div className="tile">
-              <div className="sublabel">Composition</div>
-              <div className="value">
-                {rows
-                  .filter((r) => Number(r.volume) > 0)
-                  .map((r) => `${r.position}×${r.volume}`)
-                  .join(" · ") || "—"}
-              </div>
-            </div>
-            <div className="tile">
-              <div className="sublabel">Breakeven(s)</div>
-              {/* keep empty until you drop the formula */}
-              <div className="value">—</div>
-            </div>
-            <div className="tile">
-              <div className="sublabel">Max Profit</div>
-              <div className="value">—</div>
-            </div>
-            <div className="tile">
-              <div className="sublabel">Max Loss</div>
-              <div className="value">—</div>
-            </div>
-            <div className="tile">
-              <div className="sublabel">Risk Profile</div>
-              <div className="value">{strategy.direction || "—"}</div>
-            </div>
-            <div className="tile">
-              <div className="sublabel">Greeks Exposure</div>
-              <div className="value">Δ/Γ/Θ/ν —</div>
-            </div>
-            <div className="tile">
-              <div className="sublabel">Margin Requirement</div>
-              <div className="value">—</div>
-            </div>
+          <div
+            className="grid-3"
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}
+          >
+            <Spec title="Composition">
+              {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
+            </Spec>
+            <Spec title="Breakeven(s)">—{/* left intentionally empty until formula */}</Spec>
+            <Spec title="Max Profit">—</Spec>
+            <Spec title="Max Loss">—</Spec>
+            <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
+            <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
+            <Spec title="Margin Requirement">—</Spec>
           </div>
-        </section>
+        </div>
 
         {/* Configuration */}
-        <section className="card dense">
+        <div className="card dense" style={{ marginTop: 12, marginBottom: 8 }}>
           <div className="section-title">Configuration</div>
           <div className="sg-table">
             <div className="sg-th">Position</div>
@@ -361,24 +356,52 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             <div className="sg-th">Premium</div>
 
             {rows.map((r, i) => (
-              <Row
+              <RowEditor
                 key={i}
                 row={r}
                 onStrike={(v) => edit(i, "strike", v)}
                 onVol={(v) => edit(i, "volume", v)}
                 onPremium={(v) => edit(i, "premium", v)}
-                currency={currency}
+                currency={currency || "USD"}
               />
             ))}
           </div>
-        </section>
+
+          <div className="row-right small" style={{ marginTop: 10 }}>
+            <span className="muted">Net Premium:</span>&nbsp;
+            <strong>{fmtCur(totalPrem, currency || "USD")}</strong>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-/* ---------- table row ---------- */
-function Row({ row, onStrike, onVol, onPremium, currency }) {
+/* =========================
+   Small subcomponents
+   ========================= */
+function MetricBox({ label, value }) {
+  return (
+    <div
+      className="card dense"
+      style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}
+    >
+      <div className="small muted">{label}</div>
+      <div className="value">{value}</div>
+    </div>
+  );
+}
+
+function Spec({ title, children }) {
+  return (
+    <div className="card dense" style={{ padding: 12 }}>
+      <div className="small muted">{title}</div>
+      <div style={{ marginTop: 6 }}>{children}</div>
+    </div>
+  );
+}
+
+function RowEditor({ row, onStrike, onVol, onPremium, currency }) {
   return (
     <>
       <div className="sg-td strong">{row.position}</div>
@@ -387,9 +410,9 @@ function Row({ row, onStrike, onVol, onPremium, currency }) {
           className="field"
           type="number"
           step="0.01"
-          placeholder="Strike"
           value={row.strike ?? ""}
           onChange={(e) => onStrike(e.target.value)}
+          placeholder="Strike"
         />
       </div>
       <div className="sg-td">
@@ -397,22 +420,23 @@ function Row({ row, onStrike, onVol, onPremium, currency }) {
           className="field"
           type="number"
           step="1"
-          min="0"
-          placeholder="0"
           value={row.volume ?? ""}
           onChange={(e) => onVol(e.target.value)}
+          placeholder="0"
         />
       </div>
       <div className="sg-td">
-        <div style={{ display: "grid", gridTemplateColumns: "16px 1fr", alignItems: "center", gap: 6 }}>
-          <span className="muted" style={{ justifySelf: "center" }}>$</span>
+        <div style={{ display: "grid", gridTemplateColumns: "12px 1fr", alignItems: "center" }}>
+          <span className="small muted" aria-hidden>
+            $
+          </span>
           <input
             className="field"
             type="number"
             step="0.01"
-            placeholder="0"
             value={row.premium ?? ""}
             onChange={(e) => onPremium(e.target.value)}
+            placeholder={currency}
           />
         </div>
       </div>
