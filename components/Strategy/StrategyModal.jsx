@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
 
 /* =========================
-   Small helpers (local-only)
+   Helpers
    ========================= */
 const POS_MAP = {
   "Long Call": { key: "lc", sign: +1 },
@@ -58,9 +58,7 @@ function netPremium(rows) {
 }
 
 /* =========================
-   Lightweight SVG chart (scaffold)
-   - X: price (strike/underlying)
-   - Y: P&L (placeholder until wired)
+   Lightweight SVG chart (no card/border)
    ========================= */
 function useSize(ref, fallbackW = 960) {
   const [w, setW] = useState(fallbackW);
@@ -69,8 +67,7 @@ function useSize(ref, fallbackW = 960) {
     if (!el) return;
     const ro = new ResizeObserver((es) => {
       for (const e of es) {
-        const box = e.contentRect;
-        setW(Math.max(320, box.width));
+        setW(Math.max(320, e.contentRect.width));
       }
     });
     ro.observe(el);
@@ -79,15 +76,12 @@ function useSize(ref, fallbackW = 960) {
   return w;
 }
 
-function ChartCanvas({ spot, rows }) {
+function ChartCanvas({ spot, rows, height = 380 }) {
   const wrapRef = useRef(null);
   const width = useSize(wrapRef);
-  const height = 320;
 
   // X-domain from strikes (fallback ±20% around spot)
-  const strikes = rows
-    .map((r) => Number(r.strike))
-    .filter((n) => Number.isFinite(n));
+  const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
   const s = Number(spot);
   const minX = strikes.length ? Math.min(...strikes) : Number.isFinite(s) ? s * 0.8 : 180;
   const maxX = strikes.length ? Math.max(...strikes) : Number.isFinite(s) ? s * 1.2 : 275;
@@ -97,7 +91,7 @@ function ChartCanvas({ spot, rows }) {
   const maxY = 0.08;
 
   // paddings
-  const P = { t: 18, r: 16, b: 36, l: 56 };
+  const P = { t: 18, r: 16, b: 40, l: 56 };
   const W = width - P.l - P.r;
   const H = height - P.t - P.b;
 
@@ -108,20 +102,20 @@ function ChartCanvas({ spot, rows }) {
   const yTicks = 6;
   const xTicks = 8;
 
-  // placeholder lines
+  // placeholder bell
   const center = Number.isFinite(s) ? s : (minX + maxX) / 2;
   const bell = [];
   for (let i = 0; i <= 80; i++) {
     const p = minX + (i / 80) * (maxX - minX);
     const u = (p - center) / ((maxX - minX) / 6);
-    const val = -0.08 + Math.exp(-0.5 * u * u) * 0.06; // sits below zero a bit
+    const val = -0.08 + Math.exp(-0.5 * u * u) * 0.06;
     bell.push([x(p), y(val)]);
   }
 
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
       <svg width={width} height={height} role="img" aria-label="Strategy payoff chart">
-        {/* bg */}
+        {/* transparent bg to keep the chart visually integrated */}
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
         {/* grid Y */}
@@ -153,7 +147,7 @@ function ChartCanvas({ spot, rows }) {
               <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
               <text
                 x={xx}
-                y={height - 10}
+                y={height - 12}
                 textAnchor="middle"
                 fontSize="10"
                 fill="rgba(255,255,255,.6)"
@@ -176,7 +170,7 @@ function ChartCanvas({ spot, rows }) {
           />
         )}
 
-        {/* legends */}
+        {/* legends (minimal) */}
         <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
           <circle r="4" fill="#60a5fa" />
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
@@ -213,10 +207,10 @@ function ChartCanvas({ spot, rows }) {
 }
 
 /* =========================
-   Main modal
+   Modal
    ========================= */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, sigma, T, riskFree, mcStats, currency } = env || {};
+  const { spot, currency } = env || {};
 
   // initialise editable rows
   const [rows, setRows] = useState(() => {
@@ -237,7 +231,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const chartLegs = useMemo(() => toChartLegs(rows), [rows]);
   const totalPrem = useMemo(() => netPremium(rows), [rows]);
 
-  // Close on ESC + lock background scroll
+  // Close on ESC + lock background
   const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
@@ -258,23 +252,26 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   };
 
+  // unified spacing
+  const GAP = 14;
+
   return (
     <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
       <div className="modal-backdrop" onClick={onClose} />
       <div
         className="modal-sheet"
         ref={dialogRef}
-        /* --- SCROLL FIX --- */
         style={{
           maxWidth: 1120,
           maxHeight: "calc(100vh - 96px)",
           overflowY: "auto",
           WebkitOverflowScrolling: "touch",
           overscrollBehavior: "contain",
+          padding: 16, // consistent inner gutter
         }}
       >
         {/* Header */}
-        <div className="modal-head">
+        <div className="modal-head" style={{ marginBottom: GAP }}>
           <div className="mh-left">
             <div className="mh-icon">
               {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
@@ -303,11 +300,9 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </div>
         </div>
 
-        {/* Chart */}
-        <div className="card padless canvas" style={{ padding: 0 }}>
-          <div style={{ padding: "8px 12px 0 12px" }}>
-            <ChartCanvas spot={spot} rows={rows} />
-          </div>
+        {/* CHART — no card/border, full bleed to the modal padding */}
+        <div style={{ marginBottom: GAP }}>
+          <ChartCanvas spot={spot} rows={rows} height={380} />
         </div>
 
         {/* Metrics under chart */}
@@ -316,8 +311,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(5, minmax(0,1fr))",
-            gap: 12,
-            padding: "10px 12px 0 12px",
+            gap: GAP,
+            marginBottom: GAP,
           }}
         >
           <MetricBox label="Underlying" value={fmtCur(spot, currency || "USD")} />
@@ -328,16 +323,16 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         </div>
 
         {/* Architecture */}
-        <div className="card dense" style={{ marginTop: 12 }}>
+        <div className="card dense" style={{ marginBottom: GAP }}>
           <div className="section-title">Architecture</div>
           <div
             className="grid-3"
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: GAP }}
           >
             <Spec title="Composition">
               {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
             </Spec>
-            <Spec title="Breakeven(s)">—{/* left intentionally empty until formula */}</Spec>
+            <Spec title="Breakeven(s)">—{/* empty until formula is provided */}</Spec>
             <Spec title="Max Profit">—</Spec>
             <Spec title="Max Loss">—</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
@@ -347,7 +342,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         </div>
 
         {/* Configuration */}
-        <div className="card dense" style={{ marginTop: 12, marginBottom: 8 }}>
+        <div className="card dense" style={{ marginBottom: 8 }}>
           <div className="section-title">Configuration</div>
           <div className="sg-table">
             <div className="sg-th">Position</div>
@@ -378,7 +373,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 }
 
 /* =========================
-   Small subcomponents
+   Subcomponents
    ========================= */
 function MetricBox({ label, value }) {
   return (
