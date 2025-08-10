@@ -2,12 +2,11 @@
 import { useEffect, useMemo, useState } from "react";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
-import CompanyHero from "../../components/Strategy/CompanyHero"; // NEW
+import CompanyHero from "../../components/Strategy/CompanyHero";
 import MarketCard from "../../components/Strategy/MarketCard";
-import Chart from "../../components/Strategy/Chart";
 import MiniCards from "../../components/Strategy/MiniCards";
 import StatsRail from "../../components/Strategy/StatsRail";
-import StrategyGallery from "../../components/Strategy/StrategyGallery"; // NEW
+import StrategyGallery from "../../components/Strategy/StrategyGallery";
 
 import RomeClock from "../../components/RomeClock";
 import ThemeToggle from "../../components/ThemeToggle";
@@ -51,7 +50,7 @@ export default function Strategy() {
     qty: Number.isFinite(+leg?.qty) ? +leg.qty : 0,
   });
 
-  // Normalize legs coming from UI for API/Chart
+  // Normalize legs coming from UI for API/Stats
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
     const sc = toLegAPI(legsUi?.sc || {});
@@ -180,21 +179,7 @@ export default function Strategy() {
             }}
           />
 
-          {/* Chart */}
-          <div className="tv-chart">
-            <Chart
-              spot={spot}
-              legs={legs}
-              riskFree={market.riskFree ?? 0}
-              carryPremium={false}
-              mu={null}
-              sigma={sigma || 0}
-              T={T || 0}
-              mcStats={mcStats}
-            />
-          </div>
-
-          {/* Quick actions */}
+          {/* Quick actions / Monte Carlo triggers */}
           <MiniCards
             disabled={!company?.symbol}
             defaultHorizon={horizon}
@@ -204,7 +189,7 @@ export default function Strategy() {
           />
         </div>
 
-        {/* Right rail */}
+        {/* Right rail (Monte Carlo summaries, stats, KPIs) */}
         <StatsRail
           spot={spot}
           currency={currency}
