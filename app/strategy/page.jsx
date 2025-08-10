@@ -12,6 +12,19 @@ import RomeClock from "../../components/RomeClock";
 import ThemeToggle from "../../components/ThemeToggle";
 import useDebounce from "../../hooks/useDebounce";
 
+/* pretty exchange label for the hero pill */
+const EX_NAMES = {
+  NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
+  NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
+  MIL: "Milan", LSE: "London", EBS: "Swiss", SWX: "Swiss",
+  TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
+};
+const prettyExchange = (ex) => (EX_NAMES[ex] || ex || "").toUpperCase();
+
+/* sanitize company display name (drop Inc., Corp., etc.) */
+const cleanName = (n = "") =>
+  n.replace(/\b(incorporated|inc\.?|corp\.?|corporation|plc|s\.p\.a\.|sa|nv)\b/ig, "").trim();
+
 export default function Strategy() {
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
@@ -142,23 +155,64 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
+  // --------------------------------------------------------------------
+  // Rendering
+  // --------------------------------------------------------------------
   return (
     <div className="container">
-      <header className="page-header">
-        <div className="titles">
-          <div className="eyebrow">Portfolio</div>
-          <h1 className="page-title">Strategy</h1>
-          <p className="subtitle">
-            Build, compare, and validate your options strategy.
-          </p>
-        </div>
-        <div className="header-tools">
-          <RomeClock />
-          <button aria-label="Toggle theme" className="toggle">
-            <ThemeToggle />
-          </button>
-        </div>
-      </header>
+      {/* Hero header when a company is selected; otherwise default page header */}
+      {company?.symbol ? (
+        <section className="hero">
+          <div className="hero-top">
+            <div className="hero-id">
+              <div className="hero-logo" aria-hidden="true">
+                {String(company?.symbol || "?").slice(0, 1)}
+              </div>
+              <div className="hero-texts">
+                <h1 className="hero-name">{cleanName(company?.name || company?.symbol)}</h1>
+                <div className="hero-pill" aria-label="Ticker and exchange">
+                  <span className="tkr">{company.symbol}</span>
+                  <span className="dot">•</span>
+                  <span className="ex">{prettyExchange(company.exchange)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="hero-tools">
+              <RomeClock />
+              <button aria-label="Toggle theme" className="toggle">
+                <ThemeToggle />
+              </button>
+            </div>
+          </div>
+
+          <div className="hero-price">
+            <div className="p-row">
+              <div className="p-big">
+                {Number.isFinite(spot) ? Number(spot).toFixed(2) : "0.00"}
+                <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
+              </div>
+            </div>
+            <div className="p-sub">At close • {new Date().toLocaleString(undefined, { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short", timeZoneName: "short" })}</div>
+          </div>
+        </section>
+      ) : (
+        <header className="page-header">
+          <div className="titles">
+            <div className="eyebrow">Portfolio</div>
+            <h1 className="page-title">Strategy</h1>
+            <p className="subtitle">
+              Build, compare, and validate your options strategy.
+            </p>
+          </div>
+          <div className="header-tools">
+            <RomeClock />
+            <button aria-label="Toggle theme" className="toggle">
+              <ThemeToggle />
+            </button>
+          </div>
+        </header>
+      )}
 
       {/* Company — full width */}
       <CompanyCard
@@ -179,7 +233,7 @@ export default function Strategy() {
           <MarketCard onRates={(r) => setMarket(r)} />
         </div>
 
-        {/* Right column: ONLY Key Stats, scrolls normally (no sticky) */}
+        {/* Right column: ONLY Key Stats (scrolls normally) */}
         <div className="g-item">
           <StatsRail
             spot={spot}
@@ -187,11 +241,10 @@ export default function Strategy() {
             company={company}
             iv={sigma}
             market={market}
-            // removed: distribution + strategy summary
           />
         </div>
 
-        {/* Second row: Strategy gallery spans both columns (full width) */}
+        {/* Strategy gallery spans full width */}
         <div className="g-span">
           <StrategyGallery
             spot={spot}
@@ -205,27 +258,57 @@ export default function Strategy() {
         </div>
       </div>
 
+      {/* scoped styles for the hero */}
       <style jsx>{`
+        .hero{
+          padding: 10px 0 18px 0;
+          border-bottom: 1px solid var(--border);
+          margin-bottom: 16px;
+        }
+        .hero-top{
+          display:flex; align-items:center; justify-content:space-between; gap:16px;
+        }
+        .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
+        .hero-logo{
+          width:84px; height:84px; border-radius:20px;
+          background: radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.08), rgba(0,0,0,.35));
+          border:1px solid var(--border);
+          display:flex; align-items:center; justify-content:center;
+          font-weight:700; font-size:36px;
+        }
+        .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .hero-pill{
+          display:inline-flex; align-items:center; gap:10px;
+          height:38px; padding:0 14px;
+          border-radius:9999px; border:1px solid var(--border);
+          background:var(--card); font-weight:600;
+          width:fit-content;
+        }
+        .hero-pill .dot{ opacity:.6; }
+        .hero-tools{ display:flex; align-items:center; gap:10px; }
+
+        .hero-price{ margin-top:12px; }
+        .p-row{ display:flex; align-items:baseline; gap:12px; }
+        .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
+        .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
+        .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
+
+        /* grid below */
         .layout-2col {
           display: grid;
           grid-template-columns: 1fr 320px;
           gap: var(--row-gap);
           align-items: start;
         }
-        .g-item {
-          min-width: 0;
-        }
-        .g-span {
-          grid-column: 1 / -1;
-          min-width: 0;
-        }
+        .g-item { min-width: 0; }
+        .g-span { grid-column: 1 / -1; min-width: 0; }
         @media (max-width: 1100px) {
-          .layout-2col {
-            grid-template-columns: 1fr;
-          }
-          .g-span {
-            grid-column: 1 / -1;
-          }
+          .layout-2col { grid-template-columns: 1fr; }
+          .g-span { grid-column: 1 / -1; }
+          .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
+          .hero-name{ font-size:32px; }
+          .p-big{ font-size:40px; }
         }
       `}</style>
     </div>
