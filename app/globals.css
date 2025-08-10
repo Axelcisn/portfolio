@@ -531,18 +531,19 @@ html.dark .modal-sheet{ box-shadow: 0 30px 80px rgba(0,0,0,.6); }
 .sg-th{ font-size:12px; opacity:.7; }
 .sg-td{}
 
-/* ===== Company Hero (refined hierarchy) ===== */
+/* ===== Company Hero (layout per spec) ===== */
 .company-hero{
   display:grid;
-  grid-template-columns: auto 1fr; /* avatar | content */
+  grid-template-columns: auto 1fr; /* logo | content */
   gap:16px;
-  align-items:center;
+  align-items:start;               /* logo top-left, content aligned to top */
   margin-bottom: 8px;
 }
 @media (max-width:640px){
   .company-hero{ gap:12px; }
 }
 
+/* Logo */
 .ch-avatar{
   width:76px; height:76px; border-radius:20px;
   background: radial-gradient(85% 85% at 25% 20%, #1e232a, #0f1115);
@@ -555,6 +556,7 @@ html:not(.dark) .ch-avatar{
 .avatar-img{ width:70%; height:70%; object-fit:contain; filter:contrast(1.05) saturate(.9); }
 .avatar-mono{ font-weight:800; font-size:28px; color:var(--text); opacity:.9; }
 
+/* Content */
 .ch-content{ min-width:0; }
 .ch-name{
   font-size:32px; line-height:1.05; font-weight:800; letter-spacing:-.2px;
@@ -562,7 +564,7 @@ html:not(.dark) .ch-avatar{
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 
-/* Ticker • Exchange line (slightly smaller than name) */
+/* Ticker • Exchange (slightly smaller) */
 .id-line{
   margin-top:6px;
   font-size:14px;
@@ -574,7 +576,7 @@ html:not(.dark) .ch-avatar{
 .id-dot{ opacity:.55; }
 .id-exch{ opacity:.9; }
 
-/* Price cluster placed BELOW identity line */
+/* Price cluster below identity */
 .price-stack{ margin-top:10px; }
 .price-row{
   display:flex; align-items:baseline; gap:8px; white-space:nowrap;
@@ -583,15 +585,15 @@ html:not(.dark) .ch-avatar{
 .price-dec{ font-size:28px; font-weight:700; opacity:.9; line-height:1; transform: translateY(1px); }
 .price-ccy{ margin-left:2px; font-weight:600; opacity:.85; }
 
-.price-change{ margin-top:4px; font-weight:700; }
+/* Colour‑coded movement (kept next to price) */
+.price-change{ margin-left:8px; font-weight:700; }
 .price-change.pos{ color:#16a34a; }
 .price-change.neg{ color:#ef4444; }
 .price-change.flat{ opacity:.75; }
 
-/* Subtle status line under price (session + time) */
-.ch-status{ margin-top:2px; color:var(--muted); }
+/* MARKET_STATUS • DATE, TIME TZ under price */
+.ch-status{ margin-top:4px; color:var(--muted); }
 
-/* Responsive rules */
 @media (max-width:880px){
   .price-row{ flex-wrap:wrap; gap:8px; }
 }
