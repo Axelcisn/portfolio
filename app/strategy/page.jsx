@@ -95,24 +95,21 @@ export default function Strategy() {
         </div>
       </header>
 
+      {/* Company — full width, above the 2‑column grid */}
+      <CompanyCard
+        value={company}
+        market={market}
+        onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
+        onHorizonChange={(d) => setHorizon(d)}
+        onIvSourceChange={(s) => setIvSource(s)}
+        onIvValueChange={(v) => setIvValue(v)}
+      />
+
       <div className="tv-layout">
-        {/* Main column */}
+        {/* Left column */}
         <div className="page-stack">
-
-          {/* Company — full width, no card */}
-          <CompanyCard
-            value={company}
-            market={market}
-            onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
-            onHorizonChange={(d) => setHorizon(d)}
-            onIvSourceChange={(s) => setIvSource(s)}
-            onIvValueChange={(v) => setIvValue(v)}
-          />
-
-          {/* Market — same width as Legs, aligned headers/edges */}
           <MarketCard onRates={(r) => setMarket(r)} />
 
-          {/* Legs */}
           <section className="card">
             <LegsSection
               currency={currency}
@@ -121,7 +118,6 @@ export default function Strategy() {
             />
           </section>
 
-          {/* Chart */}
           <div className="tv-chart">
             <Chart
               spot={spot}
