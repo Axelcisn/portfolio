@@ -3,30 +3,27 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/* ---------- helpers ---------- */
 function toggleSet(set, value) {
   const next = new Set(set);
   if (next.has(value)) next.delete(value);
   else next.add(value);
   return next;
 }
-
 function useOutsideClose(ref, onClose) {
   useEffect(() => {
-    function onDoc(e) {
+    const onDoc = (e) => {
       if (!ref.current) return;
       if (!ref.current.contains(e.target)) onClose?.();
-    }
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("touchstart", onDoc, { passive: true });
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("touchstart", onDoc);
     };
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
   }, [ref, onClose]);
 }
 
+/* ---------- main ---------- */
 export default function StrategyFilters({
-  // kept for API parity; search is in the header popover
+  // (search lives in the Strategy header popover)
   query,
   setQuery,
   sortBy,
@@ -38,7 +35,6 @@ export default function StrategyFilters({
 }) {
   const [open, setOpen] = useState(null); // "dir" | "kind" | "sort" | null
 
-  // labels
   const sortLabels = {
     sharpe: "Sharpe",
     er: "E[Ret]",
@@ -61,9 +57,14 @@ export default function StrategyFilters({
 
   const sortSummary = useMemo(() => `Sort: ${sortLabels[sortBy] || "A–Z"}`, [sortBy]);
 
+  const clearAll = () => {
+    setDirFilter(new Set());
+    setKindFilter(new Set());
+  };
+
   return (
     <section className="sg3-bar" role="region" aria-label="Strategy filters">
-      {/* Category buttons — equal columns, Apple-like alignment */}
+      {/* Category buttons — equal columns */}
       <FilterCategory
         id="dir"
         label={dirSummary}
@@ -75,7 +76,8 @@ export default function StrategyFilters({
           options={["Bullish", "Neutral", "Bearish"]}
           selected={dirFilter}
           onToggle={(val) => setDirFilter(toggleSet(dirFilter, val))}
-          onClear={() => setDirFilter(new Set())}
+          showAll
+          onAll={clearAll}
         />
       </FilterCategory>
 
@@ -91,7 +93,6 @@ export default function StrategyFilters({
           renderLabel={(v) => (v === "Multi" ? "Multi‑leg" : "Single‑leg")}
           selected={kindFilter}
           onToggle={(val) => setKindFilter(toggleSet(kindFilter, val))}
-          onClear={() => setKindFilter(new Set())}
         />
       </FilterCategory>
 
@@ -124,14 +125,14 @@ function FilterCategory({ id, label, open, onOpen, onClose, children }) {
   const ref = useRef(null);
   useOutsideClose(ref, onClose);
 
-  // hover intent
+  // gentle hover intent
   const hoverTimer = useRef(null);
   const onEnter = () => {
     clearTimeout(hoverTimer.current);
     onOpen();
   };
   const onLeave = () => {
-    hoverTimer.current = setTimeout(onClose, 120);
+    hoverTimer.current = setTimeout(onClose, 140);
   };
 
   return (
@@ -155,12 +156,7 @@ function FilterCategory({ id, label, open, onOpen, onClose, children }) {
         </svg>
       </button>
 
-      <div
-        id={`pop-${id}`}
-        className="fpop"
-        role="menu"
-        aria-label={`${label} options`}
-      >
+      <div id={`pop-${id}`} className="fpop" role="menu" aria-label={`${label} options`}>
         {children}
       </div>
     </div>
@@ -168,11 +164,25 @@ function FilterCategory({ id, label, open, onOpen, onClose, children }) {
 }
 
 /* ---------- Multi-select options (Direction, Legs) ---------- */
-function MultiOptions({ options, renderLabel, selected, onToggle, onClear }) {
+function MultiOptions({ options, renderLabel, selected, onToggle, showAll = false, onAll }) {
   const lbl = (v) => (renderLabel ? renderLabel(v) : v);
+  const isAll = selected?.size === 0;
+
   return (
     <div className="fpanel">
       <div className="fopts" role="group">
+        {showAll && (
+          <button
+            type="button"
+            role="menuitem"
+            className={`fopt all ${isAll ? "on" : ""}`}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => onAll?.()}
+          >
+            <span className="fopt-label">All</span>
+          </button>
+        )}
+
         {options.map((opt) => {
           const on = selected.has(opt);
           return (
@@ -182,16 +192,14 @@ function MultiOptions({ options, renderLabel, selected, onToggle, onClear }) {
               role="menuitemcheckbox"
               aria-checked={on}
               className={`fopt ${on ? "on" : ""}`}
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onToggle(opt)}
             >
-              <span className="fopt-check" aria-hidden="true">{on ? "✓" : ""}</span>
+              <span className="fopt-check" aria-hidden="true" />
               <span className="fopt-label">{lbl(opt)}</span>
             </button>
           );
         })}
-      </div>
-      <div className="factions">
-        <button type="button" className="link" onClick={onClear}>Clear</button>
       </div>
     </div>
   );
@@ -212,16 +220,14 @@ function SingleOptions({ value, options, onChange, defaultId }) {
               role="menuitemradio"
               aria-checked={on}
               className={`fopt ${on ? "on" : ""}`}
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onChange(o.id)}
             >
-              <span className="fopt-check" aria-hidden="true">{on ? "•" : ""}</span>
+              <span className="fopt-check" aria-hidden="true" />
               <span className="fopt-label">{o.label}</span>
             </button>
           );
         })}
-      </div>
-      <div className="factions">
-        <span className="muted small">Tap to apply</span>
       </div>
     </div>
   );
