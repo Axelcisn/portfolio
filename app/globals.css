@@ -35,7 +35,6 @@
   /* Layout */
   --container-w:1100px;
 }
-
 html.dark{
   --bg:#0b0b0c;
   --text:#ffffff;
@@ -50,7 +49,6 @@ html.dark{
 
   --shadow-soft: 0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.25);
 }
-
 @media (prefers-contrast: more){
   :root{ --focus-w:3px; }
 }
@@ -301,6 +299,79 @@ html:not(.dark) .toggle{ box-shadow:0 1px 2px rgba(0,0,0,.08); }
 
 /* Slightly tighter vertical rhythm within Market card */
 .card.market .market-stack{ row-gap:16px; }
+
+/* ---------- Company/Ticker Search (inspired by TradingView) ---------- */
+/* Utility shims for the classes used in TickerSearch (safe, minimal) */
+.relative{ position:relative; }
+.absolute{ position:absolute; }
+.left-0{ left:0; }
+.right-0{ right:0; }
+.mt-1{ margin-top:4px; }
+.rounded{ border-radius:var(--radius); }
+.border{ border:1px solid var(--border); }
+.border-gray-300{ border-color:var(--border); }
+.bg-white{ background:var(--card); }
+.text-black{ color:var(--text); }
+.text-gray-500{ color:var(--muted); }
+.shadow-xl{ box-shadow: var(--shadow-soft), 0 16px 32px rgba(0,0,0,.08); }
+.w-full{ width:100%; }
+.px-3{ padding-left:12px; padding-right:12px; }
+.py-2{ padding-top:8px; padding-bottom:8px; }
+.flex{ display:flex; }
+.items-center{ align-items:center; }
+.gap-3{ gap:12px; }
+.text-left{ text-align:left; }
+.w-28{ width:112px; }
+.font-semibold{ font-weight:600; }
+.shrink-0{ flex-shrink:0; }
+.flex-1{ flex:1 1 auto; min-width:0; }
+.hover\:bg-gray-100:hover{ background:rgba(0,0,0,.04); }
+html.dark .hover\:bg-gray-100:hover{ background:rgba(255,255,255,.06); }
+
+/* Input inside TickerSearch — make it match .field */
+.relative input.w-full.rounded.border.border-gray-300.bg-white.px-3.py-2.text-black{
+  background:var(--card);
+  border-color:var(--border);
+  color:var(--text);
+  border-radius:12px;
+  outline: none;
+}
+.relative input.w-full.rounded.border.border-gray-300.bg-white.px-3.py-2.text-black:focus{
+  outline:var(--focus-w) solid var(--accent);
+  outline-offset:var(--focus-offset);
+}
+
+/* Dropdown panel */
+.relative > .absolute.left-0.right-0.mt-1.rounded.border.bg-white.shadow-xl{
+  max-height:360px;
+  overflow:auto;
+  -webkit-overflow-scrolling:touch;
+  z-index:60;
+  padding:6px 4px;
+  backdrop-filter: blur(4px);
+}
+
+/* List items are buttons — neutralize default button chrome */
+.relative .absolute button{
+  appearance:none;
+  background:transparent;
+  border:0;
+  border-radius:10px;
+  color:var(--text);
+  width:100%;
+  cursor:pointer;
+}
+.relative .absolute button + button{ margin-top:2px; }
+
+/* Hover state */
+.relative .absolute button:hover{ background:rgba(0,0,0,.04); }
+html.dark .relative .absolute button:hover{ background:rgba(255,255,255,.06); }
+
+/* Ticker row columns */
+.relative .absolute button .w-28{ font-variant-numeric: tabular-nums; }
+.relative .absolute button .flex-1{
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
 
 /* Respect reduced motion */
 @media (prefers-reduced-motion: reduce){
