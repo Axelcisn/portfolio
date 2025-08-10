@@ -11,6 +11,21 @@ const EX_NAMES = {
   TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
 
+/* Clean corporate suffixes for the display name (Apple → Apple, Inc. -> Apple) */
+function cleanName(raw = "") {
+  let s = String(raw).trim();
+  if (!s) return "";
+  const rx =
+    /(,?\s+(incorporated|inc\.?|corp\.?|corporation|company|co\.?|ltd\.?|limited|plc|s\.a\.|sa|s\.p\.a\.|spa|n\.v\.|nv|ag|se|oyj|ab|holdings?))$/i;
+  // Strip repeatedly from the end if multiple suffixes exist
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(rx, "").trim();
+  } while (s !== prev);
+  return s;
+}
+
 function formatParts(n) {
   if (!Number.isFinite(n)) return { int: "—", dec: "" };
   const parts = new Intl.NumberFormat(undefined, {
@@ -54,6 +69,7 @@ export default function CompanyHero({ company }) {
     logoUrl,                 // optional logo URL
   } = company || {};
 
+  const displayName = cleanName(name || symbol);
   const exchangeLabel = EX_NAMES[exchange] || exchange || "";
   const price = Number(spot);
 
@@ -83,43 +99,54 @@ export default function CompanyHero({ company }) {
 
   return (
     <div className="company-hero" aria-live="polite">
-      {/* avatar / logo (neutral monogram fallback) */}
+      {/* Logo top-left */}
       <div className="ch-avatar" aria-hidden="true">
         {logoUrl ? (
           <img src={logoUrl} alt="" className="avatar-img" />
         ) : (
-          <span className="avatar-mono">{(name || symbol || "?").slice(0, 1)}</span>
+          <span className="avatar-mono">{displayName.slice(0, 1)}</span>
         )}
       </div>
 
-      {/* content: name → ticker•exchange → price (below) */}
+      {/* Right side: name → ticker•exchange → price → status */}
       <div className="ch-content">
-        <h1 className="ch-name" title={name || symbol}>
-          {name || symbol}
+        {/* Full company name (no suffixes) */}
+        <h1 className="ch-name" title={displayName}>
+          {displayName}
         </h1>
 
-        <div className="id-line" title={`${symbol}${exchangeLabel ? " • " + exchangeLabel : ""}`}>
+        {/* TICKER • EXCHANGE (smaller) */}
+        <div
+          className="id-line"
+          title={`${symbol}${exchangeLabel ? " • " + exchangeLabel : ""}`}
+        >
           <span className="id-symbol">{symbol}</span>
           {exchangeLabel && <span className="id-dot">•</span>}
           {exchangeLabel && <span className="id-exch">{exchangeLabel}</span>}
         </div>
 
-        {/* PRICE placed BELOW ticker/exchange line */}
+        {/* Price (large) */}
         <div className="price-stack" aria-label={srLine}>
           <div className="price-row">
             <span className="price-int">{intPart}</span>
             {decPart && <span className="price-dec">{decPart}</span>}
             <span className="price-ccy">{currency}</span>
+            {Number.isFinite(chAbs) && Number.isFinite(chPct) && (
+              <span className={`price-change ${dir}`}>
+                {absStr(chAbs)}&nbsp;&nbsp;{pctStr(chPct)}
+              </span>
+            )}
           </div>
 
-          {Number.isFinite(chAbs) && Number.isFinite(chPct) && (
-            <div className={`price-change ${dir}`}>
-              {absStr(chAbs)}&nbsp;&nbsp;{pctStr(chPct)}
-            </div>
-          )}
-
+          {/* MARKET_STATUS • DATE, TIME TZ */}
           <div className="ch-status small">
-            {session} • {new Date().toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} {tzNow()}
+            {session} • {new Date().toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}{" "}
+            {tzNow()}
           </div>
         </div>
       </div>
