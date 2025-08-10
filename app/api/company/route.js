@@ -1,35 +1,89 @@
+// app/api/company/route.js
 import { NextResponse } from "next/server";
-import { robustQuote } from "../../../lib/yahoo.js";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";         // ensure Node runtime (Yahoo blocks some edge fetches)
+export const dynamic = "force-dynamic";  // never cache while you type/search
 
-const cacheHeaders = { "Cache-Control": "s-maxage=60, stale-while-revalidate=30" };
+function mapQuote(q, symbol) {
+  const spot =
+    Number(q?.regularMarketPrice ?? q?.postMarketPrice ?? q?.preMarketPrice ?? q?.bid ?? q?.ask) ?? null;
 
-function err(status, code, message) {
-  // Back-compat: `error` is a STRING (UI expects this), plus structured `errorObj`
-  return NextResponse.json(
-    { ok: false, error: message, errorObj: { code, message } },
-    { status, headers: cacheHeaders }
-  );
+  const prev =
+    Number(q?.regularMarketPreviousClose ?? q?.previousClose) ?? null;
+
+  const change =
+    Number(q?.regularMarketChange ?? (spot != null && prev != null ? spot - prev : null)) ?? null;
+
+  const changePct =
+    Number(q?.regularMarketChangePercent ??
+      (spot != null && prev > 0 ? ((spot - prev) / prev) * 100 : null)) ?? null;
+
+  const marketState = (q?.marketState || "").toUpperCase();
+  const marketSession =
+    marketState === "PRE" ? "Pre‑market" :
+    marketState === "POST" ? "After hours" : "At close";
+
+  return {
+    symbol: q?.symbol || symbol,
+    name: q?.longName || q?.shortName || q?.displayName || symbol,
+    exchange: q?.fullExchangeName || q?.exchange || "",
+    currency: q?.currency || "USD",
+    spot,
+    prevClose: prev,
+    change,
+    changePct,
+    marketSession,
+    logoUrl: null, // keep null-friendly; you can enrich later if you add a logo source
+  };
 }
 
 export async function GET(req) {
+  const { searchParams } = new URL(req.url);
+  const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
+  if (!symbol) {
+    return NextResponse.json({ ok: false, error: "Missing symbol" }, { status: 400 });
+  }
+
+  // Primary source: Yahoo finance quote
+  const url =
+    "https://query1.finance.yahoo.com/v7/finance/quote?symbols=" +
+    encodeURIComponent(symbol);
+
   try {
-    const { searchParams } = new URL(req.url);
-    const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
+    const r = await fetch(url, {
+      // Yahoo is picky; setting UA helps avoid sporadic blocks
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; StrategyApp/1.0)" },
+      cache: "no-store",
+      next: { revalidate: 0 },
+    });
 
-    if (!symbol) return err(400, "SYMBOL_REQUIRED", "symbol required");
+    if (!r.ok) throw new Error(`Upstream ${r.status}`);
 
-    const quote = await robustQuote(symbol);
-    if (!quote || !Number.isFinite(quote.spot)) {
-      return err(502, "QUOTE_UNAVAILABLE", "quote unavailable");
-    }
+    const j = await r.json();
+    const q = j?.quoteResponse?.result?.[0];
 
-    // Back-compat: keep top-level fields AND envelope
-    const payload = { ok: true, data: quote, ...quote };
-    return NextResponse.json(payload, { status: 200, headers: cacheHeaders });
-  } catch (e) {
-    return err(500, "INTERNAL_ERROR", String(e?.message ?? e));
+    if (!q) throw new Error("No quote result");
+
+    const data = mapQuote(q, symbol);
+    return NextResponse.json({ ok: true, data }, { headers: { "Cache-Control": "no-store" } });
+  } catch (err) {
+    // Never surface a network-level failure to the client (avoids “fetch failed” in UI).
+    // Return a minimal, safe payload so the page can continue to work.
+    const fallback = {
+      symbol,
+      name: symbol,
+      exchange: "",
+      currency: "USD",
+      spot: null,
+      prevClose: null,
+      change: null,
+      changePct: null,
+      marketSession: "At close",
+      logoUrl: null,
+    };
+    return NextResponse.json(
+      { ok: false, error: String(err?.message || err), data: fallback },
+      { status: 200, headers: { "Cache-Control": "no-store" } }
+    );
   }
 }
