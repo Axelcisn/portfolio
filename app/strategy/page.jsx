@@ -98,19 +98,21 @@ export default function Strategy() {
       <div className="tv-layout">
         {/* Main column */}
         <div className="page-stack">
-          <div className="grid grid-2">
-            <CompanyCard
-              value={company}
-              market={market}
-              onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
-              onHorizonChange={(d) => setHorizon(d)}
-              onIvSourceChange={(s) => setIvSource(s)}
-              onIvValueChange={(v) => setIvValue(v)}
-            />
-            <MarketCard onRates={(r) => setMarket(r)} />
-          </div>
 
-          {/* Legs (remove duplicate title – component already renders its own) */}
+          {/* Company — full width, no card */}
+          <CompanyCard
+            value={company}
+            market={market}
+            onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
+            onHorizonChange={(d) => setHorizon(d)}
+            onIvSourceChange={(s) => setIvSource(s)}
+            onIvValueChange={(v) => setIvValue(v)}
+          />
+
+          {/* Market — same width as Legs, aligned headers/edges */}
+          <MarketCard onRates={(r) => setMarket(r)} />
+
+          {/* Legs */}
           <section className="card">
             <LegsSection
               currency={currency}
