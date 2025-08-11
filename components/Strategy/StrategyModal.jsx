@@ -1,11 +1,13 @@
 // components/Strategy/StrategyModal.jsx
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
-import Chart from "./Chart"; // <-- fixed path (was '../Chart')
+import Chart from "./Chart";
 import StrategyConfigTable from "./StrategyConfigTable";
 import { instantiateStrategy, calculateNetPremium } from "./assignStrategy";
+
+const LABEL = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put" };
 
 export default function StrategyModal({
   strategy,
@@ -22,7 +24,7 @@ export default function StrategyModal({
     mcStats = null,
   } = env;
 
-  // Instantiate legs: roles & qty fixed; K/premium null (you enter them)
+  // instantiate legs (roles & qty fixed; K/premium null)
   const [state, setState] = useState(() =>
     strategy ? instantiateStrategy(strategy.id) : null
   );
@@ -33,7 +35,7 @@ export default function StrategyModal({
   const [greek, setGreek] = useState("vega");
   const [canEditVolume, setCanEditVolume] = useState(false);
 
-  const legs = state?.legsKeyed || null;
+  const legs = state?.legsKeyed || {};
   const netPrem = useMemo(() => calculateNetPremium(legs), [legs]);
 
   function handleLegsChange(updated) {
@@ -45,7 +47,7 @@ export default function StrategyModal({
     onApply?.(state.legsKeyed, calculateNetPremium(state.legsKeyed), state.meta);
   }
 
-  // Close on ESC + lock scroll
+  // ESC to close + lock page scroll while modal open
   const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
@@ -59,6 +61,22 @@ export default function StrategyModal({
   }, [onClose]);
 
   if (!strategy) return null;
+
+  // Build non-editable summary from the live legsKeyed object
+  const summaryRows = useMemo(() => {
+    const keys = ["lc", "sc", "lp", "sp"];
+    const isActive = (l) => !!l?.enabled && Number.isFinite(l?.K);
+    return keys
+      .filter((k) => legs[k] && (isActive(legs[k]) || Number(legs[k].qty || 0) !== 0))
+      .map((k) => ({
+        key: k,
+        label: LABEL[k],
+        K: Number.isFinite(legs[k].K) ? legs[k].K : null,
+        qty: Number(legs[k].qty || 0),
+        premium: Number.isFinite(legs[k].premium) ? legs[k].premium : null,
+        enabled: !!legs[k].enabled,
+      }));
+  }, [legs]);
 
   return (
     <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="Strategy">
@@ -78,8 +96,8 @@ export default function StrategyModal({
           </div>
         </div>
 
-        {/* Chart */}
-        <div className="chart-card card">
+        {/* Chart — frameless, blends with page; no internal editor */}
+        <div className="chart-seam">
           <Chart
             spot={spot}
             currency={currency}
@@ -90,6 +108,8 @@ export default function StrategyModal({
             greek={greek}
             onGreekChange={setGreek}
             onLegsChange={handleLegsChange}
+            showControls={false}
+            frameless
           />
         </div>
 
@@ -97,32 +117,58 @@ export default function StrategyModal({
         <div className="config card">
           <div className="config-head">
             <div className="section-title">Configuration</div>
-            <label className="small">
-              <input
-                type="checkbox"
-                checked={canEditVolume}
-                onChange={(e) => setCanEditVolume(e.target.checked)}
-              />
-              <span style={{ marginLeft: 6 }}>Unlock structure (edit volume)</span>
-            </label>
+
+            {/* iOS-style switch (no text) to unlock volume editing */}
+            <button
+              className={`switch ${canEditVolume ? "on" : ""}`}
+              aria-label="Unlock structure"
+              role="switch"
+              aria-checked={canEditVolume}
+              onClick={() => setCanEditVolume((v) => !v)}
+              title={canEditVolume ? "Lock volume" : "Unlock volume"}
+            />
           </div>
 
+          {/* Editable table (Position & Volume read-only by default; Strike & Premium editable) */}
           <StrategyConfigTable
-            legs={legs || {}}
+            legs={legs}
             currency={currency}
             onChange={handleLegsChange}
             canEditVolume={canEditVolume}
           />
+        </div>
 
-          <div className="net-line">
-            <div className="spacer" />
-            <div className="net">
-              <span className="k">Net Premium:</span>
-              <span className="v">
-                {new Intl.NumberFormat("en-US", { style: "currency", currency }).format(netPrem || 0)}
-              </span>
+        {/* Summary (read-only) */}
+        <div className="summary card">
+          <div className="section-title">Summary</div>
+          {summaryRows.length === 0 ? (
+            <div className="muted small">No legs selected yet. Add strikes/premiums and toggle legs On above.</div>
+          ) : (
+            <div className="sum-table">
+              <div className="sum-row head">
+                <div>Position</div><div>Strike</div><div>Volume</div><div>Premium</div>
+              </div>
+              {summaryRows.map((r) => (
+                <div className="sum-row" key={r.key}>
+                  <div className="pos">{r.label}</div>
+                  <div>{Number.isFinite(r.K) ? r.K : "—"}</div>
+                  <div>{r.qty}</div>
+                  <div>{Number.isFinite(r.premium)
+                    ? new Intl.NumberFormat("en-US", { style: "currency", currency }).format(r.premium)
+                    : "—"}</div>
+                </div>
+              ))}
+              <div className="sum-footer">
+                <div className="spacer" />
+                <div className="net">
+                  <span className="k">Net Premium:</span>
+                  <span className="v">
+                    {new Intl.NumberFormat("en-US", { style: "currency", currency }).format(netPrem || 0)}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -146,16 +192,35 @@ export default function StrategyModal({
         .actions{ display:flex; gap:8px; }
         .button{ height:34px; padding:0 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); }
         .button.ghost{ background:transparent; }
-        .chart-card{ padding:6px; }
 
-        .config{ padding:10px; display:grid; gap:10px; }
+        .chart-seam{ padding:6px; } /* no card here — blends with page */
+
+        .card{ padding:10px; border:1px solid var(--border); border-radius:12px; background:var(--card); }
+        .config{ display:grid; gap:10px; }
         .config-head{ display:flex; align-items:center; justify-content:space-between; }
         .section-title{ font-weight:800; }
-        .net-line{ display:flex; align-items:center; }
-        .spacer{ flex:1; }
-        .net{ display:flex; gap:8px; align-items:center; }
+
+        /* Switch (no text) */
+        .switch{
+          position:relative; width:44px; height:26px; border-radius:999px;
+          background:var(--bg); border:1px solid var(--border);
+          display:inline-flex; align-items:center; transition:background .18s ease;
+        }
+        .switch::after{
+          content:""; width:18px; height:18px; border-radius:50%;
+          background:#d1d5db; position:absolute; left:4px; transition:left .18s ease;
+        }
+        .switch.on{ background:#3b82f6; border-color:#1e40af; }
+        .switch.on::after{ left:22px; background:#fff; }
+
+        .summary{ display:grid; gap:8px; }
+        .sum-table{ display:grid; gap:8px; }
+        .sum-row{ display:grid; grid-template-columns: 1.4fr 1.1fr 0.9fr 1.1fr; gap:10px; align-items:center; }
+        .sum-row.head{ font-size:12px; opacity:.75; }
+        .sum-footer{ display:flex; justify-content:flex-end; gap:8px; align-items:center; margin-top:4px; }
         .k{ font-size:12px; opacity:.7; }
         .v{ font-weight:800; }
+        .spacer{ flex:1; }
       `}</style>
     </div>
   );
