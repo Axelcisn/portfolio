@@ -77,20 +77,13 @@ function normalizeRows(rows) {
       r.type && LONG_SIGN.hasOwnProperty(r.type)
         ? r.type
         : POSITION_TO_KEY[r.position];
-
     if (!key) continue;
 
     const strike = Number(r.strike ?? r.K);
     const volume = Number(r.volume ?? r.qty ?? 0);
     const premium = Number.isFinite(Number(r.premium)) ? Number(r.premium) : 0;
 
-    out.push({
-      key,
-      position: TYPE_TO_POSITION[key],
-      strike,
-      volume,
-      premium,
-    });
+    out.push({ key, position: TYPE_TO_POSITION[key], strike, volume, premium });
   }
   return out;
 }
@@ -100,7 +93,6 @@ function buildAreas(X, Y, x, y, eps = 1e-9) {
   const segs = [];
   let cur = [];
   let curSign = 0;
-
   const sign = (v) => (v > eps ? 1 : v < -eps ? -1 : 0);
   const lerpZeroX = (xa, ya, xb, yb) => {
     if (ya === yb) return xb;
@@ -111,38 +103,23 @@ function buildAreas(X, Y, x, y, eps = 1e-9) {
   for (let i = 0; i < X.length; i++) {
     const xi = X[i], yi = Y[i];
     const s = sign(yi);
+    if (cur.length === 0) { cur.push([xi, yi]); curSign = s; continue; }
+    const [xPrev, yPrev] = cur[cur.length - 1];
 
-    if (cur.length === 0) {
-      cur.push([xi, yi]); curSign = s;
-      continue;
-    }
-    const xPrev = cur[cur.length - 1][0], yPrev = cur[cur.length - 1][1];
-    // sign change -> close at zero then start new
     if (s !== curSign && s !== 0 && curSign !== 0) {
       const xz = lerpZeroX(xPrev, yPrev, xi, yi);
-      cur.push([xz, 0]);
-      segs.push({ sign: curSign, pts: cur.slice() });
-      cur = [[xz, 0], [xi, yi]];
-      curSign = s;
-      continue;
+      cur.push([xz, 0]); segs.push({ sign: curSign, pts: cur.slice() });
+      cur = [[xz, 0], [xi, yi]]; curSign = s; continue;
     }
-    // into/through zero
     if (s === 0 && curSign !== 0) {
       const xz = lerpZeroX(xPrev, yPrev, xi, yi);
-      cur.push([xz, 0]);
-      segs.push({ sign: curSign, pts: cur.slice() });
-      cur = [[xz, 0]];
-      curSign = 0;
-      continue;
+      cur.push([xz, 0]); segs.push({ sign: curSign, pts: cur.slice() });
+      cur = [[xz, 0]]; curSign = 0; continue;
     }
     if (curSign === 0 && s !== 0) {
-      // leaving zero into +/- area
       const xz = lerpZeroX(xPrev, yPrev, xi, yi);
-      cur.push([xz, 0], [xi, yi]);
-      curSign = s;
-      continue;
+      cur.push([xz, 0], [xi, yi]); curSign = s; continue;
     }
-
     cur.push([xi, yi]);
   }
   if (cur.length > 1 && curSign !== 0) segs.push({ sign: curSign, pts: cur });
@@ -162,12 +139,43 @@ function buildAreas(X, Y, x, y, eps = 1e-9) {
   return { pos, neg };
 }
 
+/** Robust domain: never collapses to a single strike width. */
+function computeDomain(spot, strikeArray) {
+  const strikes = (strikeArray || []).filter(Number.isFinite);
+  const s = Number(spot);
+  const center = Number.isFinite(s)
+    ? s
+    : strikes.length
+    ? (Math.min(...strikes) + Math.max(...strikes)) / 2
+    : 100;
+
+  if (!strikes.length) {
+    const half = Math.max(center * 0.06, 8); // ±6% or at least 8 units
+    return { minX: center - half, maxX: center + half };
+  }
+
+  const lo = Math.min(...strikes);
+  const hi = Math.max(...strikes);
+  const span = hi - lo;
+
+  // If span too small, open a band around center.
+  const minRange = Math.max(center * 0.12, 8); // at least 8 units, ~12% full width
+  if (span < minRange) {
+    const half = minRange / 2;
+    return { minX: center - half, maxX: center + half };
+  }
+
+  // Normal case: pad the actual span
+  const pad = span * 0.25;
+  return { minX: lo - pad, maxX: hi + pad };
+}
+
 /* ---------------- main ---------------- */
 export default function Chart({
   frameless = false,
   spot = null,
   currency = "USD",
-  rows = [],            // builder or legacy
+  rows = [],
   riskFree = 0,
   sigma = 0.2,
   T = 30 / 365,
@@ -181,31 +189,28 @@ export default function Chart({
 
   const payoffRows = useMemo(() => normalizeRows(rows), [rows]);
 
-  // Domain from strikes / spot
-  const strikesIn = rows.map((r) => Number(r.K ?? r.strike)).filter(Number.isFinite);
-  const s = Number(spot);
-  let minX, maxX;
-  if (strikesIn.length) {
-    const lo = Math.min(...strikesIn);
-    const hi = Math.max(...strikesIn);
-    const span = Math.max(1, hi - lo);
-    minX = lo - span * 0.25;
-    maxX = hi + span * 0.25;
-  } else if (Number.isFinite(s)) {
-    minX = s * 0.8;
-    maxX = s * 1.2;
-  } else {
-    minX = 100; maxX = 200;
-  }
+  // Domain based on strikes with smart widening
+  const strikesIn = payoffRows.map((r) => Number(r.strike)).filter(Number.isFinite);
+  const { minX, maxX } = useMemo(
+    () => computeDomain(spot, strikesIn),
+    // stringified strikes array to avoid referential churn
+    [spot, JSON.stringify(strikesIn)]
+  );
+  const xRange = maxX - minX;
+  const formatX = (v) => {
+    if (xRange < 8) return v.toFixed(2);
+    if (xRange < 80) return v.toFixed(1);
+    return String(Math.round(v));
+  };
 
-  // Expiration P&L (from your existing engine)
+  // Expiration P&L
   const { X, Y: Yexp } = useMemo(
     () => gridPnl(payoffRows, minX, maxX, 260, contractSize),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [JSON.stringify(payoffRows), minX, maxX, contractSize]
   );
 
-  // Current P&L using BS values at time T
+  // Current P&L using BS values at time T (premium respected)
   const Ynow = useMemo(() => {
     return X.map((S) => {
       let sum = 0;
@@ -218,7 +223,7 @@ export default function Chart({
     });
   }, [X, payoffRows, riskFree, sigma, T, contractSize]);
 
-  // Greek curve (sum of legs)
+  // Greek curve (sum)
   const greekCurve = useMemo(() => {
     return X.map((S) => {
       let gsum = 0;
@@ -230,14 +235,14 @@ export default function Chart({
           greek === "gamma" ? g.gamma :
           greek === "theta" ? g.theta :
           greek === "rho"   ? g.rho   :
-          g.vega; // default vega
+          g.vega;
         gsum += sgn * v * (r.volume || 0) * contractSize;
       }
       return gsum;
     });
   }, [X, payoffRows, riskFree, sigma, T, greek, contractSize]);
 
-  // Y-range (based on both curves so nothing clips)
+  // Y-range
   const yMin = Math.min(0, ...Yexp, ...Ynow);
   const yMax = Math.max(0, ...Yexp, ...Ynow);
   const pad = Math.max(1, (yMax - yMin) * 0.1);
@@ -253,10 +258,9 @@ export default function Chart({
   const toPath = (arrX, arrY) =>
     arrX.map((vx, i) => `${i ? "L" : "M"}${x(vx)},${y(arrY[i])}`).join(" ");
 
-  // Profit/Loss areas from expiration curve
+  // Profit/Loss fills from expiration curve
   const areas = useMemo(() => buildAreas(X, Yexp, x, y), [X, Yexp]);
-
-  // Breakevens from expiration curve
+  // Breakevens
   const be = useMemo(() => computeBreakevens(X, Yexp), [X, Yexp]);
   const beText = useMemo(() => {
     const fmt = (v) => (Number.isFinite(v) ? Math.round(v) : "—");
@@ -278,6 +282,7 @@ export default function Chart({
   );
 
   const kMarks = uniqueStrikes(payoffRows);
+  const s = Number(spot);
 
   /* ---------------- render ---------------- */
   return (
@@ -330,7 +335,7 @@ export default function Chart({
             <g key={`gx${i}`}>
               <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
               <text x={xx} y={height - 12} textAnchor="middle" fontSize="10" fill="rgba(255,255,255,.65)">
-                {Math.round(val)}
+                {formatX(val)}
               </text>
             </g>
           );
@@ -371,7 +376,7 @@ export default function Chart({
         <Pill label="Win rate" value={`${winRate.toFixed(2)}%`} />
         <Pill label="Breakeven (Low | High)" value={beText} />
         <Pill label="Lot size" value={lotSize} />
-        {/* placeholders */}
+        {/* placeholders for future metrics */}
         <Pill label="CI (Low | High)" value="—" />
         <Pill label="Delta" value="—" />
         <Pill label="Gamma" value="—" />
