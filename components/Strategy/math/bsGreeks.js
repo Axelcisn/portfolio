@@ -75,3 +75,4 @@ export function greeksByKey(typeKey, S, K, r, sigma, T) {
   const opt = typeKey === "lc" || typeKey === "sc" ? "call" : "put";
   return greeks(S, K, r, sigma, T, opt);
 }
+ì
