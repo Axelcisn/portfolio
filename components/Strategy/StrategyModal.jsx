@@ -5,95 +5,88 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
 import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
-import { instantiateStrategy, calculateNetPremium } from "./assignStrategy";
+import SummaryTable from "./SummaryTable";
 
-/* Type labels used by the builder & summary */
-const TYPE_LABEL = {
-  lc: "Long Call",
-  sc: "Short Call",
-  lp: "Long Put",
-  sp: "Short Put",
-  ls: "Long Stock",
-  ss: "Short Stock",
-};
+/* ---------- helpers ---------- */
+const TYPE_KEY = { "Long Call": "lc", "Short Call": "sc", "Long Put": "lp", "Short Put": "sp" };
+const KEY_TO_LABEL = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put", ls: "Long Stock", ss: "Short Stock" };
 
-export default function StrategyModal({
-  strategy,
-  onClose,
-  onApply,
-  env = {}, // { spot, currency, sigma, T, riskFree, mcStats }
-}) {
-  const {
-    spot = null,
-    currency = "EUR",
-    sigma = 0.2,
-    T = 30 / 365,
-    riskFree = 0.02,
-    mcStats = null,
-  } = env;
-
-  /* ---------- Instantiate from catalog (fixed roles & qty; K/premium null) ---------- */
-  const [seed, setSeed] = useState(() =>
-    strategy ? instantiateStrategy(strategy.id) : null
-  );
-  useEffect(() => {
-    if (strategy) setSeed(instantiateStrategy(strategy.id));
-  }, [strategy?.id]);
-
-  /* ---------- Builder rows (shown in Configuration) ---------- */
-  const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
-  const [rows, setRows] = useState(() => {
-    const legs = seed?.legsKeyed || {};
-    const out = [];
-    if (legs.lc && (legs.lc.qty ?? 0) !== 0) out.push({ id: "lc", type: "lc", K: null, premium: null, qty: legs.lc.qty, days: defaultDays, enabled: true });
-    if (legs.sc && (legs.sc.qty ?? 0) !== 0) out.push({ id: "sc", type: "sc", K: null, premium: null, qty: legs.sc.qty, days: defaultDays, enabled: true });
-    if (legs.lp && (legs.lp.qty ?? 0) !== 0) out.push({ id: "lp", type: "lp", K: null, premium: null, qty: legs.lp.qty, days: defaultDays, enabled: true });
-    if (legs.sp && (legs.sp.qty ?? 0) !== 0) out.push({ id: "sp", type: "sp", K: null, premium: null, qty: legs.sp.qty, days: defaultDays, enabled: true });
-    return out;
-  });
-  useEffect(() => {
-    const legs = seed?.legsKeyed || {};
-    const base = [];
-    if (legs.lc && (legs.lc.qty ?? 0) !== 0) base.push({ id: "lc", type: "lc", K: null, premium: null, qty: legs.lc.qty, days: defaultDays, enabled: true });
-    if (legs.sc && (legs.sc.qty ?? 0) !== 0) base.push({ id: "sc", type: "sc", K: null, premium: null, qty: legs.sc.qty, days: defaultDays, enabled: true });
-    if (legs.lp && (legs.lp.qty ?? 0) !== 0) base.push({ id: "lp", type: "lp", K: null, premium: null, qty: legs.lp.qty, days: defaultDays, enabled: true });
-    if (legs.sp && (legs.sp.qty ?? 0) !== 0) base.push({ id: "sp", type: "sp", K: null, premium: null, qty: legs.sp.qty, days: defaultDays, enabled: true });
-    setRows(base);
-  }, [seed, defaultDays]);
-
-  /* ---------- Convert builder rows -> legsKeyed for current chart (1 per type) ---------- */
-  const legsKeyed = useMemo(() => {
-    const take = (t) => rows.find((r) => r.type === t) || null;
-    const mk = (r) =>
-      !r
-        ? { enabled: false, K: null, qty: 0, premium: null }
-        : {
-            enabled: Number.isFinite(r.K),
-            K: Number.isFinite(r.K) ? Number(r.K) : null,
-            qty: Number(r.qty || 0),
-            premium: Number.isFinite(r.premium) ? Number(r.premium) : null,
-          };
-    return {
-      lc: mk(take("lc")),
-      sc: mk(take("sc")),
-      lp: mk(take("lp")),
-      sp: mk(take("sp")),
-      // Note: ls/ss (stock) will be added to the curve in the next path (3/3).
-    };
-  }, [rows]);
-
-  /* ---------- Net premium based on current legs (options only for now) ---------- */
-  const netPrem = useMemo(() => calculateNetPremium(legsKeyed), [legsKeyed]);
-
-  /* ---------- Wire into the existing Chart ---------- */
-  const [greek, setGreek] = useState("vega");
-  function handleApply() {
-    onApply?.(legsKeyed, netPrem, seed?.meta);
+function seedRowsFromStrategy(strategy, spot, defaultDays = 30) {
+  // Strategy.legs may already be normalized; if not, create sensible blanks.
+  const base = Array.isArray(strategy?.legs) ? strategy.legs : [];
+  if (base.length) {
+    return base.map((r, i) => ({
+      id: r.id ?? `${i}-${Math.random().toString(36).slice(2, 7)}`,
+      type: r.type ?? TYPE_KEY[r.position] ?? r.key ?? "lc",
+      K: Number.isFinite(r.strike) ? r.strike : null,
+      premium: Number.isFinite(r.premium) ? r.premium : null,
+      qty: Number.isFinite(r.volume) ? r.volume : 1,
+      days: Number.isFinite(r.days) ? r.days : defaultDays,
+      enabled: r.enabled ?? true,
+    }));
   }
+  // Fallback to one empty row of the strategy type, else none.
+  const guess = TYPE_KEY[strategy?.name] || null;
+  return guess
+    ? [
+        {
+          id: "seed-0",
+          type: guess,
+          K: spot ? Number(spot) : null,
+          premium: null,
+          qty: 1,
+          days: defaultDays,
+          enabled: true,
+        },
+      ]
+    : [];
+}
 
-  /* ---------- Modal lifecycle (ESC + blur backdrop) ---------- */
-  const dialogRef = useRef(null);
+function rowsToLegsObject(rows) {
+  // Legacy shape expected by parent chart: lc/sc/lp/sp only
+  const out = {
+    lc: { enabled: false, K: null, qty: 0, premium: null },
+    sc: { enabled: false, K: null, qty: 0, premium: null },
+    lp: { enabled: false, K: null, qty: 0, premium: null },
+    sp: { enabled: false, K: null, qty: 0, premium: null },
+  };
+  for (const r of rows) {
+    if (!r?.type || !(r.type in out)) continue; // ignore stock rows here
+    const K = Number(r.K);
+    const qty = Number(r.qty || 0);
+    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : null;
+    if (Number.isFinite(K) && Number.isFinite(qty)) {
+      out[r.type] = { enabled: qty !== 0, K, qty, premium: prem };
+    }
+  }
+  return out;
+}
+
+function netPremium(rows) {
+  // Long options pay premium (debit), short receive (credit). Stocks: none.
+  let sum = 0;
+  for (const r of rows) {
+    if (r.type === "ls" || r.type === "ss") continue;
+    const q = Number(r.qty || 0);
+    const p = Number(r.premium || 0);
+    if (!Number.isFinite(q) || !Number.isFinite(p)) continue;
+    const isLong = r.type === "lc" || r.type === "lp";
+    sum += (isLong ? -1 : +1) * p * q;
+  }
+  return sum;
+}
+
+/* ---------- component ---------- */
+export default function StrategyModal({ strategy, env, onApply, onClose }) {
+  const { spot, currency = "USD", high52, low52, riskFree = 0.02, sigma = 0.2, T = 30 / 365 } = env || {};
+  const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
+
+  // rows = the single source of truth for config + summary + chart
+  const [rows, setRows] = useState(() => seedRowsFromStrategy(strategy, spot, defaultDays));
+  const [greek, setGreek] = useState("vega");
+
   useEffect(() => {
+    // Lock scroll + close on ESC
     const onEsc = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onEsc);
     const prev = document.body.style.overflow;
@@ -104,42 +97,56 @@ export default function StrategyModal({
     };
   }, [onClose]);
 
-  /* ---------- Summary rows (read-only) ---------- */
-  const summary = useMemo(
-    () =>
-      rows.map((r) => ({
-        id: r.id,
-        type: TYPE_LABEL[r.type] || r.type,
-        K: Number.isFinite(r.K) ? r.K : null,
-        days: (r.type === "ls" || r.type === "ss") ? null : (Number.isFinite(r.days) ? r.days : defaultDays),
-        premium: Number.isFinite(r.premium) ? r.premium : null,
-      })),
-    [rows, defaultDays]
-  );
+  const legsObj = useMemo(() => rowsToLegsObject(rows), [rows]);
+  const totalPrem = useMemo(() => netPremium(rows), [rows]);
 
-  if (!strategy) return null;
+  const save = () => {
+    // backwards compatible with previous Apply usage
+    onApply?.(legsObj, totalPrem);
+    onClose?.();
+  };
+
+  const GAP = 14;
 
   return (
-    <div className="modal-wrap" role="dialog" aria-modal="true" aria-label="Strategy">
-      <div className="modal" ref={dialogRef}>
+    <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
+      <div className="modal-backdrop" onClick={onClose} />
+      <div
+        className="modal-sheet"
+        style={{
+          maxWidth: 1120,
+          maxHeight: "calc(100vh - 96px)",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
+          padding: 16,
+        }}
+      >
         {/* Header */}
-        <div className="head">
-          <div className="title">
-            <div className="name">{strategy.name}</div>
-            <span className={`badge ${String(strategy.direction || "Neutral").toLowerCase()}`}>
-              {strategy.direction || "Neutral"}
-            </span>
+        <div className="modal-head" style={{ marginBottom: GAP }}>
+          <div className="mh-left">
+            <div className="mh-icon">{strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}</div>
+            <div className="mh-meta">
+              <div id="sg-modal-title" className="mh-name">
+                {strategy?.name || "Strategy"}
+              </div>
+              <DirectionBadge value={strategy?.direction || "Neutral"} />
+            </div>
           </div>
-          <div className="actions">
-            <button className="button ghost" onClick={() => { /* optional save hook */ }}>Save</button>
-            <button className="button" onClick={handleApply}>Apply</button>
-            <button className="button ghost" onClick={onClose}>Close</button>
+          <div className="mh-actions">
+            <button className="button" type="button" onClick={save}>
+              Save
+            </button>
+            <button className="button ghost" type="button" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
-        {/* Chart — frameless, no internal editor */}
-        <div className="chart-seam">
+        {/* Chart (frameless) */}
+        <div style={{ marginBottom: GAP }}>
           <Chart
+            frameless
             spot={spot}
             currency={currency}
             rows={rows}
@@ -148,91 +155,44 @@ export default function StrategyModal({
             T={T}
             greek={greek}
             onGreekChange={setGreek}
-            showControls={false}
-            frameless
+            contractSize={1}
           />
         </div>
 
-        {/* Configuration (Position Builder) */}
-        <div className="card">
+        {/* Metrics under chart (kept minimal; chart already shows the strip) */}
+
+        {/* Configuration */}
+        <section className="card dense" style={{ marginBottom: GAP }}>
           <div className="section-title">Configuration</div>
-          <PositionBuilder
-            rows={rows}
-            onChange={setRows}
-            currency={currency}
-            defaultDays={defaultDays}
-          />
-        </div>
+          <PositionBuilder rows={rows} onChange={setRows} currency={currency} defaultDays={defaultDays} />
+        </section>
 
-        {/* Summary (read-only) */}
-        <div className="card">
-          <div className="section-title">Summary</div>
-          {summary.length === 0 ? (
-            <div className="muted small">No positions yet. Use “+ New position”.</div>
-          ) : (
-            <>
-              <div className="sum head">
-                <div>Position</div><div>Strike</div><div>Expiration</div><div>Premium</div>
-              </div>
-              {summary.map((r) => (
-                <div className="sum row" key={r.id}>
-                  <div className="pos">{r.type}</div>
-                  <div>{Number.isFinite(r.K) ? r.K : "—"}</div>
-                  <div>{r.days == null ? "—" : `${r.days}d`}</div>
-                  <div>{Number.isFinite(r.premium)
-                    ? new Intl.NumberFormat("en-US", { style: "currency", currency }).format(r.premium)
-                    : "—"}</div>
-                </div>
-              ))}
-              <div className="sum foot">
-                <div className="spacer" />
-                <div className="net">
-                  <span className="k">Net Premium:</span>
-                  <span className="v">
-                    {new Intl.NumberFormat("en-US", { style: "currency", currency }).format(netPrem || 0)}
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+        {/* Summary */}
+        <SummaryTable rows={rows} currency={currency} title="Summary" />
       </div>
 
       <style jsx>{`
-        .modal-wrap{
-          position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
-          background:rgba(0,0,0,.36);
-          backdrop-filter: blur(6px);
-          -webkit-backdrop-filter: blur(6px);
-          z-index:1000; padding:16px;
+        .modal-root {
+          position: fixed; inset: 0; z-index: 70;
         }
-        .modal{
-          width:min(1200px, 96vw); max-height:92vh; overflow:auto;
-          background:var(--bg); border:1px solid var(--border); border-radius:16px;
-          box-shadow:0 20px 50px rgba(0,0,0,.35); display:grid; gap:12px; padding:12px;
+        .modal-backdrop {
+          position: absolute; inset: 0;
+          background: rgba(0, 0, 0, 0.32);
+          backdrop-filter: blur(6px); /* soft blur as requested */
         }
-        .head{ display:flex; align-items:center; justify-content:space-between; padding:6px 4px 2px; }
-        .title{ display:flex; align-items:center; gap:10px; }
-        .name{ font-weight:800; font-size:16px; }
-        .badge{ padding:2px 8px; border-radius:999px; font-size:11px; border:1px solid var(--border); opacity:.85; }
-        .badge.bullish{ color:#06b6d4; }
-        .badge.bearish{ color:#f59e0b; }
-        .badge.neutral{ color:#8b5cf6; }
-        .actions{ display:flex; gap:8px; }
-        .button{ height:34px; padding:0 12px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); }
-        .button.ghost{ background:transparent; }
-
-        .chart-seam{ padding:6px; } /* frameless chart */
-
-        .card{ padding:10px; border:1px solid var(--border); border-radius:12px; background:var(--card); display:grid; gap:10px; }
-        .section-title{ font-weight:800; }
-
-        .sum{ display:grid; grid-template-columns: 1.4fr 1.1fr 0.9fr 1.1fr; gap:10px; align-items:center; }
-        .sum.head{ font-size:12px; opacity:.75; }
-        .sum.foot{ display:flex; justify-content:flex-end; gap:8px; align-items:center; margin-top:6px; border-top:1px solid var(--border); padding-top:8px; }
-        .k{ font-size:12px; opacity:.7; }
-        .v{ font-weight:800; }
-        .spacer{ flex:1; }
+        .modal-sheet {
+          position: relative; margin: 36px auto;
+          border-radius: 16px; background: var(--bg);
+          border: 1px solid var(--border);
+          box-shadow: 0 30px 80px rgba(0,0,0,0.35);
+        }
+        .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .mh-left { display:flex; gap:12px; align-items:center; }
+        .mh-icon { width:34px; height:34px; border-radius:10px; background:var(--card); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
+        .mh-name { font-weight:800; }
+        .mh-actions { display:flex; gap:8px; }
+        .section-title { font-weight:700; margin-bottom:10px; }
+        .card.dense { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
       `}</style>
     </div>
   );
