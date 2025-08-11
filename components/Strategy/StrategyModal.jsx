@@ -4,215 +4,210 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
 import Chart from "./Chart";
-import { gridPnl } from "./payoffLite";
-import { useMC } from "./useMC";
+import PositionBuilder from "./PositionBuilder";
+import SummaryTable from "./SummaryTable";
+import materializeTemplate from "./defs/materializeTemplate";
 
-/* ===== UI helpers (same as before) ===== */
-const fmt = (v, ccy = "USD", fd = 2) => {
-  if (!Number.isFinite(Number(v))) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: ccy, maximumFractionDigits: fd }).format(Number(v));
-  } catch { return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + Number(v).toFixed(fd); }
-};
-
-const TYPES = ["Long Call","Short Call","Long Put","Short Put","Long Stock","Short Stock"];
-const isOpt = (t) => /Call|Put/.test(t);
-
-/* ===== Modal ===== */
-export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, currency = "USD", sigma = 0.2, riskFree = 0, timeDays } = env || {};
-  const [rows, setRows] = useState(() => (strategy?.legs?.length ? strategy.legs : [
-    { type: "Long Call", strike: "", expiration: timeDays ?? 30, volume: 1, premium: "" },
-  ]));
-
-  // ----- Monte-Carlo (95% CI + Mean) -----
-  const { result: mc, loading: mcLoading, run: runMC } = useMC();
-
-  // Effective T (years): max(expiration of legs) or fallback to company card time
-  const Tyears = useMemo(() => {
-    const ds = rows.map(r => Number(r.expiration ?? timeDays)).filter(Number.isFinite);
-    const d = ds.length ? Math.max(...ds) : Number(timeDays ?? 30);
-    return Math.max(1e-8, d) / 365;
-  }, [rows, timeDays]);
-
-  // Trigger MC whenever inputs that affect the underlying distribution change
-  useEffect(() => {
-    if (!Number.isFinite(Number(spot))) return;
-    runMC({ spot: Number(spot), sigma: Number(sigma), r: Number(riskFree || 0), T: Tyears })
-      .catch(() => {}); // errors already handled in the hook
-  }, [spot, sigma, riskFree, Tyears, runMC]);
-
-  // ----- P&L grid for chart/metrics (expiration P&L) -----
-  const pnlGrid = useMemo(() => gridPnl(rows, undefined, undefined, 260, 1), [rows]);
-  const maxProfit = useMemo(() => Math.max(0, ...pnlGrid.Y), [pnlGrid.Y]);
-  const maxLoss = useMemo(() => Math.min(0, ...pnlGrid.Y), [pnlGrid.Y]);
-  const winRate = useMemo(() => {
-    const n = pnlGrid.Y.length || 1;
-    const w = pnlGrid.Y.filter(v => v > 0).length;
-    return (w / n) * 100;
-  }, [pnlGrid.Y]);
-
-  // Simple breakeven finder from grid
-  const breakeven = useMemo(() => {
-    const xs = [];
-    for (let i = 1; i < pnlGrid.X.length; i++) {
-      const y0 = pnlGrid.Y[i - 1], y1 = pnlGrid.Y[i];
-      if ((y0 <= 0 && y1 >= 0) || (y0 >= 0 && y1 <= 0)) {
-        const x0 = pnlGrid.X[i - 1], x1 = pnlGrid.X[i];
-        const t = y1 === y0 ? 0 : (0 - y0) / (y1 - y0);
-        xs.push(x0 + t * (x1 - x0));
-      }
+/* ---------- helpers ---------- */
+function rowsToLegsObject(rows) {
+  // Legacy shape expected upstream (options only)
+  const out = {
+    lc: { enabled: false, K: null, qty: 0, premium: null },
+    sc: { enabled: false, K: null, qty: 0, premium: null },
+    lp: { enabled: false, K: null, qty: 0, premium: null },
+    sp: { enabled: false, K: null, qty: 0, premium: null },
+  };
+  for (const r of rows) {
+    if (!r?.type || !(r.type in out)) continue; // ignore stock rows here
+    const K = Number(r.K);
+    const qty = Number(r.qty || 0);
+    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : null;
+    if (Number.isFinite(K) && Number.isFinite(qty)) {
+      out[r.type] = { enabled: qty !== 0, K, qty, premium: prem };
+    } else {
+      out[r.type] = { enabled: qty !== 0, K: Number.isFinite(K) ? K : null, qty, premium: prem };
     }
-    if (!xs.length) return null;
-    if (xs.length === 1) return { low: xs[0], high: null };
-    xs.sort((a,b)=>a-b);
-    return { low: xs[0], high: xs[xs.length-1] };
-  }, [pnlGrid]);
+  }
+  return out;
+}
 
-  // ----- UI plumbing -----
-  const edit = (idx, key, val) => {
-    setRows(prev => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], [key]: val === "" ? "" : (key === "type" ? val : Number(val)) };
-      return next;
-    });
+function netPremium(rows) {
+  // Long options pay premium (debit), short receive (credit). Stocks: none.
+  let sum = 0;
+  for (const r of rows) {
+    if (r.type === "ls" || r.type === "ss") continue;
+    const q = Number(r.qty || 0);
+    const p = Number(r.premium || 0);
+    if (!Number.isFinite(q) || !Number.isFinite(p)) continue;
+    const isLong = r.type === "lc" || r.type === "lp";
+    sum += (isLong ? -1 : +1) * p * q;
+  }
+  return sum;
+}
+
+/* ---------- component ---------- */
+export default function StrategyModal({ strategy, env, onApply, onClose }) {
+  const {
+    spot = null,
+    currency = "USD",
+    high52,
+    low52,
+    riskFree = 0.02,
+    sigma = 0.2,
+    T = 30 / 365, // years from company card
+  } = env || {};
+
+  // Default days derived from company card's T
+  const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
+
+  // Seed rows from the strategy template (legs, qty, expirations from company card's Time)
+  const [rows, setRows] = useState(() =>
+    materializeTemplate(strategy?.id, { T, defaultDays })
+  );
+
+  // Re-materialize when opening a different strategy
+  useEffect(() => {
+    setRows(materializeTemplate(strategy?.id, { T, defaultDays }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy?.id]);
+
+  const [greek, setGreek] = useState("vega");
+
+  // Lock page scroll + close on ESC
+  useEffect(() => {
+    const onEsc = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onEsc);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onEsc);
+      document.body.style.overflow = prev || "";
+    };
+  }, [onClose]);
+
+  // Save = previous Apply (compat)
+  const legsObj = useMemo(() => rowsToLegsObject(rows), [rows]);
+  const totalPrem = useMemo(() => netPremium(rows), [rows]);
+  const save = () => {
+    onApply?.(legsObj, totalPrem);
+    onClose?.();
   };
 
-  const addRow = () => setRows(r => [...r, { type: "Long Call", strike: "", expiration: timeDays ?? 30, volume: 1, premium: "" }]);
-  const removeRow = (i) => setRows(r => r.filter((_, k) => k !== i));
-  const reset = () => setRows(strategy?.legs?.length ? strategy.legs : [{ type: "Long Call", strike: "", expiration: timeDays ?? 30, volume: 1, premium: "" }]);
+  // Reset to template using **current** company card time
+  const resetToDefaults = () => {
+    const fresh = materializeTemplate(strategy?.id, { T, defaultDays });
+    setRows(fresh);
+  };
 
-  // Net premium (debit + / credit -)
-  const netPrem = useMemo(() => rows.reduce((s, r) => {
-    const sign = r.type?.startsWith("Short") ? -1 : 1;
-    const q = Number(r.volume || 0);
-    const p = Number(r.premium || 0);
-    return s + sign * q * p;
-  }, 0), [rows]);
+  const GAP = 14;
 
   return (
-    <div className="modal-root" role="dialog" aria-modal="true">
+    <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
       <div className="modal-backdrop" onClick={onClose} />
-      <div className="sheet">
+      <div
+        className="modal-sheet"
+        style={{
+          maxWidth: 1120,
+          maxHeight: "calc(100vh - 96px)",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
+          padding: 16,
+        }}
+      >
         {/* Header */}
-        <div className="head">
-          <div className="left">
-            <div className="avatar" />
-            <div>
-              <div className="title">{strategy?.name || "Strategy"}</div>
+        <div className="modal-head" style={{ marginBottom: GAP }}>
+          <div className="mh-left">
+            <div className="mh-icon">{strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}</div>
+            <div className="mh-meta">
+              <div id="sg-modal-title" className="mh-name">
+                {strategy?.name || "Strategy"}
+              </div>
               <DirectionBadge value={strategy?.direction || "Neutral"} />
             </div>
           </div>
-          <div className="right">
-            <button className="button" onClick={() => { /* reserved for future */ }}>Save</button>
-            <button className="button ghost" onClick={onClose}>Close</button>
+          <div className="mh-actions">
+            <button className="button" type="button" onClick={save}>
+              Save
+            </button>
+            <button className="button ghost" type="button" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
-        {/* Chart */}
-        <Chart
-          spot={Number(spot)}
-          currency={currency}
-          rows={rows}
-          greek="Vega"
-          ci={mc ? { low: mc.low, high: mc.high, mean: mc.mean } : null}
-          ciLoading={mcLoading}
-        />
-
-        {/* Metrics strip */}
-        <div className="metrics metrics-scroll">
-          <div className="card"><div className="k">Underlying price</div><div className="v">{fmt(spot, currency, 2)}</div></div>
-          <div className="card"><div className="k">Max profit</div><div className="v">{fmt(maxProfit, currency, 0)}</div></div>
-          <div className="card"><div className="k">Max loss</div><div className="v">{fmt(maxLoss, currency, 0)}</div></div>
-          <div className="card"><div className="k">Win rate</div><div className="v">{winRate.toFixed(2)}%</div></div>
-          <div className="card"><div className="k">Breakeven (Low | High)</div>
-            <div className="v">{breakeven ? (breakeven.high ? `${Math.round(breakeven.low)} | ${Math.round(breakeven.high)}` : `${Math.round(breakeven.low)}`) : "—"}</div>
-          </div>
-          <div className="card"><div className="k">Lot size</div><div className="v">{rows.length}</div></div>
+        {/* Chart (frameless) */}
+        <div style={{ marginBottom: GAP }}>
+          <Chart
+            frameless
+            spot={spot}
+            currency={currency}
+            rows={rows}                 // chart reflects all builder rows
+            riskFree={riskFree}
+            sigma={sigma}
+            T={T}
+            greek={greek}
+            onGreekChange={setGreek}
+            contractSize={1}
+          />
         </div>
 
         {/* Configuration */}
-        <div className="card block">
-          <div className="sec-title">Configuration</div>
-          <div className="cfg-grid">
-            <div className="th">Strike</div>
-            <div className="th">Type</div>
-            <div className="th">Expiration</div>
-            <div className="th">Volume</div>
-            <div className="th">Premium</div>
-            <div className="th"></div>
-            {rows.map((r, i) => (
-              <FragmentRow
-                key={i}
-                row={r}
-                onStrike={(v) => edit(i, "strike", v)}
-                onType={(v) => edit(i, "type", v)}
-                onExp={(v) => edit(i, "expiration", v)}
-                onVol={(v) => edit(i, "volume", v)}
-                onPrem={(v) => edit(i, "premium", v)}
-                onRemove={() => removeRow(i)}
-              />
-            ))}
+        <section className="card dense" style={{ marginBottom: GAP }}>
+          <div className="section-head">
+            <div className="section-title">Configuration</div>
+            <button
+              type="button"
+              className="link-btn"
+              onClick={resetToDefaults}
+              aria-label="Reset"
+              title="Reset"
+            >
+              Reset
+            </button>
           </div>
-          <div className="cfg-actions">
-            <button className="button ghost" onClick={addRow}>+ New position</button>
-            <div style={{ flex: 1 }} />
-            <button className="button ghost" onClick={reset}>Reset</button>
-          </div>
-        </div>
+          <PositionBuilder rows={rows} onChange={setRows} currency={currency} defaultDays={defaultDays} />
+        </section>
 
         {/* Summary */}
-        <div className="card block">
-          <div className="sec-title">Summary</div>
-          <div className="summary-row">
-            <div className="muted">Net Premium</div>
-            <div className="strong">{fmt(netPrem, currency, 2)}</div>
-          </div>
-        </div>
+        <SummaryTable rows={rows} currency={currency} title="Summary" />
       </div>
 
       <style jsx>{`
-        .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(6px)}
-        .sheet{position:fixed;inset:24px;overflow:auto;border-radius:18px;background:var(--bg);border:1px solid var(--border);padding:16px}
-        .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-        .left{display:flex;gap:10px;align-items:center}
-        .avatar{width:28px;height:28px;border-radius:50%;background:var(--card);border:1px solid var(--border)}
-        .title{font-weight:700}
-        .right{display:flex;gap:8px}
-        .button{height:36px;padding:0 14px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--text)}
-        .button.ghost{background:transparent}
-        .metrics{display:flex;gap:12px;margin:12px 0;overflow:auto;padding-bottom:6px}
-        .card{min-width:180px;border:1px solid var(--border);background:var(--card);border-radius:12px;padding:10px}
-        .k{font-size:12px;opacity:.7}
-        .v{margin-top:4px;font-weight:700}
-        .block{margin-top:12px}
-        .sec-title{font-weight:700;margin-bottom:8px}
-        .cfg-grid{display:grid;grid-template-columns:repeat(6, minmax(0, 1fr));gap:8px}
-        .th{font-size:12px;opacity:.7}
-        .field{width:100%;height:36px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);padding:0 10px}
-        .cfg-actions{display:flex;align-items:center;gap:8px;margin-top:8px}
-        .summary-row{display:flex;justify-content:space-between;align-items:center}
+        .modal-root {
+          position: fixed; inset: 0; z-index: 70;
+        }
+        .modal-backdrop {
+          position: absolute; inset: 0;
+          background: rgba(0, 0, 0, 0.32);
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
+        }
+        .modal-sheet {
+          position: relative; margin: 36px auto;
+          border-radius: 16px; background: var(--bg);
+          border: 1px solid var(--border);
+          box-shadow: 0 30px 80px rgba(0,0,0,0.35);
+        }
+        .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .mh-left { display:flex; gap:12px; align-items:center; }
+        .mh-icon { width:34px; height:34px; border-radius:10px; background:var(--card); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
+        .mh-name { font-weight:800; }
+        .mh-actions { display:flex; gap:8px; }
+        .section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .section-title { font-weight:700; }
+        .card.dense { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
+        .link-btn {
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--text);
+          font-size: 12.5px;
+        }
+        .link-btn:hover { background: var(--card); }
       `}</style>
     </div>
-  );
-}
-
-/* ---- row editor ---- */
-function FragmentRow({ row, onStrike, onType, onExp, onVol, onPrem, onRemove }) {
-  return (
-    <>
-      <div><input className="field" type="number" step="0.01" value={row.strike ?? ""} onChange={e=>onStrike(e.target.value)} placeholder="Strike" /></div>
-      <div>
-        <select className="field" value={row.type} onChange={e=>onType(e.target.value)}>
-          {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </div>
-      <div><input className="field" type="number" step="1" value={row.expiration ?? ""} onChange={e=>onExp(e.target.value)} placeholder="30 (days)" /></div>
-      <div><input className="field" type="number" step="1" value={row.volume ?? ""} onChange={e=>onVol(e.target.value)} placeholder="1" /></div>
-      <div><input className="field" type="number" step="0.01" value={row.premium ?? ""} onChange={e=>onPrem(e.target.value)} placeholder="Price" /></div>
-      <div style={{display:"flex",justifyContent:"flex-end"}}>
-        <button className="button" onClick={onRemove} aria-label="Delete row">🗑️</button>
-      </div>
-    </>
   );
 }
