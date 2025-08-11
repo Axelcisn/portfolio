@@ -1,249 +1,163 @@
+// components/Strategy/assignStrategy.js
+
 /* -------------------------------------------------------------------------- */
-/* Strategy instantiation helpers (non-breaking extension)                    */
+/* Canonical strategy catalog: fixed legs & volumes (no strikes/premiums)     */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Guess an exchange-like strike step from spot.
- * Examples: <20 → 0.5, <100 → 1, <500 → 5, <1000 → 10, else 25.
- */
-export function guessStep(spot) {
-  const s = Math.max(0.01, Number(spot) || 0);
-  if (s < 1) return 0.05;
-  if (s < 5) return 0.1;
-  if (s < 20) return 0.5;
-  if (s < 100) return 1;
-  if (s < 500) return 5;
-  if (s < 1000) return 10;
-  if (s < 5000) return 25;
-  return 50;
-}
-
-function roundToStep(x, step) {
-  const k = Math.round(x / step) * step;
-  // normalize to a sensible number of decimals based on step granularity
-  const d = Math.max(0, ((step + '').split('.')[1] || '').length);
-  return Number(k.toFixed(d));
-}
-
-/* ------------------------- Normal CDF & BS pricing ------------------------ */
-
-function erf(x) {
-  const sign = x < 0 ? -1 : 1;
-  x = Math.abs(x);
-  // Abramowitz & Stegun 7.1.26
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
-        a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-  const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return sign * y;
-}
-function normCdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
-
-function bsPrice({ S, K, r = 0, sigma = 0.2, T = 30 / 365, type = 'call' }) {
-  S = Number(S); K = Number(K); r = Number(r); sigma = Math.max(0, Number(sigma)); T = Math.max(0, Number(T));
-  if (!isFinite(S) || !isFinite(K) || S <= 0 || K <= 0) return 0;
-  if (sigma === 0 || T === 0) {
-    const intrinsic = type === 'call' ? Math.max(S - K, 0) : Math.max(K - S, 0);
-    return intrinsic; // no discounting for simplicity in seeding
-  }
-  const sqrtT = Math.sqrt(T);
-  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
-  const d2 = d1 - sigma * sqrtT;
-  if (type === 'call') {
-    return S * normCdf(d1) - K * Math.exp(-r * T) * normCdf(d2);
-  } else {
-    return K * Math.exp(-r * T) * normCdf(-d2) - S * normCdf(-d1);
-  }
-}
-
-function jitter(v, pct = 0.04) {
-  const f = 1 + (Math.random() * 2 - 1) * pct; // ±pct
-  return v * f;
-}
-
-/* --------------------------- Strategy templates --------------------------- */
-/**
- * Minimal, robust templates keyed by normalized strategy id.
- * Each function receives (atm, step, w) and returns an object with
- * optional strikes for lc/sc/lp/sp. Only defined keys are enabled.
- */
-const ORDER_TEMPLATES = {
-  'long-call': (atm/*, step, w*/) => ({ lc: atm }),
-  'short-call': (atm/*, step, w*/) => ({ sc: atm }),
-  'long-put': (atm/*, step, w*/) => ({ lp: atm }),
-  'short-put': (atm/*, step, w*/) => ({ sp: atm }),
-
-  'bull-call-spread': (atm, step, w) => ({ lc: atm, sc: roundToStep(atm + w * step, step) }),
-  'bear-call-spread': (atm, step, w) => ({ sc: atm, lc: roundToStep(atm + w * step, step) }),
-
-  'bull-put-spread':  (atm, step, w) => ({ lp: roundToStep(atm - w * step, step), sp: atm }),
-  'bear-put-spread':  (atm, step, w) => ({ sp: roundToStep(atm - w * step, step), lp: atm }),
-
-  'long-straddle':    (atm/*, step, w*/) => ({ lc: atm, lp: atm }),
-  'short-straddle':   (atm/*, step, w*/) => ({ sc: atm, sp: atm }),
-
-  'long-strangle':    (atm, step, w) => ({ lp: roundToStep(atm - w * step, step), lc: roundToStep(atm + w * step, step) }),
-  'short-strangle':   (atm, step, w) => ({ sp: roundToStep(atm - w * step, step), sc: roundToStep(atm + w * step, step) }),
-
-  // Optional: basic call/put butterfly (1:-2:1) at [ATM-w, ATM, ATM+w]
-  'call-butterfly':   (atm, step, w) => ({
-    lc: roundToStep(atm - w * step, step),
-    sc: atm, // NOTE: quantity will handle -2 later
-    // we represent the upper long call via lc qty aggregation where supported,
-    // but for keyed legs we keep one lc and one sc; volumes will encode 2 shorts if needed
-  }),
-  // You can add more (bear/bull boxes, iron condor) later if needed.
+const ROLE_LABEL = {
+  lc: "Long Call",
+  sc: "Short Call",
+  lp: "Long Put",
+  sp: "Short Put",
 };
 
-/* -------------------- Catalog integration & volume map -------------------- */
-// If this file already exports getStrategyById/getCanonical, we reuse them.
-// We defensively access them via global scope to avoid circular issues.
-function _safeGetStrategyById(id) {
-  try { return (typeof getStrategyById === 'function') ? getStrategyById(id) : null; }
-  catch { return null; }
+/**
+ * order: textual constraint for strikes:
+ *  - "X1<X2"      : two legs with ordered strikes
+ *  - "X1=X2"      : both legs at same strike (straddle)
+ *  - "X1<X2<X3"   : three ordered strikes
+ *  - "X1<X2<X3<X4": four ordered strikes
+ */
+export const STRATEGY_CATALOG = [
+  { id: "long-call",  name: "Long Call",  direction: "Bullish",
+    legs: [{ role: "lc", qty: 1 }], order: "X1" },
+
+  { id: "short-call", name: "Short Call", direction: "Bearish",
+    legs: [{ role: "sc", qty: 1 }], order: "X1" },
+
+  { id: "long-put",   name: "Long Put",   direction: "Bearish",
+    legs: [{ role: "lp", qty: 1 }], order: "X1" },
+
+  { id: "short-put",  name: "Short Put",  direction: "Bullish",
+    legs: [{ role: "sp", qty: 1 }], order: "X1" },
+
+  // Verticals
+  { id: "bull-call-spread", name: "Bull Call Spread", direction: "Bullish",
+    legs: [{ role: "lc", qty: 1 }, { role: "sc", qty: 1 }], order: "X1<X2" },
+
+  { id: "bear-call-spread", name: "Bear Call Spread", direction: "Bearish",
+    legs: [{ role: "sc", qty: 1 }, { role: "lc", qty: 1 }], order: "X1<X2" },
+
+  { id: "bull-put-spread", name: "Bull Put Spread", direction: "Bullish",
+    legs: [{ role: "sp", qty: 1 }, { role: "lp", qty: 1 }], order: "X1<X2" },
+
+  { id: "bear-put-spread", name: "Bear Put Spread", direction: "Bearish",
+    legs: [{ role: "lp", qty: 1 }, { role: "sp", qty: 1 }], order: "X1<X2" },
+
+  // Straddles & Strangles
+  { id: "long-straddle", name: "Long Straddle", direction: "Neutral",
+    legs: [{ role: "lc", qty: 1 }, { role: "lp", qty: 1 }], order: "X1=X2" },
+
+  { id: "short-straddle", name: "Short Straddle", direction: "Neutral",
+    legs: [{ role: "sc", qty: 1 }, { role: "sp", qty: 1 }], order: "X1=X2" },
+
+  { id: "long-strangle", name: "Long Strangle", direction: "Neutral",
+    legs: [{ role: "lp", qty: 1 }, { role: "lc", qty: 1 }], order: "X1<X2" },
+
+  { id: "short-strangle", name: "Short Strangle", direction: "Neutral",
+    legs: [{ role: "sp", qty: 1 }, { role: "sc", qty: 1 }], order: "X1<X2" },
+
+  // Butterflies
+  { id: "call-butterfly", name: "Call Butterfly", direction: "Neutral",
+    legs: [{ role: "lc", qty: 1 }, { role: "sc", qty: 2 }, { role: "lc", qty: 1 }],
+    order: "X1<X2<X3" },
+
+  { id: "put-butterfly", name: "Put Butterfly", direction: "Neutral",
+    legs: [{ role: "lp", qty: 1 }, { role: "sp", qty: 2 }, { role: "lp", qty: 1 }],
+    order: "X1<X2<X3" },
+
+  // Iron structures
+  { id: "iron-condor", name: "Iron Condor", direction: "Neutral",
+    legs: [
+      { role: "sp", qty: 1 }, // X1 (lower short put)
+      { role: "lp", qty: 1 }, // X2 (lower long put)
+      { role: "sc", qty: 1 }, // X3 (upper short call)
+      { role: "lc", qty: 1 }, // X4 (upper long call)
+    ],
+    order: "X1<X2<X3<X4" },
+
+  { id: "iron-butterfly", name: "Iron Butterfly", direction: "Neutral",
+    legs: [
+      { role: "lp", qty: 1 }, // X1
+      { role: "sp", qty: 1 }, // X2 (center)
+      { role: "sc", qty: 1 }, // X2 (center)
+      { role: "lc", qty: 1 }, // X3
+    ],
+    order: "X1<X2<X3" },
+];
+
+/* -------------------------------------------------------------------------- */
+/* Queries                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export function getAllStrategies() {
+  return STRATEGY_CATALOG.slice();
 }
 
-/** Map catalog legs -> keyed quantities {lc,sc,lp,sp} */
-function volumesFromCatalog(catalogLegs = []) {
-  const qty = { lc: 0, sc: 0, lp: 0, sp: 0 };
-  for (const leg of catalogLegs) {
-    const pos = (leg.position || '').toLowerCase();
-    const v = Number(leg.volume ?? leg.qty ?? 1);
-    if (pos.includes('long call'))  qty.lc += v;
-    if (pos.includes('short call')) qty.sc += v;
-    if (pos.includes('long put'))   qty.lp += v;
-    if (pos.includes('short put'))  qty.sp += v;
-  }
-  // default to 1 if everything was zero/unset
-  if (qty.lc === 0 && qty.sc === 0 && qty.lp === 0 && qty.sp === 0) qty.lc = 1;
-  return qty;
+export function getStrategyById(id) {
+  return STRATEGY_CATALOG.find((s) => s.id === id) || null;
 }
 
-/* ---------------------- Row & keyed legs shape builders ------------------- */
-function toRowsFromKeyed({ strikes, qty, premiums }) {
+/* -------------------------------------------------------------------------- */
+/* Instantiation: legs & volumes only (no strikes/premiums)                   */
+/* -------------------------------------------------------------------------- */
+
+function rowsFromCatalogEntry(entry) {
   const rows = [];
-  if (strikes.lc != null && qty.lc) rows.push({ position: 'Long Call',  strike: strikes.lc, volume: qty.lc, premium: premiums.lc });
-  if (strikes.sc != null && qty.sc) rows.push({ position: 'Short Call', strike: strikes.sc, volume: qty.sc, premium: premiums.sc });
-  if (strikes.lp != null && qty.lp) rows.push({ position: 'Long Put',   strike: strikes.lp, volume: qty.lp, premium: premiums.lp });
-  if (strikes.sp != null && qty.sp) rows.push({ position: 'Short Put',  strike: strikes.sp, volume: qty.sp, premium: premiums.sp });
+  if (!entry) return rows;
+  for (const leg of entry.legs) {
+    const label = ROLE_LABEL[leg.role];
+    if (!label) continue;
+    rows.push({
+      position: label,
+      strike: null,      // you will fill this
+      volume: Number(leg.qty || 0),
+      premium: null,     // you will fill this
+    });
+  }
   return rows;
 }
 
-function toKeyedFromRows(rows) {
-  const keyed = {
-    lc: { enabled: false, K: null, qty: 0, premium: null },
-    sc: { enabled: false, K: null, qty: 0, premium: null },
-    lp: { enabled: false, K: null, qty: 0, premium: null },
-    sp: { enabled: false, K: null, qty: 0, premium: null },
-  };
+function keyedFromRows(rows) {
+  // Start disabled with null K/premium; enable when qty>0
+  const base = { enabled: false, K: null, qty: 0, premium: null };
+  const keyed = { lc: { ...base }, sc: { ...base }, lp: { ...base }, sp: { ...base } };
+
   for (const r of rows) {
-    const pos = (r.position || '').toLowerCase();
-    const base = { enabled: true, K: Number(r.strike), qty: Number(r.volume || 1), premium: Number(r.premium ?? 0) };
-    if (pos.includes('long call'))  Object.assign(keyed.lc, base);
-    if (pos.includes('short call')) Object.assign(keyed.sc, base);
-    if (pos.includes('long put'))   Object.assign(keyed.lp, base);
-    if (pos.includes('short put'))  Object.assign(keyed.sp, base);
+    const qty = Number(r.volume || 0);
+    const data = { enabled: qty !== 0, K: null, qty, premium: null };
+
+    const pos = (r.position || "").toLowerCase();
+    if (pos.includes("long call"))  keyed.lc = data;
+    else if (pos.includes("short call")) keyed.sc = data;
+    else if (pos.includes("long put"))   keyed.lp = data;
+    else if (pos.includes("short put"))  keyed.sp = data;
   }
   return keyed;
 }
 
-/* ------------------------- Premium estimation logic ----------------------- */
-function estimatePremiums({ S, strikes, qty, r, sigma, T }) {
-  const premiums = { lc: null, sc: null, lp: null, sp: null };
-  if (strikes.lc != null && qty.lc) premiums.lc = jitter(bsPrice({ S, K: strikes.lc, r, sigma, T, type: 'call' }));
-  if (strikes.sc != null && qty.sc) premiums.sc = jitter(bsPrice({ S, K: strikes.sc, r, sigma, T, type: 'call' }));
-  if (strikes.lp != null && qty.lp) premiums.lp = jitter(bsPrice({ S, K: strikes.lp, r, sigma, T, type: 'put'  }));
-  if (strikes.sp != null && qty.sp) premiums.sp = jitter(bsPrice({ S, K: strikes.sp, r, sigma, T, type: 'put'  }));
-  return premiums;
+function lotSizeFromKeyed(legs) {
+  const abs = (x) => Math.abs(Number(x || 0));
+  return abs(legs.lc.qty) + abs(legs.sc.qty) + abs(legs.lp.qty) + abs(legs.sp.qty);
 }
 
-function sumNetPremium(rows) {
-  // long = debit (+), short = credit (−)
-  let total = 0;
-  for (const r of rows) {
-    const p = Number(r.premium ?? 0);
-    const q = Number(r.volume ?? 1);
-    const pos = (r.position || '').toLowerCase();
-    const sign = (pos.startsWith('short')) ? -1 : +1;
-    total += sign * p * q;
-  }
-  return total;
-}
-
-/* ------------------------- Public API: instantiate ------------------------ */
 /**
- * instantiateStrategy(strategyOrId, env)
- *  - strategyOrId: string id (preferred) or a catalog object with { id, legs, name, ... }
- *  - env: { spot, sigma, T, riskFree, widthSteps=1 }
- *
- * Returns:
- *  { id, name, rows, legsKeyed, netPremium, meta:{ atm, step, widthSteps, lotSize } }
+ * Instantiate a strategy into ready-to-edit legs (strikes & premiums left null).
+ * @param {string} id
+ * @returns { id, name, rows, legsKeyed, netPremium:0, meta:{ order, lotSize } }
  */
-export function instantiateStrategy(strategyOrId, env = {}) {
-  const {
-    spot,
-    sigma = 0.2,
-    T = 30 / 365,
-    riskFree = 0.02,
-    widthSteps = 1,
-  } = env;
-
-  const S = Number(spot);
-  if (!isFinite(S) || S <= 0) {
-    throw new Error('instantiateStrategy requires a positive spot price');
-  }
-
-  // Resolve catalog entry (volumes come from here)
-  let catalog = null;
-  let id = null;
-  if (typeof strategyOrId === 'string') {
-    id = strategyOrId;
-    catalog = _safeGetStrategyById(id) || { id, name: id, legs: [] };
-  } else if (strategyOrId && typeof strategyOrId === 'object') {
-    catalog = strategyOrId;
-    id = catalog.id || 'custom';
-  } else {
-    throw new Error('instantiateStrategy: invalid strategy identifier');
-  }
-
-  const step = guessStep(S);
-  const atm = roundToStep(S, step);
-  const w = Math.max(1, Math.floor(Number(widthSteps) || 1));
-
-  const template = ORDER_TEMPLATES[id] || ORDER_TEMPLATES[(id || '').toLowerCase()] || ORDER_TEMPLATES['long-call'];
-  const strikes = template(atm, step, w);
-
-  // Enforce strict ordering if multiple strikes exist
-  const ordered = ['lc','sc','lp','sp'].reduce((acc, k) => {
-    if (strikes[k] != null) acc.push({ k, K: strikes[k] });
-    return acc;
-  }, []);
-  // For 2–4 legs of the same option type, ensure ascending order
-  // (Our templates already enforce it; this is a safety net.)
-  ordered.sort((a, b) => a.K - b.K);
-  for (const {k, K} of ordered) strikes[k] = K;
-
-  // Quantities from catalog
-  const qty = volumesFromCatalog(catalog.legs || []);
-
-  // Temporary premiums
-  const premiums = estimatePremiums({ S, strikes, qty, r: riskFree, sigma, T });
-
-  // Rows & keyed
-  const rows = toRowsFromKeyed({ strikes, qty, premiums });
-  const legsKeyed = toKeyedFromRows(rows);
-
-  // Meta & net premium
-  const netPremium = sumNetPremium(rows);
-  const lotSize = Math.abs((legsKeyed.lc?.qty || 0)) + Math.abs((legsKeyed.sc?.qty || 0)) +
-                  Math.abs((legsKeyed.lp?.qty || 0)) + Math.abs((legsKeyed.sp?.qty || 0));
+export function instantiateStrategy(id) {
+  const entry = getStrategyById(id) || { id, name: id, legs: [], order: "X1" };
+  const rows = rowsFromCatalogEntry(entry);
+  const legsKeyed = keyedFromRows(rows);
+  const lotSize = lotSizeFromKeyed(legsKeyed);
 
   return {
-    id,
-    name: catalog.name || id,
+    id: entry.id,
+    name: entry.name,
     rows,
     legsKeyed,
-    netPremium,
-    meta: { atm, step, widthSteps: w, lotSize }
+    netPremium: 0,
+    meta: { order: entry.order, lotSize },
   };
 }
