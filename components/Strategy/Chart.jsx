@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { gridPnl, uniqueStrikes } from "./payoffLite";
 import { computeBreakevens, formatBE } from "./math/breakevens";
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
+import { ci95, meanPrice } from "./math/ci";
 
 /* ---------------- helpers ---------------- */
 const TYPE_TO_POSITION = {
@@ -167,7 +168,7 @@ export default function Chart({
   frameless = false,
   spot = null,
   currency = "USD",
-  rows = [],            // builder or legacy
+  rows = [],
   riskFree = 0,
   sigma = 0.2,
   T = 30 / 365,
@@ -198,7 +199,7 @@ export default function Chart({
     minX = 100; maxX = 200;
   }
 
-  // Expiration P&L (from your existing engine)
+  // Expiration P&L grid
   const { X, Y: Yexp } = useMemo(
     () => gridPnl(payoffRows, minX, maxX, 260, contractSize),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -236,6 +237,10 @@ export default function Chart({
       return gsum;
     });
   }, [X, payoffRows, riskFree, sigma, T, greek, contractSize]);
+
+  // 95% CI & Mean (risk-neutral)
+  const ci = useMemo(() => ci95(spot, riskFree, sigma, T), [spot, riskFree, sigma, T]);
+  const mean = useMemo(() => meanPrice(spot, riskFree, T), [spot, riskFree, T]);
 
   // Y-range (based on both curves so nothing clips)
   const yMin = Math.min(0, ...Yexp, ...Ynow);
@@ -279,6 +284,13 @@ export default function Chart({
 
   const kMarks = uniqueStrikes(payoffRows);
 
+  // CI & mean visibility and domain clipping
+  const ciValid = Number.isFinite(ci?.lo) && Number.isFinite(ci?.hi) && ci.hi > ci.lo;
+  const meanIn = Number.isFinite(mean) && mean >= minX && mean <= maxX;
+  const ciLo = ciValid ? Math.max(minX, ci.lo) : NaN;
+  const ciHi = ciValid ? Math.min(maxX, ci.hi) : NaN;
+  const ciWide = ciValid && ciHi > ciLo;
+
   /* ---------------- render ---------------- */
   return (
     <div className={frameless ? "" : "card"} ref={wrapRef}>
@@ -288,11 +300,17 @@ export default function Chart({
           <span className="dot" style={{ background: "#60a5fa" }} />
           <span>Current P&amp;L</span>
           <span className="sep" />
-          <span className="dot" style={{ background: "#f5f5f5" }} />
+          <span className="dot" style={{ background: "#e5e7eb" }} />
           <span>Expiration P&amp;L</span>
           <span className="sep" />
           <span className="dot" style={{ background: "#f59e0b" }} />
           <span>{greek[0].toUpperCase()+greek.slice(1)}</span>
+          <span className="sep" />
+          <span className="dot" style={{ background: "#8b5cf6" }} />
+          <span>95% CI</span>
+          <span className="sep" />
+          <span className="dot" style={{ background: "#14b8a6" }} />
+          <span>Mean</span>
         </div>
         <div className="l-right">
           <label className="small muted" style={{ marginRight: 8 }}>Greek</label>
@@ -341,6 +359,19 @@ export default function Chart({
           <line x1={x(s)} y1={P.t} x2={x(s)} y2={height - P.b} stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
         )}
 
+        {/* 95% CI band (behind payoff fills) */}
+        {ciWide && (
+          <>
+            <rect
+              x={x(ciLo)} y={P.t}
+              width={x(ciHi)-x(ciLo)} height={H}
+              fill="rgba(139,92,246,.12)"
+            />
+            <line x1={x(ciLo)} y1={P.t} x2={x(ciLo)} y2={height-P.b} stroke="#8b5cf6" strokeDasharray="6 4" />
+            <line x1={x(ciHi)} y1={P.t} x2={x(ciHi)} y2={height-P.b} stroke="#8b5cf6" strokeDasharray="6 4" />
+          </>
+        )}
+
         {/* Profit/Loss fills from expiration curve */}
         {areas.pos.map((d, i) => (
           <path key={`pos${i}`} d={d} fill="rgba(16,185,129,.10)" stroke="none" />
@@ -357,9 +388,14 @@ export default function Chart({
           </g>
         ))}
 
+        {/* Mean price */}
+        {meanIn && (
+          <line x1={x(mean)} y1={P.t} x2={x(mean)} y2={height - P.b} stroke="#14b8a6" strokeDasharray="5 5" />
+        )}
+
         {/* Curves */}
         <path d={toPath(X, Ynow)} fill="none" stroke="#60a5fa" strokeWidth="2" />
-        <path d={toPath(X, Yexp)} fill="none" stroke="#f5f5f5" strokeWidth="2" strokeDasharray="5 4" />
+        <path d={toPath(X, Yexp)} fill="none" stroke="#e5e7eb" strokeWidth="2" strokeDasharray="5 4" />
         <path d={toPath(X, greekCurve)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />
       </svg>
 
@@ -371,7 +407,7 @@ export default function Chart({
         <Pill label="Win rate" value={`${winRate.toFixed(2)}%`} />
         <Pill label="Breakeven (Low | High)" value={beText} />
         <Pill label="Lot size" value={lotSize} />
-        {/* placeholders */}
+        {/* placeholders (to be computed later) */}
         <Pill label="CI (Low | High)" value="—" />
         <Pill label="Delta" value="—" />
         <Pill label="Gamma" value="—" />
