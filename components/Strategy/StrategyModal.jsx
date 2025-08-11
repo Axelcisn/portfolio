@@ -160,10 +160,10 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
               type="button"
               className="link-btn"
               onClick={resetToDefaults}
-              aria-label="Reset to default legs"
-              title="Reset to default legs"
+              aria-label="Reset"
+              title="Reset"
             >
-              Reset to defaults
+              Reset
             </button>
           </div>
           <PositionBuilder rows={rows} onChange={setRows} currency={currency} defaultDays={defaultDays} />
