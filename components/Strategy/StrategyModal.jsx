@@ -13,8 +13,9 @@ import {
   isCall,
   isPut,
 } from "./payoffUtils";
+import { buildGreekSeries } from "./greeks";
 
-/* ---------- responsive width hook ---------- */
+/* ---------- responsive width ---------- */
 function useSize(ref, fallbackW = 960) {
   const [w, setW] = useState(fallbackW);
   useEffect(() => {
@@ -29,27 +30,29 @@ function useSize(ref, fallbackW = 960) {
   return w;
 }
 
-/* ---------- SVG Chart ---------- */
+/* ---------- SVG Chart (P&L left axis, optional Greek on right) ---------- */
 function ChartCanvas({
   spot,
   pnlXs = [],
   pnlYs = [],
   breakevens = [],
   strikeCenter,
-  bellXs = [],
-  bellYs = [],
+  greekXs = [],
+  greekYs = [],
   greekLabel = "Vega",
-  height = 440,
+  showGreek = true,
+  height = 460,
 }) {
   const wrapRef = useRef(null);
   const width = useSize(wrapRef);
 
-  const hasSeries = pnlXs.length && pnlYs.length;
-  const minX = hasSeries ? Math.min(...pnlXs) : (spot || 0) * 0.8 || 180;
-  const maxX = hasSeries ? Math.max(...pnlXs) : (spot || 0) * 1.2 || 275;
+  const hasPL = pnlXs.length && pnlYs.length;
+  const minX = hasPL ? Math.min(...pnlXs) : (spot || 0) * 0.8 || 180;
+  const maxX = hasPL ? Math.max(...pnlXs) : (spot || 0) * 1.2 || 275;
 
+  // left axis
   let minY = -1, maxY = 1;
-  if (hasSeries) {
+  if (hasPL) {
     minY = Math.min(...pnlYs);
     maxY = Math.max(...pnlYs);
     if (minY === maxY) { minY -= 1; maxY += 1; }
@@ -57,21 +60,38 @@ function ChartCanvas({
     minY -= pad; maxY += pad;
   }
 
-  const P = { t: 18, r: 18, b: 54, l: 66 };
+  // right axis for greek
+  const hasG = showGreek && greekXs.length && greekYs.length;
+  let gMin = 0, gMax = 1;
+  if (hasG) {
+    gMin = Math.min(...greekYs);
+    gMax = Math.max(...greekYs);
+    if (gMin === gMax) { gMin -= 1; gMax += 1; }
+    const gPad = (gMax - gMin) * 0.12;
+    gMin -= gPad; gMax += gPad;
+  }
+
+  const P = { t: 18, r: 48, b: 56, l: 72 };
   const W = width - P.l - P.r;
   const H = height - P.t - P.b;
 
   const sx = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
   const sy = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
+  const gy = (v) => P.t + (1 - (v - gMin) / (gMax - gMin)) * H;
 
-  const yTicks = 6, xTicks = 10;
+  const yTicks = 6, xTicks = 10, gTicks = 5;
 
-  const plPath = hasSeries
+  const plPath = hasPL
     ? pnlXs.map((x, i) => `${i ? "L" : "M"}${sx(x)},${sy(pnlYs[i])}`).join(" ")
     : "";
 
+  const gPath = hasG
+    ? greekXs.map((x, i) => `${i ? "L" : "M"}${sx(x)},${gy(greekYs[i])}`).join(" ")
+    : "";
+
+  // win/loss shading bands based on sign of P&L
   const bands = (() => {
-    if (!hasSeries) return [];
+    if (!hasPL) return [];
     const xs = [minX, ...breakevens.filter((v) => v > minX && v < maxX), maxX];
     const out = [];
     for (let i = 0; i < xs.length - 1; i++) {
@@ -84,17 +104,12 @@ function ChartCanvas({
     return out;
   })();
 
-  const bellPts =
-    bellXs.length && bellYs.length
-      ? bellXs.map((vx, i) => `${sx(vx)},${sy(minY + bellYs[i] * (maxY - minY) * 0.2)}`)
-      : [];
-
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
       <svg width={width} height={height} role="img" aria-label="Strategy chart">
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
-        {/* profit/loss shading */}
+        {/* Win/Loss background */}
         {bands.map((b, idx) => (
           <rect
             key={idx}
@@ -107,14 +122,14 @@ function ChartCanvas({
           />
         ))}
 
-        {/* grid Y */}
-        {Array.from({ length: 7 }).map((_, i) => {
-          const yy = P.t + (i / 6) * H;
-          const val = maxY - (i / 6) * (maxY - minY);
+        {/* grid left (P&L) */}
+        {Array.from({ length: yTicks + 1 }).map((_, i) => {
+          const yy = P.t + (i / yTicks) * H;
+          const val = maxY - (i / yTicks) * (maxY - minY);
           return (
             <g key={`gy${i}`}>
               <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
-              <text x={P.l - 8} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.6)">
+              <text x={P.l - 10} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.6)">
                 {val.toFixed(2)}
               </text>
             </g>
@@ -122,9 +137,9 @@ function ChartCanvas({
         })}
 
         {/* grid X */}
-        {Array.from({ length: 11 }).map((_, i) => {
-          const xx = P.l + (i / 10) * W;
-          const val = minX + (i / 10) * (maxX - minX);
+        {Array.from({ length: xTicks + 1 }).map((_, i) => {
+          const xx = P.l + (i / xTicks) * W;
+          const val = minX + (i / xTicks) * (maxX - minX);
           return (
             <g key={`gx${i}`}>
               <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
@@ -135,7 +150,23 @@ function ChartCanvas({
           );
         })}
 
-        {/* reference vertical at strike center */}
+        {/* right axis for Greek */}
+        {hasG && (
+          <>
+            <line x1={width - P.r + 0.5} y1={P.t} x2={width - P.r + 0.5} y2={height - P.b} stroke="rgba(255,255,255,.12)" />
+            {Array.from({ length: gTicks + 1 }).map((_, i) => {
+              const yy = P.t + (i / gTicks) * H;
+              const val = gMax - (i / gTicks) * (gMax - gMin);
+              return (
+                <text key={`rg${i}`} x={width - P.r + 6} y={yy + 4} fontSize="10" fill="rgba(255,255,255,.7)">
+                  {val.toFixed(2)}
+                </text>
+              );
+            })}
+          </>
+        )}
+
+        {/* vertical reference at strike center */}
         {Number.isFinite(strikeCenter) && strikeCenter >= minX && strikeCenter <= maxX && (
           <line
             x1={sx(strikeCenter)}
@@ -147,28 +178,28 @@ function ChartCanvas({
           />
         )}
 
-        {/* legends */}
-        <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
+        {/* legend */}
+        <g transform={`translate(${P.l + 6}, ${P.t + 10})`}>
           <circle r="4" fill="#60a5fa" />
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
-          <circle cx="112" r="4" fill="#f472b6" />
-          <text x="120" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
-          <circle cx="252" r="4" fill="#f59e0b" />
-          <text x="260" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
+          <circle cx="118" r="4" fill="#f472b6" />
+          <text x="126" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
+          {hasG && (
+            <>
+              <circle cx="268" r="4" fill="#f59e0b" />
+              <text x="276" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
+            </>
+          )}
         </g>
 
-        {/* payoff lines */}
-        {hasSeries && (
+        {/* series */}
+        {hasPL && (
           <>
             <path d={plPath} fill="none" stroke="#60a5fa" strokeWidth="2" />
             <path d={plPath} fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" />
           </>
         )}
-
-        {/* Greek / bell curve */}
-        {bellPts.length > 1 && (
-          <polyline fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" points={bellPts.join(" ")} />
-        )}
+        {hasG && <path d={gPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />}
       </svg>
     </div>
   );
@@ -194,10 +225,10 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   });
 
   const [greek, setGreek] = useState("Vega");
-  const [contractSize, setContractSize] = useState(100); // step 1
-  const [commission, setCommission] = useState(0);       // step 5 (new)
+  const [contractSize, setContractSize] = useState(100);
+  const [commission, setCommission] = useState(0);
 
-  // ESC and lock background
+  // ESC + body lock
   const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
@@ -218,7 +249,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   };
 
-  /* ===== Monte‑Carlo ===== */
+  /* ===== Monte‑Carlo (for domain + progress) ===== */
   const { xs: bellXs, ys: bellYs, band, progress, run } = useMonteCarlo();
   const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
   const loFallback = strikes.length ? Math.min(...strikes) : (spot || 0) * 0.6;
@@ -238,7 +269,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   }, [spot, sigmaEnv, TEnv, riskFree, loFallback, hiFallback, run]);
 
-  /* ===== Payoff series with new offset (credit − commissions) ===== */
+  /* ===== P&L series (credit − commission) ===== */
   const domainLo = Number.isFinite(band.q01) ? band.q01 : loFallback;
   const domainHi = Number.isFinite(band.q99) ? band.q99 : hiFallback;
 
@@ -271,6 +302,23 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 
   const maxProfit = useMemo(() => Math.max(...payoffSeries.ys, 0), [payoffSeries.ys]);
   const maxLoss   = useMemo(() => Math.min(...payoffSeries.ys, 0), [payoffSeries.ys]);
+
+  /* ===== Greeks series (right axis) ===== */
+  const greekYs = useMemo(() => {
+    if (greek === "Not selected") return [];
+    const r = Number.isFinite(riskFree) ? riskFree / 100 : 0;
+    const T = Number.isFinite(TEnv) ? TEnv : 30 / 365;
+    const sig = Number.isFinite(sigmaEnv) ? sigmaEnv : 0.25;
+    return buildGreekSeries({
+      xs: payoffSeries.xs,
+      rows,
+      contractSize,
+      sigma: sig,
+      T,
+      r,
+      greek,
+    });
+  }, [greek, payoffSeries.xs, rows, contractSize, sigmaEnv, TEnv, riskFree]);
 
   const GAP = 14;
 
@@ -307,7 +355,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </div>
         </div>
 
-        {/* Controls above chart */}
+        {/* Controls */}
         <div style={{ display: "flex", gap: GAP, alignItems: "center", justifyContent: "flex-end", marginBottom: 6 }}>
           <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             Contract size
@@ -360,10 +408,11 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             pnlYs={payoffSeries.ys}
             breakevens={breakevens}
             strikeCenter={strikeCenter}
-            bellXs={bellXs}
-            bellYs={bellYs}
-            greekLabel={greek === "Not selected" ? "Distribution" : greek}
-            height={440}
+            greekXs={payoffSeries.xs}
+            greekYs={greekYs}
+            greekLabel={greek}
+            showGreek={greek !== "Not selected"}
+            height={460}
           />
         </div>
 
