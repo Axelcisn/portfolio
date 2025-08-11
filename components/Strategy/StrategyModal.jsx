@@ -4,65 +4,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
 import useMonteCarlo from "./useMonteCarlo";
+import {
+  buildPayoffSeries,
+  findBreakEvens,
+  netCredit,
+  contractsCount,
+  fmtCur,
+  isCall,
+  isPut,
+} from "./payoffUtils";
 
-/* =========================
-   Helpers
-   ========================= */
-const isShort = (pos) => /Short/.test(pos);
-const isCall = (pos) => /Call/.test(pos);
-const isPut  = (pos) => /Put/.test(pos);
-
-const fmtCur = (v, ccy = "USD") => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: ccy,
-      maximumFractionDigits: 2,
-    }).format(n);
-  } catch {
-    return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + n.toFixed(2);
-  }
-};
-
-function uniqueSorted(arr) {
-  return Array.from(new Set(arr.filter(Number.isFinite))).sort((a, b) => a - b);
-}
-
-// premium credit (short +, long −), per contract, scaled by contractSize
-function netCredit(rows, contractSize) {
-  let sum = 0;
-  for (const r of rows) {
-    const vol = Number(r.volume || 0);
-    const prem = Number(r.premium || 0);
-    if (!Number.isFinite(vol) || !Number.isFinite(prem)) continue;
-    sum += (isShort(r.position) ? +1 : -1) * vol * prem;
-  }
-  return sum * (Number(contractSize) || 1);
-}
-
-// payoff at expiry for a single leg, per contract
-function legPayoff(ST, r) {
-  const K = Number(r.strike);
-  const q = Number(r.volume || 0);
-  if (!Number.isFinite(K) || !Number.isFinite(q)) return 0;
-  let p = 0;
-  if (isCall(r.position)) p = Math.max(ST - K, 0);
-  if (isPut(r.position))  p = Math.max(K - ST, 0);
-  const sign = isShort(r.position) ? -1 : +1; // short loses payoff
-  return sign * q * p;
-}
-
-// total expiry payoff (sum of legs) scaled by contractSize
-function payoffAt(ST, rows, contractSize) {
-  const perContract = rows.reduce((acc, r) => acc + legPayoff(ST, r), 0);
-  return perContract * (Number(contractSize) || 1);
-}
-
-/* =========================
-   Lightweight SVG chart (no card/border)
-   ========================= */
+/* ---------- responsive width hook ---------- */
 function useSize(ref, fallbackW = 960) {
   const [w, setW] = useState(fallbackW);
   useEffect(() => {
@@ -77,37 +29,64 @@ function useSize(ref, fallbackW = 960) {
   return w;
 }
 
+/* ---------- SVG Chart ---------- */
 function ChartCanvas({
   spot,
-  rows,
+  pnlXs = [],
+  pnlYs = [],
+  breakevens = [],
+  strikeCenter,
   bellXs = [],
   bellYs = [],
   greekLabel = "Vega",
-  height = 420,
+  height = 440,
 }) {
   const wrapRef = useRef(null);
   const width = useSize(wrapRef);
 
-  const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
-  const s = Number(spot);
-  const minX = strikes.length ? Math.min(...strikes, s || Infinity) : Number.isFinite(s) ? s * 0.8 : 180;
-  const maxX = strikes.length ? Math.max(...strikes, s || -Infinity) : Number.isFinite(s) ? s * 1.2 : 275;
+  const hasSeries = pnlXs.length && pnlYs.length;
+  const minX = hasSeries ? Math.min(...pnlXs) : (spot || 0) * 0.8 || 180;
+  const maxX = hasSeries ? Math.max(...pnlXs) : (spot || 0) * 1.2 || 275;
 
-  const minY = -0.08;
-  const maxY =  0.08;
+  let minY = -1, maxY = 1;
+  if (hasSeries) {
+    minY = Math.min(...pnlYs);
+    maxY = Math.max(...pnlYs);
+    if (minY === maxY) { minY -= 1; maxY += 1; }
+    const pad = (maxY - minY) * 0.12;
+    minY -= pad; maxY += pad;
+  }
 
-  const P = { t: 18, r: 18, b: 46, l: 64 };
+  const P = { t: 18, r: 18, b: 54, l: 66 };
   const W = width - P.l - P.r;
   const H = height - P.t - P.b;
 
   const sx = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
   const sy = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
 
-  const yTicks = 6, xTicks = 8;
+  const yTicks = 6, xTicks = 10;
+
+  const plPath = hasSeries
+    ? pnlXs.map((x, i) => `${i ? "L" : "M"}${sx(x)},${sy(pnlYs[i])}`).join(" ")
+    : "";
+
+  const bands = (() => {
+    if (!hasSeries) return [];
+    const xs = [minX, ...breakevens.filter((v) => v > minX && v < maxX), maxX];
+    const out = [];
+    for (let i = 0; i < xs.length - 1; i++) {
+      const a = xs[i], b = xs[i + 1];
+      const mid = (a + b) / 2;
+      let j = Math.floor(((mid - minX) / (maxX - minX)) * (pnlXs.length - 1));
+      j = Math.max(0, Math.min(j, pnlXs.length - 1));
+      out.push({ a, b, win: pnlYs[j] >= 0 });
+    }
+    return out;
+  })();
 
   const bellPts =
     bellXs.length && bellYs.length
-      ? bellXs.map((vx, i) => `${sx(vx)},${sy(-0.08 + bellYs[i] * 0.06)}`)
+      ? bellXs.map((vx, i) => `${sx(vx)},${sy(minY + bellYs[i] * (maxY - minY) * 0.2)}`)
       : [];
 
   return (
@@ -115,22 +94,37 @@ function ChartCanvas({
       <svg width={width} height={height} role="img" aria-label="Strategy chart">
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
-        {Array.from({ length: yTicks + 1 }).map((_, i) => {
-          const yy = P.t + (i / yTicks) * H;
-          const val = maxY - (i / yTicks) * (maxY - minY);
+        {/* profit/loss shading */}
+        {bands.map((b, idx) => (
+          <rect
+            key={idx}
+            x={sx(b.a)}
+            y={P.t}
+            width={sx(b.b) - sx(b.a)}
+            height={H}
+            fill={b.win ? "#16a34a" : "#ef4444"}
+            opacity="0.08"
+          />
+        ))}
+
+        {/* grid Y */}
+        {Array.from({ length: 7 }).map((_, i) => {
+          const yy = P.t + (i / 6) * H;
+          const val = maxY - (i / 6) * (maxY - minY);
           return (
             <g key={`gy${i}`}>
               <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
               <text x={P.l - 8} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.6)">
-                {val >= 0 ? `$ ${val.toFixed(2)}` : `-$ ${Math.abs(val).toFixed(2)}`}
+                {val.toFixed(2)}
               </text>
             </g>
           );
         })}
 
-        {Array.from({ length: xTicks + 1 }).map((_, i) => {
-          const xx = P.l + (i / xTicks) * W;
-          const val = minX + (i / xTicks) * (maxX - minX);
+        {/* grid X */}
+        {Array.from({ length: 11 }).map((_, i) => {
+          const xx = P.l + (i / 10) * W;
+          const val = minX + (i / 10) * (maxX - minX);
           return (
             <g key={`gx${i}`}>
               <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
@@ -141,22 +135,37 @@ function ChartCanvas({
           );
         })}
 
-        {Number.isFinite(s) && s >= minX && s <= maxX && (
-          <line x1={sx(s)} y1={P.t} x2={sx(s)} y2={height - P.b} stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
+        {/* reference vertical at strike center */}
+        {Number.isFinite(strikeCenter) && strikeCenter >= minX && strikeCenter <= maxX && (
+          <line
+            x1={sx(strikeCenter)}
+            y1={P.t}
+            x2={sx(strikeCenter)}
+            y2={height - P.b}
+            stroke="rgba(255,255,255,.35)"
+            strokeDasharray="4 4"
+          />
         )}
 
+        {/* legends */}
         <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
           <circle r="4" fill="#60a5fa" />
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
-          <circle cx="100" r="4" fill="#f472b6" />
-          <text x="108" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
-          <circle cx="230" r="4" fill="#f59e0b" />
-          <text x="238" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
+          <circle cx="112" r="4" fill="#f472b6" />
+          <text x="120" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
+          <circle cx="252" r="4" fill="#f59e0b" />
+          <text x="260" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
         </g>
 
-        <polyline fill="none" stroke="#60a5fa" strokeWidth="2" points={`${P.l},${sy(-0.015)} ${width - P.r},${sy(-0.015)}`} />
-        <polyline fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" points={`${P.l},${sy(-0.015)} ${width - P.r},${sy(-0.015)}`} />
+        {/* payoff lines */}
+        {hasSeries && (
+          <>
+            <path d={plPath} fill="none" stroke="#60a5fa" strokeWidth="2" />
+            <path d={plPath} fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" />
+          </>
+        )}
 
+        {/* Greek / bell curve */}
         {bellPts.length > 1 && (
           <polyline fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" points={bellPts.join(" ")} />
         )}
@@ -165,9 +174,7 @@ function ChartCanvas({
   );
 }
 
-/* =========================
-   Modal
-   ========================= */
+/* ---------- Modal ---------- */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const { spot, currency, sigma: sigmaEnv, T: TEnv, riskFree } = env || {};
 
@@ -187,8 +194,10 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   });
 
   const [greek, setGreek] = useState("Vega");
-  const [contractSize, setContractSize] = useState(100);
+  const [contractSize, setContractSize] = useState(100); // step 1
+  const [commission, setCommission] = useState(0);       // step 5 (new)
 
+  // ESC and lock background
   const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
@@ -209,8 +218,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   };
 
-  // ===== Monte‑Carlo distribution & realistic band =====
-  const { xs, ys, band, progress, run } = useMonteCarlo();
+  /* ===== Monte‑Carlo ===== */
+  const { xs: bellXs, ys: bellYs, band, progress, run } = useMonteCarlo();
   const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
   const loFallback = strikes.length ? Math.min(...strikes) : (spot || 0) * 0.6;
   const hiFallback = strikes.length ? Math.max(...strikes) : (spot || 0) * 1.4;
@@ -229,30 +238,41 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   }, [spot, sigmaEnv, TEnv, riskFree, loFallback, hiFallback, run]);
 
-  // ===== Max Profit / Max Loss (realistic over MC 1%..99% band) =====
-  const { maxProfit, maxLoss } = useMemo(() => {
-    const domainLo = Number.isFinite(band.q01) ? band.q01 : loFallback;
-    const domainHi = Number.isFinite(band.q99) ? band.q99 : hiFallback;
-    const pts = uniqueSorted([domainLo, ...strikes, domainHi]);
-    let mx = -Infinity, mn = Infinity;
-    const credit = netCredit(rows, contractSize);
+  /* ===== Payoff series with new offset (credit − commissions) ===== */
+  const domainLo = Number.isFinite(band.q01) ? band.q01 : loFallback;
+  const domainHi = Number.isFinite(band.q99) ? band.q99 : hiFallback;
 
-    for (const ST of pts) {
-      const p = payoffAt(ST, rows, contractSize) + credit;
-      if (p > mx) mx = p;
-      if (p < mn) mn = p;
-    }
-    // guard if nothing valid
-    if (!Number.isFinite(mx)) mx = 0;
-    if (!Number.isFinite(mn)) mn = 0;
-    return { maxProfit: mx, maxLoss: mn };
-  }, [rows, strikes, band, contractSize, loFallback, hiFallback]);
+  const credit = useMemo(() => netCredit(rows, contractSize), [rows, contractSize]);
+  const contracts = useMemo(() => contractsCount(rows), [rows]);
+  const commissionTotal = useMemo(() => (Number(commission) || 0) * contracts, [commission, contracts]);
 
-  // unified spacing
+  const payoffSeries = useMemo(
+    () => buildPayoffSeries({
+      lo: domainLo,
+      hi: domainHi,
+      rows,
+      contractSize,
+      n: 400,
+      offset: credit - commissionTotal,
+    }),
+    [domainLo, domainHi, rows, contractSize, credit, commissionTotal]
+  );
+
+  const breakevens = useMemo(
+    () => findBreakEvens(payoffSeries.xs, payoffSeries.ys),
+    [payoffSeries]
+  );
+
+  const strikeCenter = useMemo(() => {
+    if (!strikes.length) return Number(spot) || null;
+    const srt = [...strikes].sort((a, b) => a - b);
+    return srt[Math.floor(srt.length / 2)];
+  }, [strikes, spot]);
+
+  const maxProfit = useMemo(() => Math.max(...payoffSeries.ys, 0), [payoffSeries.ys]);
+  const maxLoss   = useMemo(() => Math.min(...payoffSeries.ys, 0), [payoffSeries.ys]);
+
   const GAP = 14;
-
-  // net credit for display
-  const netCred = useMemo(() => netCredit(rows, contractSize), [rows, contractSize]);
 
   return (
     <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
@@ -282,7 +302,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </div>
           <div className="mh-actions">
             <button className="button ghost" type="button" onClick={() => {}}>Save</button>
-            <button className="button" type="button" onClick={() => onApply?.({}, netCred)}>Apply</button>
+            <button className="button" type="button" onClick={() => onApply?.({}, credit - commissionTotal)}>Apply</button>
             <button className="button ghost" type="button" onClick={onClose}>Close</button>
           </div>
         </div>
@@ -299,6 +319,19 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
               value={contractSize}
               onChange={(e) => setContractSize(Math.max(1, Number(e.target.value) || 1))}
               style={{ width: 120 }}
+            />
+          </label>
+          <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            Commission (per contract)
+            <input
+              className="field"
+              type="number"
+              min={0}
+              step="0.01"
+              value={commission}
+              onChange={(e) => setCommission(Math.max(0, Number(e.target.value) || 0))}
+              style={{ width: 160 }}
+              placeholder="0.00"
             />
           </label>
           <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -321,7 +354,17 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 
         {/* Chart */}
         <div style={{ marginBottom: 6 }}>
-          <ChartCanvas spot={spot} rows={rows} bellXs={xs} bellYs={ys} greekLabel={greek === "Not selected" ? "Distribution" : greek} height={420} />
+          <ChartCanvas
+            spot={spot}
+            pnlXs={payoffSeries.xs}
+            pnlYs={payoffSeries.ys}
+            breakevens={breakevens}
+            strikeCenter={strikeCenter}
+            bellXs={bellXs}
+            bellYs={bellYs}
+            greekLabel={greek === "Not selected" ? "Distribution" : greek}
+            height={440}
+          />
         </div>
 
         {/* Progress */}
@@ -335,7 +378,16 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           <MetricBox label="Max Profit" value={fmtCur(maxProfit, currency || "USD")} />
           <MetricBox label="Max Loss" value={fmtCur(maxLoss,   currency || "USD")} />
           <MetricBox label="Win Rate" value="—" />
-          <MetricBox label="Breakeven" value="—" />
+          <MetricBox
+            label="Breakeven"
+            value={
+              breakevens.length === 2
+                ? `${fmtCur(breakevens[0], currency || "USD")} | ${fmtCur(breakevens[1], currency || "USD")}`
+                : breakevens.length === 1
+                ? fmtCur(breakevens[0], currency || "USD")
+                : "—"
+            }
+          />
         </div>
 
         {/* Architecture */}
@@ -345,12 +397,15 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             <Spec title="Composition">
               {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
             </Spec>
-            <Spec title="Breakeven(s)">—</Spec>
+            <Spec title="Breakeven(s)">
+              {breakevens.length === 0 ? "—" : breakevens.map((v) => fmtCur(v, currency || "USD")).join(" | ")}
+            </Spec>
             <Spec title="Max Profit">{fmtCur(maxProfit, currency || "USD")}</Spec>
             <Spec title="Max Loss">{fmtCur(maxLoss, currency || "USD")}</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
             <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
-            <Spec title="Net Credit">{fmtCur(netCred, currency || "USD")}</Spec>
+            <Spec title="Net Credit (after commission)">{fmtCur(credit - commissionTotal, currency || "USD")}</Spec>
+            <Spec title="Commission">{fmtCur(commissionTotal, currency || "USD")} ( {contracts} contracts )</Spec>
           </div>
         </div>
 
@@ -374,19 +429,13 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
               />
             ))}
           </div>
-
-          <div className="row-right small" style={{ marginTop: 10 }}>
-            <span className="muted">Net Credit:</span>&nbsp;<strong>{fmtCur(netCred, currency || "USD")}</strong>
-          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/* =========================
-   Subcomponents
-   ========================= */
+/* ---------- small UI bits ---------- */
 function MetricBox({ label, value }) {
   return (
     <div className="card dense" style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
@@ -395,7 +444,6 @@ function MetricBox({ label, value }) {
     </div>
   );
 }
-
 function Spec({ title, children }) {
   return (
     <div className="card dense" style={{ padding: 12 }}>
@@ -404,7 +452,6 @@ function Spec({ title, children }) {
     </div>
   );
 }
-
 function RowEditor({ row, onStrike, onVol, onPremium, currency }) {
   return (
     <>
