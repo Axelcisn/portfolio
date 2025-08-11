@@ -6,7 +6,13 @@ import { gridPnl, uniqueStrikes } from "./payoffLite";
 import { computeBreakevens, formatBE } from "./math/breakevens";
 
 /* ------------------------- helpers ------------------------- */
-const OPTION_TYPES = new Set(["lc", "sc", "lp", "sp"]);
+const TYPE_TO_POSITION = {
+  lc: "Long Call",
+  sc: "Short Call",
+  lp: "Long Put",
+  sp: "Short Put",
+};
+const OPTION_NAMES = new Set(Object.values(TYPE_TO_POSITION));
 
 const fmtCur = (v, ccy = "USD", fd = 2) => {
   if (!Number.isFinite(Number(v))) return "—";
@@ -56,15 +62,38 @@ const Pill = ({ label, value }) => (
   </div>
 );
 
+/** Normalize builder rows -> payoff rows */
+function normalizeRows(rows) {
+  const out = [];
+  for (const r of rows || []) {
+    // Accept both shapes:
+    //  - builder: { type, qty, K, premium }
+    //  - legacy : { position, volume, strike, premium }
+    const position =
+      r.position && OPTION_NAMES.has(r.position)
+        ? r.position
+        : TYPE_TO_POSITION[r.type];
+
+    if (!position) continue;
+
+    const strike = Number(r.strike ?? r.K);
+    const volume = Number(r.volume ?? r.qty ?? 0);
+    const premium = Number.isFinite(Number(r.premium)) ? Number(r.premium) : null;
+
+    out.push({ position, strike, volume, premium });
+  }
+  return out;
+}
+
 /* ------------------------- main ------------------------- */
 export default function Chart({
   frameless = false,
   spot = null,
   currency = "USD",
-  rows = [],
+  rows = [],            // can be builder rows or legacy rows
   riskFree = 0,
   sigma = 0.2,
-  T = 30 / 365,             // years
+  T = 30 / 365,         // years
   greek = "vega",
   onGreekChange,
   contractSize = 1,
@@ -73,13 +102,18 @@ export default function Chart({
   const width = useSize(wrapRef);
   const height = 420;
 
+  // Normalize once and reuse everywhere
+  const payoffRows = useMemo(() => normalizeRows(rows), [rows]);
+
   // ------- domain from strikes/spot -------
-  const strikes = rows.map((r) => Number(r.K ?? r.strike)).filter(Number.isFinite);
+  const inputStrikes = rows
+    .map((r) => Number(r.K ?? r.strike))
+    .filter((v) => Number.isFinite(v));
   const s = Number(spot);
   let minX, maxX;
-  if (strikes.length) {
-    const lo = Math.min(...strikes);
-    const hi = Math.max(...strikes);
+  if (inputStrikes.length) {
+    const lo = Math.min(...inputStrikes);
+    const hi = Math.max(...inputStrikes);
     const span = Math.max(1, hi - lo);
     minX = lo - span * 0.25;
     maxX = hi + span * 0.25;
@@ -87,16 +121,17 @@ export default function Chart({
     minX = s * 0.8;
     maxX = s * 1.2;
   } else {
-    minX = 100; maxX = 200;
+    minX = 100;
+    maxX = 200;
   }
 
   // ------- payoff grid (expiration) -------
   const { X, Y } = useMemo(
-    () => gridPnl(rows, minX, maxX, 260, contractSize),
+    () => gridPnl(payoffRows, minX, maxX, 260, contractSize),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(rows), minX, maxX, contractSize]
+    [JSON.stringify(payoffRows), minX, maxX, contractSize]
   );
-  const Ycur = Y; // placeholder until live pricing is connected
+  const Ycur = Y; // placeholder until live pricing arrives
 
   // ------- y-range -------
   const yMin = Math.min(0, ...Y, ...Ycur);
@@ -117,8 +152,9 @@ export default function Chart({
   // ------- breakevens on expiration curve -------
   const be = useMemo(() => computeBreakevens(X, Y), [X, Y]);
   const beText = useMemo(() => {
-    const fmt = (v) => Number.isFinite(v) ? Math.round(v) : "—";
-    const yLeft = Y?.[0], yRight = Y?.[Y.length - 1];
+    const fmt = (v) => (Number.isFinite(v) ? Math.round(v) : "—");
+    const yLeft = Y?.[0],
+      yRight = Y?.[Y.length - 1];
     return formatBE(be.lo, be.hi, yLeft, yRight, fmt);
   }, [be, Y]);
 
@@ -132,16 +168,19 @@ export default function Chart({
   }, [Y]);
 
   const lotSize = useMemo(
-    () => rows.filter((r) => OPTION_TYPES.has(r.type || r.position) && Number(r.qty ?? r.volume ?? 0) !== 0).length || 0,
-    [rows]
+    () =>
+      payoffRows.filter(
+        (r) => OPTION_NAMES.has(r.position) && Number(r.volume || 0) !== 0
+      ).length || 0,
+    [payoffRows]
   );
 
-  // ------- greek choices (placeholder for now) -------
+  // ------- greek choices (placeholder curve) -------
   const greekChoices = ["vega", "delta", "gamma", "theta", "rho"];
   const greekCurve = useMemo(() => Array(X.length).fill(0), [X.length]); // placeholder zero line
 
   // ------- ui -------
-  const kMarks = uniqueStrikes(rows);
+  const kMarks = uniqueStrikes(payoffRows);
 
   return (
     <div className={frameless ? "" : "card"} ref={wrapRef}>
@@ -158,13 +197,19 @@ export default function Chart({
           <span>Vega</span>
         </div>
         <div className="l-right">
-          <label className="small muted" style={{ marginRight: 8 }}>Greek</label>
+          <label className="small muted" style={{ marginRight: 8 }}>
+            Greek
+          </label>
           <select
             className="picker"
             value={greek}
             onChange={(e) => onGreekChange?.(e.target.value)}
           >
-            {greekChoices.map((g) => <option key={g} value={g}>{g[0].toUpperCase()+g.slice(1)}</option>)}
+            {greekChoices.map((g) => (
+              <option key={g} value={g}>
+                {g[0].toUpperCase() + g.slice(1)}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -174,8 +219,20 @@ export default function Chart({
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
         {/* Win/Loss shading relative to zero */}
-        <rect x={P.l} y={P.t} width={W} height={y(0) - P.t} fill="rgba(16,185,129,.07)" />
-        <rect x={P.l} y={y(0)} width={W} height={height - P.b - y(0)} fill="rgba(244,63,94,.08)" />
+        <rect
+          x={P.l}
+          y={P.t}
+          width={W}
+          height={y(0) - P.t}
+          fill="rgba(16,185,129,.07)"
+        />
+        <rect
+          x={P.l}
+          y={y(0)}
+          width={W}
+          height={height - P.b - y(0)}
+          fill="rgba(244,63,94,.08)"
+        />
 
         {/* Y grid */}
         {Array.from({ length: 6 + 1 }).map((_, i) => {
@@ -183,8 +240,20 @@ export default function Chart({
           const val = maxY - (i / 6) * (maxY - minY);
           return (
             <g key={`gy${i}`}>
-              <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
-              <text x={P.l - 12} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.65)">
+              <line
+                x1={P.l}
+                y1={yy}
+                x2={width - P.r}
+                y2={yy}
+                stroke="rgba(255,255,255,.08)"
+              />
+              <text
+                x={P.l - 12}
+                y={yy + 4}
+                textAnchor="end"
+                fontSize="10"
+                fill="rgba(255,255,255,.65)"
+              >
                 {fmtCur(val, currency, 0)}
               </text>
             </g>
@@ -197,8 +266,20 @@ export default function Chart({
           const val = minX + (i / 8) * (maxX - minX);
           return (
             <g key={`gx${i}`}>
-              <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
-              <text x={xx} y={height - 12} textAnchor="middle" fontSize="10" fill="rgba(255,255,255,.65)">
+              <line
+                x1={xx}
+                y1={P.t}
+                x2={xx}
+                y2={height - P.b}
+                stroke="rgba(255,255,255,.05)"
+              />
+              <text
+                x={xx}
+                y={height - 12}
+                textAnchor="middle"
+                fontSize="10"
+                fill="rgba(255,255,255,.65)"
+              >
                 {Math.round(val)}
               </text>
             </g>
@@ -207,22 +288,47 @@ export default function Chart({
 
         {/* Underlying price marker */}
         {Number.isFinite(s) && s >= minX && s <= maxX && (
-          <line x1={x(s)} y1={P.t} x2={x(s)} y2={height - P.b} stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
+          <line
+            x1={x(s)}
+            y1={P.t}
+            x2={x(s)}
+            y2={height - P.b}
+            stroke="rgba(255,255,255,.35)"
+            strokeDasharray="4 4"
+          />
         )}
 
         {/* Strike markers */}
         {kMarks.map((k, i) => (
           <g key={`k${i}`}>
-            <line x1={x(k)} y1={P.t} x2={x(k)} y2={height - P.b} stroke="rgba(255,255,255,.12)" />
+            <line
+              x1={x(k)}
+              y1={P.t}
+              x2={x(k)}
+              y2={height - P.b}
+              stroke="rgba(255,255,255,.12)"
+            />
             <circle cx={x(k)} cy={y(0)} r="2.5" fill="rgba(255,255,255,.55)" />
           </g>
         ))}
 
         {/* Curves */}
         <path d={toPath(X, Ycur)} fill="none" stroke="#60a5fa" strokeWidth="2" />
-        <path d={toPath(X, Y)} fill="none" stroke="#f5f5f5" strokeWidth="2" strokeDasharray="5 4" />
+        <path
+          d={toPath(X, Y)}
+          fill="none"
+          stroke="#f5f5f5"
+          strokeWidth="2"
+          strokeDasharray="5 4"
+        />
         {/* Greek (placeholder) */}
-        <path d={toPath(X, greekCurve)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />
+        <path
+          d={toPath(X, Array(X.length).fill(0))}
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth="2"
+          strokeDasharray="6 5"
+        />
       </svg>
 
       {/* Metrics: horizontally scrollable */}
