@@ -7,7 +7,7 @@ import { computeBreakevens, formatBE } from "./math/breakevens";
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
 import { mcPriceStats } from "./math/mc";
 
-/* ---------------- helpers (same as before) ---------------- */
+/* ---------------- helpers ---------------- */
 const TYPE_TO_POSITION = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put" };
 const POSITION_TO_KEY = { "Long Call": "lc", "Short Call": "sc", "Long Put": "lp", "Short Put": "sp" };
 const LONG_SIGN = { lc: +1, lp: +1, sc: -1, sp: -1 };
@@ -15,7 +15,11 @@ const LONG_SIGN = { lc: +1, lp: +1, sc: -1, sp: -1 };
 const fmtCur = (v, ccy = "USD", fd = 2) => {
   if (!Number.isFinite(Number(v))) return "—";
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: ccy, maximumFractionDigits: fd }).format(Number(v));
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: ccy,
+      maximumFractionDigits: fd,
+    }).format(Number(v));
   } catch {
     const sym = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
     return sym + Number(v).toFixed(fd);
@@ -27,7 +31,9 @@ function useSize(ref, fallbackW = 960) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver((es) => { for (const e of es) setW(Math.max(320, e.contentRect.width)); });
+    const ro = new ResizeObserver((es) => {
+      for (const e of es) setW(Math.max(320, e.contentRect.width));
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -39,49 +45,93 @@ const Pill = ({ label, value }) => (
     <div className="p-label">{label}</div>
     <div className="p-value">{value}</div>
     <style jsx>{`
-      .pill{min-width:160px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg);display:grid;gap:4px;}
-      .p-label{font-size:12px;opacity:.7;}
-      .p-value{font-weight:700;}
+      .pill {
+        min-width: 160px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--bg);
+        display: grid;
+        gap: 4px;
+      }
+      .p-label { font-size: 12px; opacity: .7; }
+      .p-value { font-weight: 700; }
     `}</style>
   </div>
 );
 
+/** Normalize builder rows -> payoff rows */
 function normalizeRows(rows) {
   const out = [];
   for (const r of rows || []) {
     const key = r.type && LONG_SIGN.hasOwnProperty(r.type) ? r.type : POSITION_TO_KEY[r.position];
     if (!key) continue;
+
     const strike = Number(r.strike ?? r.K);
     const volume = Number(r.volume ?? r.qty ?? 0);
     const premium = Number.isFinite(Number(r.premium)) ? Number(r.premium) : 0;
+
     out.push({ key, position: TYPE_TO_POSITION[key], strike, volume, premium });
   }
   return out;
 }
 
+/** Build fill polygons for positive/negative areas relative to y=0 */
 function buildAreas(X, Y, x, y, eps = 1e-9) {
-  const segs = []; let cur = []; let curSign = 0;
+  const segs = [];
+  let cur = [];
+  let curSign = 0;
+
   const sign = (v) => (v > eps ? 1 : v < -eps ? -1 : 0);
-  const lerpZeroX = (xa, ya, xb, yb) => { if (ya === yb) return xb; const t = (0 - ya) / (yb - ya); return xa + t * (xb - xa); };
+  const lerpZeroX = (xa, ya, xb, yb) => {
+    if (ya === yb) return xb;
+    const t = (0 - ya) / (yb - ya);
+    return xa + t * (xb - xa);
+  };
+
   for (let i = 0; i < X.length; i++) {
-    const xi = X[i], yi = Y[i]; const s = sign(yi);
+    const xi = X[i], yi = Y[i];
+    const s = sign(yi);
+
     if (cur.length === 0) { cur.push([xi, yi]); curSign = s; continue; }
     const xPrev = cur[cur.length - 1][0], yPrev = cur[cur.length - 1][1];
+
     if (s !== curSign && s !== 0 && curSign !== 0) {
-      const xz = lerpZeroX(xPrev, yPrev, xi, yi); cur.push([xz, 0]); segs.push({ sign: curSign, pts: cur.slice() });
-      cur = [[xz, 0], [xi, yi]]; curSign = s; continue;
+      const xz = lerpZeroX(xPrev, yPrev, xi, yi);
+      cur.push([xz, 0]);
+      segs.push({ sign: curSign, pts: cur.slice() });
+      cur = [[xz, 0], [xi, yi]];
+      curSign = s;
+      continue;
     }
-    if (s === 0 && curSign !== 0) { const xz = lerpZeroX(xPrev, yPrev, xi, yi); cur.push([xz, 0]); segs.push({ sign: curSign, pts: cur.slice() }); cur = [[xz, 0]]; curSign = 0; continue; }
-    if (curSign === 0 && s !== 0) { const xz = lerpZeroX(xPrev, yPrev, xi, yi); cur.push([xz, 0], [xi, yi]); curSign = s; continue; }
+    if (s === 0 && curSign !== 0) {
+      const xz = lerpZeroX(xPrev, yPrev, xi, yi);
+      cur.push([xz, 0]);
+      segs.push({ sign: curSign, pts: cur.slice() });
+      cur = [[xz, 0]];
+      curSign = 0;
+      continue;
+    }
+    if (curSign === 0 && s !== 0) {
+      const xz = lerpZeroX(xPrev, yPrev, xi, yi);
+      cur.push([xz, 0], [xi, yi]);
+      curSign = s;
+      continue;
+    }
     cur.push([xi, yi]);
   }
   if (cur.length > 1 && curSign !== 0) segs.push({ sign: curSign, pts: cur });
+
   const toPath = (pts) => {
     if (!pts.length) return "";
-    const first = pts[0]; let d = `M${x(first[0])},${y(0)} L`;
+    const first = pts[0];
+    let d = `M${x(first[0])},${y(0)} L`;
     d += pts.map(([vx, vy]) => `${x(vx)},${y(vy)}`).join(" ");
-    const last = pts[pts.length - 1]; d += ` L${x(last[0])},${y(0)} Z`; return d;
+    const last = pts[pts.length - 1];
+    d += ` L${x(last[0])},${y(0)} Z`;
+    return d;
   };
+
   const pos = segs.filter((s) => s.sign === 1).map((s) => toPath(s.pts));
   const neg = segs.filter((s) => s.sign === -1).map((s) => toPath(s.pts));
   return { pos, neg };
@@ -110,9 +160,18 @@ export default function Chart({
   const strikesIn = rows.map((r) => Number(r.K ?? r.strike)).filter(Number.isFinite);
   const s = Number(spot);
   let minX, maxX;
-  if (strikesIn.length) { const lo = Math.min(...strikesIn); const hi = Math.max(...strikesIn); const span = Math.max(1, hi - lo); minX = lo - span * 0.25; maxX = hi + span * 0.25; }
-  else if (Number.isFinite(s)) { minX = s * 0.8; maxX = s * 1.2; }
-  else { minX = 100; maxX = 200; }
+  if (strikesIn.length) {
+    const lo = Math.min(...strikesIn);
+    const hi = Math.max(...strikesIn);
+    const span = Math.max(1, hi - lo);
+    minX = lo - span * 0.25;
+    maxX = hi + span * 0.25;
+  } else if (Number.isFinite(s)) {
+    minX = s * 0.8;
+    maxX = s * 1.2;
+  } else {
+    minX = 100; maxX = 200;
+  }
 
   // Expiration P&L grid
   const { X, Y: Yexp } = useMemo(
@@ -141,18 +200,24 @@ export default function Chart({
       for (const r of payoffRows) {
         const sgn = LONG_SIGN[r.key];
         const g = greeksByKey(r.key, S, r.strike, riskFree, sigma, T);
-        const v = greek === "delta" ? g.delta : greek === "gamma" ? g.gamma : greek === "theta" ? g.theta : greek === "rho" ? g.rho : g.vega;
+        const v =
+          greek === "delta" ? g.delta :
+          greek === "gamma" ? g.gamma :
+          greek === "theta" ? g.theta :
+          greek === "rho"   ? g.rho   :
+          g.vega;
         gsum += sgn * v * (r.volume || 0) * contractSize;
       }
       return gsum;
     });
   }, [X, payoffRows, riskFree, sigma, T, greek, contractSize]);
 
-  // ---- 95% CI & mean via Monte-Carlo (1,000,000 paths) ----
+  // Monte-Carlo (1,000,000 paths) for 95% CI & mean
   const mc = useMemo(
     () => mcPriceStats(spot, riskFree, sigma, T, 1_000_000, 0xA53C9E17),
     [spot, riskFree, sigma, T]
   );
+
   const ciValid = Number.isFinite(mc?.lo) && Number.isFinite(mc?.hi) && mc.hi > mc.lo;
   const meanIn = Number.isFinite(mc?.mean) && mc.mean >= minX && mc.mean <= maxX;
   const ciLo = ciValid ? Math.max(minX, mc.lo) : NaN;
@@ -170,8 +235,10 @@ export default function Chart({
   const W = width - P.l - P.r, H = height - P.t - P.b;
   const x = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
   const y = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
-  const toPath = (arrX, arrY) => arrX.map((vx, i) => `${i ? "L" : "M"}${x(vx)},${y(arrY[i])}`).join(" ");
+  const toPath = (arrX, arrY) =>
+    arrX.map((vx, i) => `${i ? "L" : "M"}${x(vx)},${y(arrY[i])}`).join(" ");
 
+  // Profit/Loss areas (from expiration curve)
   const areas = useMemo(() => buildAreas(X, Yexp, x, y), [X, Yexp]);
 
   // Breakevens from expiration curve
@@ -189,7 +256,10 @@ export default function Chart({
     const wins = Yexp.filter((v) => v > 0).length;
     return (wins / n) * 100;
   }, [Yexp]);
-  const lotSize = useMemo(() => payoffRows.filter((r) => Number(r.volume || 0) !== 0).length || 0, [payoffRows]);
+  const lotSize = useMemo(
+    () => payoffRows.filter((r) => Number(r.volume || 0) !== 0).length || 0,
+    [payoffRows]
+  );
 
   const kMarks = uniqueStrikes(payoffRows);
 
@@ -208,7 +278,9 @@ export default function Chart({
         <div className="l-right">
           <label className="small muted" style={{ marginRight: 8 }}>Greek</label>
           <select className="picker" value={greek} onChange={(e)=>onGreekChange?.(e.target.value)}>
-            {["vega","delta","gamma","theta","rho"].map(g=>(<option key={g} value={g}>{g[0].toUpperCase()+g.slice(1)}</option>))}
+            {["vega","delta","gamma","theta","rho"].map(g=>(
+              <option key={g} value={g}>{g[0].toUpperCase()+g.slice(1)}</option>
+            ))}
           </select>
         </div>
       </div>
@@ -218,25 +290,29 @@ export default function Chart({
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
         {/* Grid Y */}
-        {Array.from({ length: 7 }).map((_, i) => {
+        {Array.from({ length: 6 + 1 }).map((_, i) => {
           const yy = P.t + (i / 6) * H;
           const val = maxY - (i / 6) * (maxY - minY);
           return (
             <g key={`gy${i}`}>
               <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
-              <text x={P.l - 12} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.65)">{fmtCur(val, currency, 0)}</text>
+              <text x={P.l - 12} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.65)">
+                {fmtCur(val, currency, 0)}
+              </text>
             </g>
           );
         })}
 
         {/* Grid X */}
-        {Array.from({ length: 9 }).map((_, i) => {
+        {Array.from({ length: 8 + 1 }).map((_, i) => {
           const xx = P.l + (i / 8) * W;
           const val = minX + (i / 8) * (maxX - minX);
           return (
             <g key={`gx${i}`}>
               <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
-              <text x={xx} y={height - 12} textAnchor="middle" fontSize="10" fill="rgba(255,255,255,.65)">{Math.round(val)}</text>
+              <text x={xx} y={height - 12} textAnchor="middle" fontSize="10" fill="rgba(255,255,255,.65)">
+                {Math.round(val)}
+              </text>
             </g>
           );
         })}
@@ -255,16 +331,16 @@ export default function Chart({
           </>
         )}
 
-        {/* Profit / Loss shading from expiration curve */}
-        {useMemo(() => buildAreas(X, Yexp, x, y), [X, Yexp]).pos.map((d, i) => (
+        {/* Profit / Loss shading (expiration curve) */}
+        {areas.pos.map((d, i) => (
           <path key={`pos${i}`} d={d} fill="rgba(16,185,129,.10)" stroke="none" />
         ))}
-        {useMemo(() => buildAreas(X, Yexp, x, y), [X, Yexp]).neg.map((d, i) => (
+        {areas.neg.map((d, i) => (
           <path key={`neg${i}`} d={d} fill="rgba(244,63,94,.12)" stroke="none" />
         ))}
 
         {/* Strike markers */}
-        {uniqueStrikes(payoffRows).map((k, i) => (
+        {kMarks.map((k, i) => (
           <g key={`k${i}`}>
             <line x1={x(k)} y1={P.t} x2={x(k)} y2={height - P.b} stroke="rgba(255,255,255,.12)" />
             <circle cx={x(k)} cy={y(0)} r="2.5" fill="rgba(255,255,255,.55)" />
@@ -272,7 +348,9 @@ export default function Chart({
         ))}
 
         {/* Mean price */}
-        {meanIn && <line x1={x(mc.mean)} y1={P.t} x2={x(mc.mean)} y2={height - P.b} stroke="#14b8a6" strokeDasharray="5 5" />}
+        {meanIn && (
+          <line x1={x(mc.mean)} y1={P.t} x2={x(mc.mean)} y2={height - P.b} stroke="#14b8a6" strokeDasharray="5 5" />
+        )}
 
         {/* Curves */}
         <path d={toPath(X, Ynow)} fill="none" stroke="#60a5fa" strokeWidth="2" />
@@ -280,19 +358,15 @@ export default function Chart({
         <path d={toPath(X, greekCurve)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />
       </svg>
 
-      {/* Metrics ribbon (unchanged; CI numbers still placeholders by request) */}
+      {/* Metrics: horizontally scrollable */}
       <div className="metrics-scroll" role="region" aria-label="Strategy metrics">
         <Pill label="Underlying price" value={fmtCur(spot, currency)} />
         <Pill label="Max profit" value={fmtCur(maxProfit, currency, 0)} />
         <Pill label="Max loss" value={fmtCur(maxLoss, currency, 0)} />
         <Pill label="Win rate" value={`${winRate.toFixed(2)}%`} />
-        <Pill label="Breakeven (Low | High)" value={(() => {
-          const fmt = (v) => (Number.isFinite(v) ? Math.round(v) : "—");
-          const yLeft = Yexp?.[0], yRight = Yexp?.[Yexp.length - 1];
-          return formatBE(be.lo, be.hi, yLeft, yRight, fmt);
-        })()} />
+        <Pill label="Breakeven (Low | High)" value={beText} />
         <Pill label="Lot size" value={lotSize} />
-        {/* placeholders to be computed later */}
+        {/* placeholders */}
         <Pill label="CI (Low | High)" value="—" />
         <Pill label="Delta" value="—" />
         <Pill label="Gamma" value="—" />
@@ -309,12 +383,28 @@ export default function Chart({
       </div>
 
       <style jsx>{`
-        .legend{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 10px;gap:10px;}
-        .l-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-        .dot{width:10px;height:10px;border-radius:50%;display:inline-block;}
-        .sep{width:10px;}
-        .picker{height:28px;min-width:120px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);}
-        .metrics-scroll{margin-top:12px;display:flex;gap:10px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin;}
-        :global(.metrics-scroll::-webkit-scrollbar){height:8px;}
-        :global(.metrics-scroll::-webkit-scrollbar-thumb){background:var(-
-
+        .legend{
+          display:flex; align-items:center; justify-content:space-between;
+          padding: 6px 2px 10px; gap:10px;
+        }
+        .l-left{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; }
+        .sep{ width:10px; }
+        .picker{
+          height:28px; min-width:120px; padding:0 10px; border-radius:8px;
+          border:1px solid var(--border); background:var(--bg); color:var(--text);
+        }
+        .metrics-scroll{
+          margin-top:12px;
+          display:flex; gap:10px; overflow-x:auto; padding-bottom:2px;
+          scrollbar-width: thin;
+        }
+        :global(.metrics-scroll::-webkit-scrollbar){ height:8px; }
+        :global(.metrics-scroll::-webkit-scrollbar-thumb){
+          background: var(--border);
+          border-radius: 10px;
+        }
+      `}</style>
+    </div>
+  );
+}
