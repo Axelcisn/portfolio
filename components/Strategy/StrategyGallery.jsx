@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useMemo, useState, useCallback } from "react";
-import StrategyTile from "../StrategyTile";
+import StrategyTile from "./StrategyTile";
 import StrategyModal from "./StrategyModal";
-import DirectionBadge from "../DirectionBadge";
 
 // Pull strategy catalog + new instantiator from the canonical module
 import {
