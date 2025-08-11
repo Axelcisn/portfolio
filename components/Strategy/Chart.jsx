@@ -8,9 +8,17 @@ import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
 import { mcPriceStats } from "./math/mc";
 
 /* ---------------- helpers ---------------- */
-const TYPE_TO_POSITION = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put" };
-const POSITION_TO_KEY = { "Long Call": "lc", "Short Call": "sc", "Long Put": "lp", "Short Put": "sp" };
-const LONG_SIGN = { lc: +1, lp: +1, sc: -1, sp: -1 };
+const TYPE_TO_POSITION = {
+  lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put",
+  ls: "Long Stock", ss: "Short Stock",
+};
+const POSITION_TO_KEY = {
+  "Long Call": "lc", "Short Call": "sc", "Long Put": "lp", "Short Put": "sp",
+  "Long Stock": "ls", "Short Stock": "ss",
+};
+const LONG_SIGN = { lc: +1, lp: +1, sc: -1, sp: -1, ls: +1, ss: -1 };
+const IS_OPTION = (k) => k === "lc" || k === "sc" || k === "lp" || k === "sp";
+const IS_STOCK  = (k) => k === "ls" || k === "ss";
 
 const fmtCur = (v, ccy = "USD", fd = 2) => {
   if (!Number.isFinite(Number(v))) return "—";
@@ -60,11 +68,12 @@ const Pill = ({ label, value }) => (
   </div>
 );
 
-/** Normalize builder rows -> payoff rows */
+/** Normalize builder rows -> internal rows */
 function normalizeRows(rows) {
   const out = [];
   for (const r of rows || []) {
-    const key = r.type && LONG_SIGN.hasOwnProperty(r.type) ? r.type : POSITION_TO_KEY[r.position];
+    const explicitKey = r.type && LONG_SIGN.hasOwnProperty(r.type) ? r.type : null;
+    const key = explicitKey || POSITION_TO_KEY[r.position];
     if (!key) continue;
 
     const strike = Number(r.strike ?? r.K);
@@ -92,9 +101,8 @@ function buildAreas(X, Y, x, y, eps = 1e-9) {
   for (let i = 0; i < X.length; i++) {
     const xi = X[i], yi = Y[i];
     const s = sign(yi);
-
     if (cur.length === 0) { cur.push([xi, yi]); curSign = s; continue; }
-    const xPrev = cur[cur.length - 1][0], yPrev = cur[cur.length - 1][1];
+    const [xPrev, yPrev] = cur[cur.length - 1];
 
     if (s !== curSign && s !== 0 && curSign !== 0) {
       const xz = lerpZeroX(xPrev, yPrev, xi, yi);
@@ -154,10 +162,12 @@ export default function Chart({
   const width = useSize(wrapRef);
   const height = 420;
 
-  const payoffRows = useMemo(() => normalizeRows(rows), [rows]);
+  const legs = useMemo(() => normalizeRows(rows), [rows]);
+  const optLegs = useMemo(() => legs.filter((r) => IS_OPTION(r.key)), [legs]);
+  const stkLegs = useMemo(() => legs.filter((r) => IS_STOCK(r.key)), [legs]);
 
   // Domain from strikes / spot
-  const strikesIn = rows.map((r) => Number(r.K ?? r.strike)).filter(Number.isFinite);
+  const strikesIn = legs.map((r) => Number(r.strike)).filter(Number.isFinite);
   const s = Number(spot);
   let minX, maxX;
   if (strikesIn.length) {
@@ -173,33 +183,59 @@ export default function Chart({
     minX = 100; maxX = 200;
   }
 
-  // Expiration P&L grid
-  const { X, Y: Yexp } = useMemo(
-    () => gridPnl(payoffRows, minX, maxX, 260, contractSize),
+  // Expiration P&L grid (options via payoffLite)
+  const base = useMemo(
+    () => gridPnl(optLegs, minX, maxX, 260, contractSize),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(payoffRows), minX, maxX, contractSize]
+    [JSON.stringify(optLegs), minX, maxX, contractSize]
   );
+  const X = base.X;
 
-  // Current P&L (BS value)
+  // Add stock legs to expiration payoff
+  const Yexp = useMemo(() => {
+    const y = base.Y.slice();
+    if (stkLegs.length) {
+      for (let i = 0; i < X.length; i++) {
+        const Sx = X[i];
+        let add = 0;
+        for (const r of stkLegs) {
+          const sgn = LONG_SIGN[r.key];
+          const q = r.volume || 0;
+          add += (sgn * (Sx - (Number(r.strike) || 0))) * q * contractSize;
+        }
+        y[i] += add;
+      }
+    }
+    return y;
+  }, [base.Y, stkLegs, X, contractSize]);
+
+  // Current P&L (BS value for options + stock MTM)
   const Ynow = useMemo(() => {
-    return X.map((S) => {
+    return X.map((Sx) => {
       let sum = 0;
-      for (const r of payoffRows) {
+      // options
+      for (const r of optLegs) {
         const sgn = LONG_SIGN[r.key];
-        const val = bsValueByKey(r.key, S, r.strike, riskFree, sigma, T);
+        const val = bsValueByKey(r.key, Sx, r.strike, riskFree, sigma, T); // option PV today at spot=Sx
         sum += (sgn * (val - (r.premium || 0))) * (r.volume || 0) * contractSize;
+      }
+      // stock
+      for (const r of stkLegs) {
+        const sgn = LONG_SIGN[r.key];
+        sum += (sgn * (Sx - (Number(r.strike) || 0))) * (r.volume || 0) * contractSize;
       }
       return sum;
     });
-  }, [X, payoffRows, riskFree, sigma, T, contractSize]);
+  }, [X, optLegs, stkLegs, riskFree, sigma, T, contractSize]);
 
-  // Greek curve
+  // Greek curve (sum, signed; stock contributes delta ±1)
   const greekCurve = useMemo(() => {
-    return X.map((S) => {
+    return X.map((Sx) => {
       let gsum = 0;
-      for (const r of payoffRows) {
+      // options
+      for (const r of optLegs) {
         const sgn = LONG_SIGN[r.key];
-        const g = greeksByKey(r.key, S, r.strike, riskFree, sigma, T);
+        const g = greeksByKey(r.key, Sx, r.strike, riskFree, sigma, T);
         const v =
           greek === "delta" ? g.delta :
           greek === "gamma" ? g.gamma :
@@ -208,16 +244,21 @@ export default function Chart({
           g.vega;
         gsum += sgn * v * (r.volume || 0) * contractSize;
       }
+      // stock
+      if (greek === "delta" && stkLegs.length) {
+        let d = 0;
+        for (const r of stkLegs) d += LONG_SIGN[r.key] * (r.volume || 0) * contractSize; // ±1 * qty
+        gsum += d;
+      }
       return gsum;
     });
-  }, [X, payoffRows, riskFree, sigma, T, greek, contractSize]);
+  }, [X, optLegs, stkLegs, riskFree, sigma, T, greek, contractSize]);
 
-  // Monte-Carlo (1,000,000 paths) for 95% CI & mean
+  // Monte-Carlo (95% CI & mean)
   const mc = useMemo(
     () => mcPriceStats(spot, riskFree, sigma, T, 1_000_000, 0xA53C9E17),
     [spot, riskFree, sigma, T]
   );
-
   const ciValid = Number.isFinite(mc?.lo) && Number.isFinite(mc?.hi) && mc.hi > mc.lo;
   const meanIn = Number.isFinite(mc?.mean) && mc.mean >= minX && mc.mean <= maxX;
   const ciLo = ciValid ? Math.max(minX, mc.lo) : NaN;
@@ -238,10 +279,10 @@ export default function Chart({
   const toPath = (arrX, arrY) =>
     arrX.map((vx, i) => `${i ? "L" : "M"}${x(vx)},${y(arrY[i])}`).join(" ");
 
-  // Profit/Loss areas (from expiration curve)
+  // Profit/Loss shading from full expiration curve
   const areas = useMemo(() => buildAreas(X, Yexp, x, y), [X, Yexp]);
 
-  // Breakevens from expiration curve
+  // Breakevens from full expiration curve
   const be = useMemo(() => computeBreakevens(X, Yexp), [X, Yexp]);
   const beText = useMemo(() => {
     const fmt = (v) => (Number.isFinite(v) ? Math.round(v) : "—");
@@ -257,11 +298,11 @@ export default function Chart({
     return (wins / n) * 100;
   }, [Yexp]);
   const lotSize = useMemo(
-    () => payoffRows.filter((r) => Number(r.volume || 0) !== 0).length || 0,
-    [payoffRows]
+    () => legs.filter((r) => Number(r.volume || 0) !== 0).length || 0,
+    [legs]
   );
 
-  const kMarks = uniqueStrikes(payoffRows);
+  const kMarks = uniqueStrikes(legs);
 
   /* ---------------- render ---------------- */
   return (
@@ -331,7 +372,7 @@ export default function Chart({
           </>
         )}
 
-        {/* Profit / Loss shading (expiration curve) */}
+        {/* Profit / Loss shading (expiration curve, full) */}
         {areas.pos.map((d, i) => (
           <path key={`pos${i}`} d={d} fill="rgba(16,185,129,.10)" stroke="none" />
         ))}
@@ -366,7 +407,7 @@ export default function Chart({
         <Pill label="Win rate" value={`${winRate.toFixed(2)}%`} />
         <Pill label="Breakeven (Low | High)" value={beText} />
         <Pill label="Lot size" value={lotSize} />
-        {/* placeholders */}
+        {/* placeholders (to be computed later) */}
         <Pill label="CI (Low | High)" value="—" />
         <Pill label="Delta" value="—" />
         <Pill label="Gamma" value="—" />
