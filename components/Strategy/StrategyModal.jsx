@@ -9,8 +9,6 @@ import SummaryTable from "./SummaryTable";
 import materializeTemplate from "./defs/materializeTemplate";
 
 /* ---------- helpers ---------- */
-const KEY_TO_LABEL = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put", ls: "Long Stock", ss: "Short Stock" };
-
 function rowsToLegsObject(rows) {
   // Legacy shape expected upstream (options only)
   const out = {
@@ -27,7 +25,6 @@ function rowsToLegsObject(rows) {
     if (Number.isFinite(K) && Number.isFinite(qty)) {
       out[r.type] = { enabled: qty !== 0, K, qty, premium: prem };
     } else {
-      // still pass through qty even if K not set, so toggles can persist
       out[r.type] = { enabled: qty !== 0, K: Number.isFinite(K) ? K : null, qty, premium: prem };
     }
   }
@@ -60,7 +57,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     T = 30 / 365, // years from company card
   } = env || {};
 
-  // For placeholders where needed (e.g., new manual rows), keep a days value handy
+  // Default days derived from company card's T
   const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
 
   // Seed rows from the strategy template (legs, qty, expirations from company card's Time)
@@ -94,6 +91,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const save = () => {
     onApply?.(legsObj, totalPrem);
     onClose?.();
+  };
+
+  // Reset to template using **current** company card time
+  const resetToDefaults = () => {
+    const fresh = materializeTemplate(strategy?.id, { T, defaultDays });
+    setRows(fresh);
   };
 
   const GAP = 14;
@@ -139,7 +142,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             frameless
             spot={spot}
             currency={currency}
-            rows={rows}                 // <-- chart now reflects all builder rows
+            rows={rows}                 // chart reflects all builder rows
             riskFree={riskFree}
             sigma={sigma}
             T={T}
@@ -151,7 +154,18 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 
         {/* Configuration */}
         <section className="card dense" style={{ marginBottom: GAP }}>
-          <div className="section-title">Configuration</div>
+          <div className="section-head">
+            <div className="section-title">Configuration</div>
+            <button
+              type="button"
+              className="link-btn"
+              onClick={resetToDefaults}
+              aria-label="Reset to default legs"
+              title="Reset to default legs"
+            >
+              Reset to defaults
+            </button>
+          </div>
           <PositionBuilder rows={rows} onChange={setRows} currency={currency} defaultDays={defaultDays} />
         </section>
 
@@ -180,8 +194,19 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         .mh-icon { width:34px; height:34px; border-radius:10px; background:var(--card); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
         .mh-name { font-weight:800; }
         .mh-actions { display:flex; gap:8px; }
-        .section-title { font-weight:700; margin-bottom:10px; }
+        .section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .section-title { font-weight:700; }
         .card.dense { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
+        .link-btn {
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--text);
+          font-size: 12.5px;
+        }
+        .link-btn:hover { background: var(--card); }
       `}</style>
     </div>
   );
