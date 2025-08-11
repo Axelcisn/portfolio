@@ -12,6 +12,7 @@ import {
   fmtCur,
   isCall,
   isPut,
+  expiryPayoff,
 } from "./payoffUtils";
 import { buildGreekSeries } from "./greeks";
 
@@ -249,8 +250,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   };
 
-  /* ===== Monte‑Carlo (for domain + progress) ===== */
-  const { xs: bellXs, ys: bellYs, band, progress, run } = useMonteCarlo();
+  /* ===== Monte‑Carlo (for domain + pdf) ===== */
+  const { xs: bellXs, ys: bellYs, pdf, band, progress, run } = useMonteCarlo();
   const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
   const loFallback = strikes.length ? Math.min(...strikes) : (spot || 0) * 0.6;
   const hiFallback = strikes.length ? Math.max(...strikes) : (spot || 0) * 1.4;
@@ -269,13 +270,14 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   }, [spot, sigmaEnv, TEnv, riskFree, loFallback, hiFallback, run]);
 
-  /* ===== P&L series (credit − commission) ===== */
+  /* ===== P&L series (for chart) ===== */
   const domainLo = Number.isFinite(band.q01) ? band.q01 : loFallback;
   const domainHi = Number.isFinite(band.q99) ? band.q99 : hiFallback;
 
   const credit = useMemo(() => netCredit(rows, contractSize), [rows, contractSize]);
   const contracts = useMemo(() => contractsCount(rows), [rows]);
   const commissionTotal = useMemo(() => (Number(commission) || 0) * contracts, [commission, contracts]);
+  const offset = credit - commissionTotal;
 
   const payoffSeries = useMemo(
     () => buildPayoffSeries({
@@ -284,9 +286,9 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
       rows,
       contractSize,
       n: 400,
-      offset: credit - commissionTotal,
+      offset,
     }),
-    [domainLo, domainHi, rows, contractSize, credit, commissionTotal]
+    [domainLo, domainHi, rows, contractSize, offset]
   );
 
   const breakevens = useMemo(
@@ -303,7 +305,22 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const maxProfit = useMemo(() => Math.max(...payoffSeries.ys, 0), [payoffSeries.ys]);
   const maxLoss   = useMemo(() => Math.min(...payoffSeries.ys, 0), [payoffSeries.ys]);
 
-  /* ===== Greeks series (right axis) ===== */
+  /* ===== Win Rate & Expected Profit (EV) using MC pdf ===== */
+  const { winRate, evAbs } = useMemo(() => {
+    if (!bellXs.length || !pdf.length) return { winRate: null, evAbs: null };
+    let pWin = 0;
+    let ev = 0;
+    for (let i = 0; i < bellXs.length; i++) {
+      const ST = bellXs[i];
+      const prob = pdf[i] || 0;
+      const pnl = expiryPayoff(ST, rows, contractSize) + offset;
+      if (pnl > 0) pWin += prob;
+      ev += prob * pnl;
+    }
+    return { winRate: pWin, evAbs: ev };
+  }, [bellXs, pdf, rows, contractSize, offset]);
+
+  /* ===== Greeks (right axis) ===== */
   const greekYs = useMemo(() => {
     if (greek === "Not selected") return [];
     const r = Number.isFinite(riskFree) ? riskFree / 100 : 0;
@@ -350,7 +367,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </div>
           <div className="mh-actions">
             <button className="button ghost" type="button" onClick={() => {}}>Save</button>
-            <button className="button" type="button" onClick={() => onApply?.({}, credit - commissionTotal)}>Apply</button>
+            <button className="button" type="button" onClick={() => onApply?.({}, offset)}>Apply</button>
             <button className="button ghost" type="button" onClick={onClose}>Close</button>
           </div>
         </div>
@@ -426,7 +443,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           <MetricBox label="Underlying" value={fmtCur(spot, currency || "USD")} />
           <MetricBox label="Max Profit" value={fmtCur(maxProfit, currency || "USD")} />
           <MetricBox label="Max Loss" value={fmtCur(maxLoss,   currency || "USD")} />
-          <MetricBox label="Win Rate" value="—" />
+          <MetricBox label="Win Rate" value={winRate == null ? "—" : `${Math.round(winRate * 100)}%`} />
           <MetricBox
             label="Breakeven"
             value={
@@ -452,9 +469,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             <Spec title="Max Profit">{fmtCur(maxProfit, currency || "USD")}</Spec>
             <Spec title="Max Loss">{fmtCur(maxLoss, currency || "USD")}</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
-            <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
-            <Spec title="Net Credit (after commission)">{fmtCur(credit - commissionTotal, currency || "USD")}</Spec>
-            <Spec title="Commission">{fmtCur(commissionTotal, currency || "USD")} ( {contracts} contracts )</Spec>
+            <Spec title="Expected Profit (EV)">{evAbs == null ? "—" : fmtCur(evAbs, currency || "USD")}</Spec>
+            <Spec title="Net Credit (after commission)">{fmtCur(offset, currency || "USD")}</Spec>
           </div>
         </div>
 
