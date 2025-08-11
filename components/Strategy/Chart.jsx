@@ -139,8 +139,8 @@ function buildAreas(X, Y, x, y, eps = 1e-9) {
   return { pos, neg };
 }
 
-/** Robust domain: never collapses to a single strike width. */
-function computeDomain(spot, strikeArray) {
+/** Robust domain that never collapses and supports zooming. */
+function computeBaseDomain(spot, strikeArray) {
   const strikes = (strikeArray || []).filter(Number.isFinite);
   const s = Number(spot);
   const center = Number.isFinite(s)
@@ -158,8 +158,8 @@ function computeDomain(spot, strikeArray) {
   const hi = Math.max(...strikes);
   const span = hi - lo;
 
-  // If span too small, open a band around center.
-  const minRange = Math.max(center * 0.12, 8); // at least 8 units, ~12% full width
+  // If span is too small, open a band around center.
+  const minRange = Math.max(center * 0.12, 8);
   if (span < minRange) {
     const half = minRange / 2;
     return { minX: center - half, maxX: center + half };
@@ -184,18 +184,45 @@ export default function Chart({
   contractSize = 1,
 }) {
   const wrapRef = useRef(null);
+  const svgRef = useRef(null);
   const width = useSize(wrapRef);
   const height = 420;
 
   const payoffRows = useMemo(() => normalizeRows(rows), [rows]);
 
-  // Domain based on strikes with smart widening
+  // Base domain from spot/strikes
   const strikesIn = payoffRows.map((r) => Number(r.strike)).filter(Number.isFinite);
-  const { minX, maxX } = useMemo(
-    () => computeDomain(spot, strikesIn),
-    // stringified strikes array to avoid referential churn
+  const baseDomain = useMemo(
+    () => computeBaseDomain(spot, strikesIn),
+    // stringify to avoid churn
     [spot, JSON.stringify(strikesIn)]
   );
+
+  // Zoomable domain (initially base)
+  const [domain, setDomain] = useState(baseDomain);
+  useEffect(() => setDomain(baseDomain), [baseDomain.minX, baseDomain.maxX]);
+
+  // Zoom/limits
+  const clampDomain = (mn, mx) => {
+    const baseSpan = baseDomain.maxX - baseDomain.minX;
+    const minSpan = Math.max(baseSpan * 0.05, 4); // never too narrow
+    const maxSpan = baseSpan * 6;                 // never zoom out too far
+    let span = Math.max(minSpan, Math.min(mx - mn, maxSpan));
+    const center = (mn + mx) / 2;
+    return { minX: center - span / 2, maxX: center + span / 2 };
+  };
+  const zoomAt = (cx, factor /* <1 in, >1 out */) => {
+    setDomain((d) => {
+      const span = d.maxX - d.minX;
+      const newSpan = span * factor;
+      const alpha = (cx - d.minX) / span;
+      const newMin = cx - alpha * newSpan;
+      const newMax = newMin + newSpan;
+      return clampDomain(newMin, newMax);
+    });
+  };
+
+  const { minX, maxX } = domain;
   const xRange = maxX - minX;
   const formatX = (v) => {
     if (xRange < 8) return v.toFixed(2);
@@ -210,7 +237,7 @@ export default function Chart({
     [JSON.stringify(payoffRows), minX, maxX, contractSize]
   );
 
-  // Current P&L using BS values at time T (premium respected)
+  // Current P&L (BS) – keeps premium
   const Ynow = useMemo(() => {
     return X.map((S) => {
       let sum = 0;
@@ -284,10 +311,26 @@ export default function Chart({
   const kMarks = uniqueStrikes(payoffRows);
   const s = Number(spot);
 
+  // Wheel Zoom (not too sensitive: 10% step, clamped)
+  const onWheel = (e) => {
+    if (!svgRef.current) return;
+    e.preventDefault();
+    const rect = svgRef.current.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const cx = minX + ((px - P.l) / W) * (maxX - minX);
+    const step = 0.10; // 10% per notch
+    let factor = e.deltaY > 0 ? 1 + step : 1 - step; // out : in
+    // clamp single-step factor so it doesn't feel jumpy
+    factor = Math.max(0.85, Math.min(1.15, factor));
+    zoomAt(cx, factor);
+  };
+
+  const resetZoom = () => setDomain(baseDomain);
+
   /* ---------------- render ---------------- */
   return (
     <div className={frameless ? "" : "card"} ref={wrapRef}>
-      {/* Legend */}
+      {/* Legend + controls */}
       <div className="legend">
         <div className="l-left">
           <span className="dot" style={{ background: "#60a5fa" }} />
@@ -306,11 +349,25 @@ export default function Chart({
               <option key={g} value={g}>{g[0].toUpperCase()+g.slice(1)}</option>
             ))}
           </select>
+          <div className="zoom">
+            <button aria-label="Zoom out" onClick={()=>zoomAt((minX+maxX)/2, 1.10)}>−</button>
+            <button aria-label="Zoom in"  onClick={()=>zoomAt((minX+maxX)/2, 0.90)}>+</button>
+            <button aria-label="Reset zoom" onClick={resetZoom}>⟲</button>
+          </div>
         </div>
       </div>
 
       {/* Chart */}
-      <svg width={width} height={height} role="img" aria-label="Strategy payoff chart">
+      <svg
+        ref={svgRef}
+        width={width}
+        height={height}
+        role="img"
+        aria-label="Strategy payoff chart (zoomable)"
+        onWheel={onWheel}
+        onDoubleClick={resetZoom}
+        style={{ touchAction: "none", cursor: "crosshair" }}
+      >
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
         {/* Grid Y */}
@@ -342,8 +399,9 @@ export default function Chart({
         })}
 
         {/* Underlying marker */}
-        {Number.isFinite(s) && s >= minX && s <= maxX && (
-          <line x1={x(s)} y1={P.t} x2={x(s)} y2={height - P.b} stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
+        {Number.isFinite(Number(spot)) && spot >= minX && spot <= maxX && (
+          <line x1={x(Number(spot))} y1={P.t} x2={x(Number(spot))} y2={height - P.b}
+                stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
         )}
 
         {/* Profit/Loss fills from expiration curve */}
@@ -355,7 +413,7 @@ export default function Chart({
         ))}
 
         {/* Strike markers */}
-        {kMarks.map((k, i) => (
+        {uniqueStrikes(payoffRows).map((k, i) => (
           <g key={`k${i}`}>
             <line x1={x(k)} y1={P.t} x2={x(k)} y2={height - P.b} stroke="rgba(255,255,255,.12)" />
             <circle cx={x(k)} cy={y(0)} r="2.5" fill="rgba(255,255,255,.55)" />
@@ -363,8 +421,8 @@ export default function Chart({
         ))}
 
         {/* Curves */}
-        <path d={toPath(X, Ynow)} fill="none" stroke="#60a5fa" strokeWidth="2" />
-        <path d={toPath(X, Yexp)} fill="none" stroke="#f5f5f5" strokeWidth="2" strokeDasharray="5 4" />
+        <path d={toPath(X, Ynow)}      fill="none" stroke="#60a5fa" strokeWidth="2" />
+        <path d={toPath(X, Yexp)}      fill="none" stroke="#f5f5f5" strokeWidth="2" strokeDasharray="5 4" />
         <path d={toPath(X, greekCurve)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />
       </svg>
 
@@ -404,6 +462,13 @@ export default function Chart({
           height:28px; min-width:120px; padding:0 10px; border-radius:8px;
           border:1px solid var(--border); background:var(--bg); color:var(--text);
         }
+        .zoom{ display:flex; align-items:center; gap:6px; margin-left:8px; }
+        .zoom button{
+          width:28px; height:28px; border-radius:8px;
+          border:1px solid var(--border); background:var(--bg); color:var(--text);
+          font-weight:700; line-height:1;
+        }
+        .zoom button:hover{ background:var(--card); }
         .metrics-scroll{
           margin-top:12px;
           display:flex; gap:10px; overflow-x:auto; padding-bottom:2px;
