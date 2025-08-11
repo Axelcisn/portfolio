@@ -24,20 +24,86 @@ function parsePctInput(str) {
   return Number.isFinite(v) ? v / 100 : NaN;
 }
 
-/* --- robust close/last extraction from various API shapes --- */
+/* ---------- robust price helpers ---------- */
+function lastFromArray(arr) {
+  if (!Array.isArray(arr) || !arr.length) return NaN;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const n = Number(arr[i]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return NaN;
+}
+
+/** Try many common shapes to extract a spot/last/close price */
+function pickSpot(obj) {
+  if (!obj || typeof obj !== "object") return NaN;
+
+  const tryKeys = (o) => {
+    if (!o || typeof o !== "object") return NaN;
+    const keys = [
+      "spot",
+      "last",
+      "lastPrice",
+      "price",
+      "regularMarketPrice",
+      "close",
+      "previousClose",
+      "prevClose",
+    ];
+    for (const k of keys) {
+      const v = Number(o?.[k]);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+    return NaN;
+  };
+
+  let v = tryKeys(obj);
+  if (Number.isFinite(v)) return v;
+
+  // common nests
+  const nests = [
+    obj.quote,
+    obj.quotes,
+    obj.price,
+    obj.data,
+    obj.meta,
+    obj.result?.[0],
+    obj.result,
+    obj.chart?.result?.[0]?.meta,
+  ];
+  for (const nest of nests) {
+    v = tryKeys(nest);
+    if (Number.isFinite(v)) return v;
+  }
+
+  // array closes (chart-like)
+  const arrs = [
+    obj?.data?.c,
+    obj?.c,
+    obj?.close,
+    obj?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+    obj?.result?.[0]?.indicators?.quote?.[0]?.close,
+  ];
+  for (const a of arrs) {
+    v = lastFromArray(a);
+    if (Number.isFinite(v)) return v;
+  }
+
+  return NaN;
+}
+
+/** Fallback close/last from chart payloads */
 function pickLastClose(j) {
-  const candidates = [
+  const arrs = [
     j?.data?.c,
     j?.c,
     j?.close,
     j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
     j?.result?.[0]?.indicators?.quote?.[0]?.close,
   ];
-  for (const arr of candidates) {
-    if (Array.isArray(arr) && arr.length) {
-      const last = [...arr].filter((x) => Number.isFinite(x)).pop();
-      if (Number.isFinite(last)) return last;
-    }
+  for (const a of arrs) {
+    const last = lastFromArray(a);
+    if (Number.isFinite(last)) return last;
   }
   const metaPx =
     j?.meta?.regularMarketPrice ??
@@ -105,13 +171,43 @@ export default function CompanyCard({
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
 
-    setCurrency(j.currency || "");
-    let px = Number(j.spot);
+    // currency from multiple places
+    const ccy =
+      j.currency ||
+      j.ccy ||
+      j?.quote?.currency ||
+      j?.price?.currency ||
+      j?.meta?.currency ||
+      "";
+    if (ccy) setCurrency(ccy);
+
+    // try direct spot
+    let px = pickSpot(j);
+
+    // fallback A: /api/company/autoFields
     if (!Number.isFinite(px) || px <= 0) {
-      // fallback to chart endpoint if quote failed/blocked
-      px = await fetchSpotFromChart(sym);
+      try {
+        const r2 = await fetch(
+          `/api/company/autoFields?symbol=${encodeURIComponent(sym)}`,
+          { cache: "no-store" }
+        );
+        const j2 = await r2.json();
+        if (r2.ok && j2?.ok !== false) {
+          const alt = pickSpot(j2);
+          if (Number.isFinite(alt) && alt > 0) px = alt;
+          const c2 = j2.currency || j2.ccy || j2?.quote?.currency;
+          if (c2 && !ccy) setCurrency(c2);
+        }
+      } catch {}
     }
-    setSpot(px ?? null);
+
+    // fallback B: chart endpoint
+    if (!Number.isFinite(px) || px <= 0) {
+      const c = await fetchSpotFromChart(sym);
+      if (Number.isFinite(c) && c > 0) px = c;
+    }
+
+    setSpot(Number.isFinite(px) ? px : null);
 
     setExchangeLabel(
       picked?.exchange
@@ -122,12 +218,12 @@ export default function CompanyCard({
     // Bubble up so the header can show a live price
     onConfirm?.({
       symbol: j.symbol || sym,
-      name: j.name,
+      name: j.name || j.longName || j.companyName || picked?.name || "",
       exchange: picked?.exchange || j.exchange || null,
-      currency: j.currency,
-      spot: px ?? null,
-      high52: j.high52 ?? null,
-      low52: j.low52 ?? null,
+      currency: ccy || j.currency || "",
+      spot: Number.isFinite(px) ? px : null,
+      high52: j.high52 ?? j.fiftyTwoWeekHigh ?? null,
+      low52: j.low52 ?? j.fiftyTwoWeekLow ?? null,
       beta: j.beta ?? null,
     });
   }
