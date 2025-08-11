@@ -3,20 +3,30 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
-import useMonteCarlo from "./useMonteCarlo";
-import {
-  buildPayoffSeries,
-  findBreakEvens,
-  netCredit,
-  contractsCount,
-  fmtCur,
-  isCall,
-  isPut,
-  expiryPayoff,
-} from "./payoffUtils";
-import { buildGreekSeries } from "./greeks";
 
-/* ---------- responsive width ---------- */
+/* =========================
+   Small helpers
+   ========================= */
+const isStockPos = (p) => p === "Long Stock" || p === "Short Stock";
+const r2 = (n) => Math.round(n * 100) / 100;
+
+const fmtCur = (v, ccy = "USD") => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: ccy,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$") + n.toFixed(2);
+  }
+};
+
+/* =========================
+   Lightweight SVG chart (visual only)
+   ========================= */
 function useSize(ref, fallbackW = 960) {
   const [w, setW] = useState(fallbackW);
   useEffect(() => {
@@ -31,99 +41,42 @@ function useSize(ref, fallbackW = 960) {
   return w;
 }
 
-/* ---------- SVG Chart (P&L left axis, optional Greek on right) ---------- */
-function ChartCanvas({
-  spot,
-  pnlXs = [],
-  pnlYs = [],
-  breakevens = [],
-  strikeCenter,
-  greekXs = [],
-  greekYs = [],
-  greekLabel = "Vega",
-  showGreek = true,
-  height = 460,
-}) {
+function ChartCanvas({ spot, rows, height = 460, centerStrike }) {
   const wrapRef = useRef(null);
   const width = useSize(wrapRef);
 
-  const hasPL = pnlXs.length && pnlYs.length;
-  const minX = hasPL ? Math.min(...pnlXs) : (spot || 0) * 0.8 || 180;
-  const maxX = hasPL ? Math.max(...pnlXs) : (spot || 0) * 1.2 || 275;
+  const strikes = rows
+    .map((r) => Number(r.strike))
+    .filter((x) => Number.isFinite(x));
+  const s = Number(spot);
+  const minX = strikes.length ? Math.min(...strikes) : Number.isFinite(s) ? s * 0.8 : 180;
+  const maxX = strikes.length ? Math.max(...strikes) : Number.isFinite(s) ? s * 1.2 : 275;
 
-  // left axis
-  let minY = -1, maxY = 1;
-  if (hasPL) {
-    minY = Math.min(...pnlYs);
-    maxY = Math.max(...pnlYs);
-    if (minY === maxY) { minY -= 1; maxY += 1; }
-    const pad = (maxY - minY) * 0.12;
-    minY -= pad; maxY += pad;
-  }
-
-  // right axis for greek
-  const hasG = showGreek && greekXs.length && greekYs.length;
-  let gMin = 0, gMax = 1;
-  if (hasG) {
-    gMin = Math.min(...greekYs);
-    gMax = Math.max(...greekYs);
-    if (gMin === gMax) { gMin -= 1; gMax += 1; }
-    const gPad = (gMax - gMin) * 0.12;
-    gMin -= gPad; gMax += gPad;
-  }
-
+  const minY = -0.08, maxY = 0.08;
   const P = { t: 18, r: 48, b: 56, l: 72 };
   const W = width - P.l - P.r;
   const H = height - P.t - P.b;
+  const x = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
+  const y = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
 
-  const sx = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
-  const sy = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
-  const gy = (v) => P.t + (1 - (v - gMin) / (gMax - gMin)) * H;
+  // a simple bell for context
+  const center = Number.isFinite(s) ? s : (minX + maxX) / 2;
+  const bell = [];
+  for (let i = 0; i <= 80; i++) {
+    const p = minX + (i / 80) * (maxX - minX);
+    const u = (p - center) / ((maxX - minX) / 6);
+    const val = -0.08 + Math.exp(-0.5 * u * u) * 0.06;
+    bell.push([x(p), y(val)]);
+  }
 
-  const yTicks = 6, xTicks = 10, gTicks = 5;
-
-  const plPath = hasPL
-    ? pnlXs.map((x, i) => `${i ? "L" : "M"}${sx(x)},${sy(pnlYs[i])}`).join(" ")
-    : "";
-
-  const gPath = hasG
-    ? greekXs.map((x, i) => `${i ? "L" : "M"}${sx(x)},${gy(greekYs[i])}`).join(" ")
-    : "";
-
-  // win/loss shading bands based on sign of P&L
-  const bands = (() => {
-    if (!hasPL) return [];
-    const xs = [minX, ...breakevens.filter((v) => v > minX && v < maxX), maxX];
-    const out = [];
-    for (let i = 0; i < xs.length - 1; i++) {
-      const a = xs[i], b = xs[i + 1];
-      const mid = (a + b) / 2;
-      let j = Math.floor(((mid - minX) / (maxX - minX)) * (pnlXs.length - 1));
-      j = Math.max(0, Math.min(j, pnlXs.length - 1));
-      out.push({ a, b, win: pnlYs[j] >= 0 });
-    }
-    return out;
-  })();
+  const yTicks = 6, xTicks = 10;
 
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
-      <svg width={width} height={height} role="img" aria-label="Strategy chart">
+      <svg width={width} height={height} role="img" aria-label="Strategy payoff (placeholder)">
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
-        {/* Win/Loss background */}
-        {bands.map((b, idx) => (
-          <rect
-            key={idx}
-            x={sx(b.a)}
-            y={P.t}
-            width={sx(b.b) - sx(b.a)}
-            height={H}
-            fill={b.win ? "#16a34a" : "#ef4444"}
-            opacity="0.08"
-          />
-        ))}
-
-        {/* grid left (P&L) */}
+        {/* grid Y */}
         {Array.from({ length: yTicks + 1 }).map((_, i) => {
           const yy = P.t + (i / yTicks) * H;
           const val = maxY - (i / yTicks) * (maxY - minY);
@@ -131,7 +84,7 @@ function ChartCanvas({
             <g key={`gy${i}`}>
               <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.08)" />
               <text x={P.l - 10} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.6)">
-                {val.toFixed(2)}
+                {val >= 0 ? `$ ${val.toFixed(2)}` : `-$ ${Math.abs(val).toFixed(2)}`}
               </text>
             </g>
           );
@@ -151,87 +104,54 @@ function ChartCanvas({
           );
         })}
 
-        {/* right axis for Greek */}
-        {hasG && (
-          <>
-            <line x1={width - P.r + 0.5} y1={P.t} x2={width - P.r + 0.5} y2={height - P.b} stroke="rgba(255,255,255,.12)" />
-            {Array.from({ length: gTicks + 1 }).map((_, i) => {
-              const yy = P.t + (i / gTicks) * H;
-              const val = gMax - (i / gTicks) * (gMax - gMin);
-              return (
-                <text key={`rg${i}`} x={width - P.r + 6} y={yy + 4} fontSize="10" fill="rgba(255,255,255,.7)">
-                  {val.toFixed(2)}
-                </text>
-              );
-            })}
-          </>
+        {/* center line at strike */}
+        {Number.isFinite(centerStrike) && (
+          <line x1={x(centerStrike)} y1={P.t} x2={x(centerStrike)} y2={height - P.b} stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
         )}
 
-        {/* vertical reference at strike center */}
-        {Number.isFinite(strikeCenter) && strikeCenter >= minX && strikeCenter <= maxX && (
-          <line
-            x1={sx(strikeCenter)}
-            y1={P.t}
-            x2={sx(strikeCenter)}
-            y2={height - P.b}
-            stroke="rgba(255,255,255,.35)"
-            strokeDasharray="4 4"
-          />
-        )}
-
-        {/* legend */}
+        {/* legends */}
         <g transform={`translate(${P.l + 6}, ${P.t + 10})`}>
           <circle r="4" fill="#60a5fa" />
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
           <circle cx="118" r="4" fill="#f472b6" />
           <text x="126" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
-          {showGreek && greekYs.length > 0 && (
-            <>
-              <circle cx="268" r="4" fill="#f59e0b" />
-              <text x="276" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
-            </>
-          )}
+          <circle cx="268" r="4" fill="#f59e0b" />
+          <text x="276" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Bell (placeholder)</text>
         </g>
 
-        {/* series */}
-        {hasPL && (
-          <>
-            <path d={plPath} fill="none" stroke="#60a5fa" strokeWidth="2" />
-            <path d={plPath} fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" />
-          </>
-        )}
-        {showGreek && greekYs.length > 0 && (
-          <path d={gPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />
-        )}
+        {/* placeholder curves */}
+        <polyline fill="none" stroke="#60a5fa" strokeWidth="2" points={`${P.l},${y(-0.015)} ${width - P.r},${y(-0.015)}`} />
+        <polyline fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" points={`${P.l},${y(-0.015)} ${width - P.r},${y(-0.015)}`} />
+        <polyline fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" points={bell.map(([px, py]) => `${px},${py}`).join(" ")} />
       </svg>
     </div>
   );
 }
 
-/* ---------- Modal ---------- */
+/* =========================
+   Modal
+   ========================= */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, currency, sigma: sigmaEnv, T: TEnv, riskFree } = env || {};
+  const { spot, currency } = env || {};
+  const S = Number(spot) || 0;
 
+  // Seed legs: strike := spot + 1, premium := 1..10; keep fixed volumes; stock has no strike/premium
   const [rows, setRows] = useState(() => {
-    const s = Number(spot) || 0;
+    let p = 1;
     return (strategy?.legs || []).map((r) => {
-      if (!Number.isFinite(r.strike) && s > 0) {
-        const dir = strategy?.direction;
-        const pos = r.position;
-        let k = s;
-        if (isCall(pos)) k = dir === "Bullish" ? s * 1.05 : s * 1.03;
-        if (isPut(pos))  k = dir === "Bearish" ? s * 0.95 : s * 0.97;
-        return { ...r, strike: Math.round(k * 100) / 100, volume: r.volume ?? 1 };
+      const base = { ...r, volume: r.volume ?? 1 };
+      if (isStockPos(r.position)) {
+        base.strike = null;
+        base.premium = 0;
+      } else {
+        base.strike = r2(S + 1);
+        base.premium = p;
+        p = p === 10 ? 1 : p + 1;
       }
-      return { ...r, volume: r.volume ?? 1 };
+      return base;
     });
   });
 
-  const [greek, setGreek] = useState("Vega");
-  const [contractSize, setContractSize] = useState(100);
-  const [commission, setCommission] = useState(0);
-
-  // ESC + body lock
   const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
@@ -252,108 +172,13 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   };
 
-  /* ===== Monte‑Carlo (for domain + pdf) ===== */
-  const { xs: bellXs, ys: bellYs, pdf, band, progress, run } = useMonteCarlo();
-  const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
-  const loFallback = strikes.length ? Math.min(...strikes) : (spot || 0) * 0.6;
-  const hiFallback = strikes.length ? Math.max(...strikes) : (spot || 0) * 1.4;
-
-  useEffect(() => {
-    const n = (typeof navigator !== "undefined" && navigator.hardwareConcurrency >= 8) ? 1_000_000 : 500_000;
-    run({
-      S0: Number(spot) || 0,
-      sigma: Number.isFinite(sigmaEnv) ? sigmaEnv : 0.25,
-      mu: Number.isFinite(riskFree) ? riskFree / 100 : 0,
-      T: Number.isFinite(TEnv) ? TEnv : 30 / 365,
-      n,
-      bins: 140,
-      minX: loFallback,
-      maxX: hiFallback,
-    });
-  }, [spot, sigmaEnv, TEnv, riskFree, loFallback, hiFallback, run]);
-
-  /* ===== P&L series (for chart) ===== */
-  const domainLo = Number.isFinite(band.q01) ? band.q01 : loFallback;
-  const domainHi = Number.isFinite(band.q99) ? band.q99 : hiFallback;
-
-  const credit = useMemo(() => netCredit(rows, contractSize), [rows, contractSize]);
-  const contracts = useMemo(() => contractsCount(rows), [rows]);
-  const commissionTotal = useMemo(() => (Number(commission) || 0) * contracts, [commission, contracts]);
-  const offset = credit - commissionTotal;
-
-  const payoffSeries = useMemo(
-    () => buildPayoffSeries({
-      lo: domainLo,
-      hi: domainHi,
-      rows,
-      contractSize,
-      n: 400,
-      offset,
-    }),
-    [domainLo, domainHi, rows, contractSize, offset]
-  );
-
-  const breakevens = useMemo(
-    () => findBreakEvens(payoffSeries.xs, payoffSeries.ys),
-    [payoffSeries]
-  );
-
+  // strike center for the vertical guide
   const strikeCenter = useMemo(() => {
-    if (!strikes.length) return Number(spot) || null;
-    const srt = [...strikes].sort((a, b) => a - b);
+    const ks = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
+    if (!ks.length) return null;
+    const srt = [...ks].sort((a, b) => a - b);
     return srt[Math.floor(srt.length / 2)];
-  }, [strikes, spot]);
-
-  const maxProfit = useMemo(() => Math.max(...payoffSeries.ys, 0), [payoffSeries.ys]);
-  const maxLoss   = useMemo(() => Math.min(...payoffSeries.ys, 0), [payoffSeries.ys]);
-
-  /* ===== Win Rate & EV using MC pdf ===== */
-  const { winRate, evAbs } = useMemo(() => {
-    if (!bellXs.length || !pdf.length) return { winRate: null, evAbs: null };
-    let pWin = 0;
-    let ev = 0;
-    for (let i = 0; i < bellXs.length; i++) {
-      const ST = bellXs[i];
-      const prob = pdf[i] || 0;
-      const pnl = expiryPayoff(ST, rows, contractSize) + offset;
-      if (pnl > 0) pWin += prob;
-      ev += prob * pnl;
-    }
-    return { winRate: pWin, evAbs: ev };
-  }, [bellXs, pdf, rows, contractSize, offset]);
-
-  /* ===== Probability of hitting near max profit / max loss (realistic) ===== */
-  const { pMaxProfit, pMaxLoss } = useMemo(() => {
-    if (!bellXs.length || !pdf.length) return { pMaxProfit: null, pMaxLoss: null };
-    const hiThr = maxProfit > 0 ? maxProfit * 0.98 : Infinity;
-    const loThr = maxLoss   < 0 ? maxLoss   * 0.98 : -Infinity;
-    let pHi = 0, pLo = 0;
-    for (let i = 0; i < bellXs.length; i++) {
-      const ST = bellXs[i];
-      const pnl = expiryPayoff(ST, rows, contractSize) + offset;
-      const pr  = pdf[i] || 0;
-      if (maxProfit > 0 && pnl >= hiThr) pHi += pr;
-      if (maxLoss   < 0 && pnl <= loThr) pLo += pr;
-    }
-    return { pMaxProfit: pHi, pMaxLoss: pLo };
-  }, [bellXs, pdf, rows, contractSize, offset, maxProfit, maxLoss]);
-
-  /* ===== Greeks (right axis) ===== */
-  const greekYs = useMemo(() => {
-    if (greek === "Not selected") return [];
-    const r = Number.isFinite(riskFree) ? riskFree / 100 : 0;
-    const T = Number.isFinite(TEnv) ? TEnv : 30 / 365;
-    const sig = Number.isFinite(sigmaEnv) ? sigmaEnv : 0.25;
-    return buildGreekSeries({
-      xs: payoffSeries.xs,
-      rows,
-      contractSize,
-      sigma: sig,
-      T,
-      r,
-      greek,
-    });
-  }, [greek, payoffSeries.xs, rows, contractSize, sigmaEnv, TEnv, riskFree]);
+  }, [rows]);
 
   const GAP = 14;
 
@@ -385,115 +210,44 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </div>
           <div className="mh-actions">
             <button className="button ghost" type="button" onClick={() => {}}>Save</button>
-            <button className="button" type="button" onClick={() => onApply?.({}, offset)}>Apply</button>
+            <button className="button" type="button" onClick={() => onApply?.({}, 0)}>Apply</button>
             <button className="button ghost" type="button" onClick={onClose}>Close</button>
           </div>
         </div>
 
-        {/* Controls */}
-        <div style={{ display: "flex", gap: GAP, alignItems: "center", justifyContent: "flex-end", marginBottom: 6 }}>
-          <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            Contract size
-            <input
-              className="field"
-              type="number"
-              min={1}
-              step={1}
-              value={contractSize}
-              onChange={(e) => setContractSize(Math.max(1, Number(e.target.value) || 1))}
-              style={{ width: 120 }}
-            />
-          </label>
-          <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            Commission (per contract)
-            <input
-              className="field"
-              type="number"
-              min={0}
-              step="0.01"
-              value={commission}
-              onChange={(e) => setCommission(Math.max(0, Number(e.target.value) || 0))}
-              style={{ width: 160 }}
-              placeholder="0.00"
-            />
-          </label>
-          <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            Greek
-            <select
-              className="field"
-              value={greek}
-              onChange={(e) => setGreek(e.target.value)}
-              style={{ width: 150, height: 40, lineHeight: "20px", paddingTop: 10, paddingBottom: 10 }}
-            >
-              <option>Not selected</option>
-              <option>Delta</option>
-              <option>Gamma</option>
-              <option>Rho</option>
-              <option>Theta</option>
-              <option>Vega</option>
-            </select>
-          </label>
-        </div>
-
         {/* Chart */}
-        <div style={{ marginBottom: 6 }}>
-          <ChartCanvas
-            spot={spot}
-            pnlXs={payoffSeries.xs}
-            pnlYs={payoffSeries.ys}
-            breakevens={breakevens}
-            strikeCenter={strikeCenter}
-            greekXs={payoffSeries.xs}
-            greekYs={greekYs}
-            greekLabel={greek}
-            showGreek={greek !== "Not selected"}
-            height={460}
-          />
+        <div style={{ marginBottom: GAP - 8 }}>
+          <ChartCanvas spot={spot} rows={rows} height={460} centerStrike={strikeCenter} />
         </div>
 
-        {/* Progress */}
-        <div className="small muted" style={{ marginBottom: GAP }}>
-          Paths: {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
-        </div>
-
-        {/* Metrics */}
-        <div className="metric-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: GAP, marginBottom: GAP }}>
+        {/* Metrics (placeholders for now) */}
+        <div
+          className="metric-strip"
+          style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: GAP, marginBottom: GAP }}
+        >
           <MetricBox label="Underlying" value={fmtCur(spot, currency || "USD")} />
-          <MetricBox label="Max Profit" value={fmtCur(maxProfit, currency || "USD")} />
-          <MetricBox label="Max Loss" value={fmtCur(maxLoss,   currency || "USD")} />
-          <MetricBox label="Win Rate" value={winRate == null ? "—" : `${Math.round(winRate * 100)}%`} />
-          <MetricBox
-            label="Breakeven"
-            value={
-              breakevens.length === 2
-                ? `${fmtCur(breakevens[0], currency || "USD")} | ${fmtCur(breakevens[1], currency || "USD")}`
-                : breakevens.length === 1
-                ? fmtCur(breakevens[0], currency || "USD")
-                : "—"
-            }
-          />
+          <MetricBox label="Max Profit" value="—" />
+          <MetricBox label="Max Loss" value="—" />
+          <MetricBox label="Win Rate" value="—" />
+          <MetricBox label="Breakeven" value="—" />
         </div>
 
         {/* Architecture */}
         <div className="card dense" style={{ marginBottom: GAP }}>
           <div className="section-title">Architecture</div>
-          <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: GAP }}>
+          <div
+            className="grid-3"
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: GAP }}
+          >
             <Spec title="Composition">
               {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
             </Spec>
-            <Spec title="Breakeven(s)">
-              {breakevens.length === 0 ? "—" : breakevens.map((v) => fmtCur(v, currency || "USD")).join(" | ")}
-            </Spec>
-            <Spec title="Max Profit">{fmtCur(maxProfit, currency || "USD")}</Spec>
-            <Spec title="Max Loss">{fmtCur(maxLoss, currency || "USD")}</Spec>
+            <Spec title="Breakeven(s)">—</Spec>
+            <Spec title="Max Profit">—</Spec>
+            <Spec title="Max Loss">—</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
-            <Spec title="Expected Profit (EV)">{evAbs == null ? "—" : fmtCur(evAbs, currency || "USD")}</Spec>
-            <Spec title="P(Max Profit region)">{pMaxProfit == null ? "—" : `${Math.round(pMaxProfit * 100)}%`}</Spec>
-            <Spec title="P(Max Loss region)">{pMaxLoss == null ? "—" : `${Math.round(pMaxLoss * 100)}%`}</Spec>
-            <Spec title="Net Credit (after commission)">{fmtCur(offset, currency || "USD")}</Spec>
-            <Spec title="Commission">
-              {fmtCur((Number(commission) || 0) * contracts, currency || "USD")} ({contracts} contracts)
-            </Spec>
+            <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
+            <Spec title="Margin Requirement">—</Spec>
           </div>
         </div>
 
@@ -523,7 +277,9 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   );
 }
 
-/* ---------- small UI bits ---------- */
+/* =========================
+   Subcomponents
+   ========================= */
 function MetricBox({ label, value }) {
   return (
     <div className="card dense" style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
@@ -532,6 +288,7 @@ function MetricBox({ label, value }) {
     </div>
   );
 }
+
 function Spec({ title, children }) {
   return (
     <div className="card dense" style={{ padding: 12 }}>
@@ -540,21 +297,58 @@ function Spec({ title, children }) {
     </div>
   );
 }
+
 function RowEditor({ row, onStrike, onVol, onPremium, currency }) {
+  const stock = isStockPos(row.position);
   return (
     <>
       <div className="sg-td strong">{row.position}</div>
+
+      {/* Strike */}
       <div className="sg-td">
-        <input className="field" type="number" step="0.01" value={row.strike ?? ""} onChange={(e) => onStrike(e.target.value)} placeholder="Strike" />
+        {stock ? (
+          <div className="small muted">—</div>
+        ) : (
+          <input
+            className="field"
+            type="number"
+            step="0.01"
+            value={row.strike ?? ""}
+            onChange={(e) => onStrike(e.target.value)}
+            placeholder="Strike"
+          />
+        )}
       </div>
+
+      {/* Volume */}
       <div className="sg-td">
-        <input className="field" type="number" step="1" value={row.volume ?? ""} onChange={(e) => onVol(e.target.value)} placeholder="0" />
+        <input
+          className="field"
+          type="number"
+          step="1"
+          value={row.volume ?? ""}
+          onChange={(e) => onVol(e.target.value)}
+          placeholder="0"
+        />
       </div>
+
+      {/* Premium */}
       <div className="sg-td">
-        <div style={{ display: "grid", gridTemplateColumns: "12px 1fr", alignItems: "center" }}>
-          <span className="small muted" aria-hidden>$</span>
-          <input className="field" type="number" step="0.01" value={row.premium ?? ""} onChange={(e) => onPremium(e.target.value)} placeholder={currency} />
-        </div>
+        {stock ? (
+          <div className="small muted">—</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "12px 1fr", alignItems: "center" }}>
+            <span className="small muted" aria-hidden>$</span>
+            <input
+              className="field"
+              type="number"
+              step="0.01"
+              value={row.premium ?? ""}
+              onChange={(e) => onPremium(e.target.value)}
+              placeholder={currency}
+            />
+          </div>
+        )}
       </div>
     </>
   );
