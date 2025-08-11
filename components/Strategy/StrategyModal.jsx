@@ -142,7 +142,7 @@ export default function StrategyModal({
           <Chart
             spot={spot}
             currency={currency}
-            legs={legsKeyed}
+            rows={rows}
             riskFree={riskFree}
             sigma={sigma}
             T={T}
