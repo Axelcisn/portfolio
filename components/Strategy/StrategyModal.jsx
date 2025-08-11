@@ -1,33 +1,54 @@
-// components/Strategy/StrategyModal.jsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
+import { gridPnl, uniqueStrikes } from "./payoffLite";
 
-/* -----------------------------------------------------------
-   Helpers
------------------------------------------------------------ */
+/* =========================
+   Helpers / Formatters
+   ========================= */
+const POS_LIST = [
+  "Long Call",
+  "Short Call",
+  "Long Put",
+  "Short Put",
+  "Long Stock",
+  "Short Stock",
+];
 
-const POS = {
-  "Long Call":  { opt: "call",  sign: +1 },
-  "Short Call": { opt: "call",  sign: -1 },
-  "Long Put":   { opt: "put",   sign: +1 },
-  "Short Put":  { opt: "put",   sign: -1 },
-  "Long Stock": { stock: true,  sign: +1 },
-  "Short Stock":{ stock: true,  sign: -1 },
+const POS_SIGN = {
+  "Long Call": +1,
+  "Short Call": -1,
+  "Long Put": +1,
+  "Short Put": -1,
+  "Long Stock": +1,
+  "Short Stock": -1,
+};
+
+const POS_KIND = {
+  "Long Call": "call",
+  "Short Call": "call",
+  "Long Put": "put",
+  "Short Put": "put",
+  "Long Stock": "stock",
+  "Short Stock": "stock",
 };
 
 const fmtCur = (v, ccy = "USD", maxfd = 2) => {
   if (!Number.isFinite(Number(v))) return "—";
   try {
     return new Intl.NumberFormat(undefined, {
-      style: "currency", currency: ccy, maximumFractionDigits: maxfd,
+      style: "currency",
+      currency: ccy,
+      maximumFractionDigits: maxfd,
     }).format(Number(v));
   } catch {
     const sym = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
     return sym + Number(v).toFixed(maxfd);
   }
 };
+
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
 function useSize(ref, fallbackW = 960) {
   const [w, setW] = useState(fallbackW);
@@ -43,363 +64,576 @@ function useSize(ref, fallbackW = 960) {
   return w;
 }
 
-// normal pdf / cdf
-const invSqrt2Pi = 1 / Math.sqrt(2 * Math.PI);
-const pdf = (x) => invSqrt2Pi * Math.exp(-0.5 * x * x);
-function cdf(x) {
-  // Abramowitz & Stegun 7.1.26
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741,
-        a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+/* =========================
+   Black-Scholes Greeks (per leg)
+   ========================= */
+const SQRT2PI = Math.sqrt(2 * Math.PI);
+const normPdf = (x) => Math.exp(-0.5 * x * x) / SQRT2PI;
+const normCdf = (x) => 0.5 * (1 + erf(x / Math.SQRT2));
+
+// Abramowitz & Stegun 7.1.26
+function erf(x) {
   const sign = x < 0 ? -1 : 1;
-  x = Math.abs(x) / Math.sqrt(2);
+  x = Math.abs(x);
+  const a1 = 0.254829592,
+    a2 = -0.284496736,
+    a3 = 1.421413741,
+    a4 = -1.453152027,
+    a5 = 1.061405429;
+  const p = 0.3275911;
   const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return 0.5 * (1 + sign * y);
+  const y =
+    1 -
+    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-x * x);
+  return sign * y;
 }
 
-// Black–Scholes price & greeks (Theta/day, Vega per 1 vol pt, Rho per 1%)
-function bs(S, K, r, sigma, T, type /* 'call' | 'put' */) {
-  S = Number(S); K = Number(K); r = Number(r); sigma = Math.max(0, Number(sigma)); T = Math.max(0, Number(T));
-  if (!(S > 0) || !(K > 0) || sigma === 0 || T === 0) {
-    // intrinsic only, greeks ~ 0
-    const intrinsic = type === "call" ? Math.max(S - K, 0) : Math.max(K - S, 0);
-    return { price: intrinsic, delta: 0, gamma: 0, theta: 0, vega: 0, rho: 0 };
+function bsD1D2(S, K, r, sigma, T) {
+  const v = sigma * Math.sqrt(T);
+  if (!(S > 0 && K > 0 && v > 0 && T > 0)) return { d1: 0, d2: 0, bad: true };
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / v;
+  const d2 = d1 - v;
+  return { d1, d2, bad: false };
+}
+
+function bsGreeks({ S, K, r = 0, sigma = 0.2, T = 30 / 365, type = "call" }) {
+  if (T <= 0 || sigma <= 0 || !(S > 0 && K > 0)) {
+    // Close-to-expiry fallback (intrinsic sensitivities)
+    const itm =
+      type === "call" ? (S > K ? 1 : 0) : type === "put" ? (S < K ? -1 : 0) : 0;
+    return {
+      delta: itm,
+      gamma: 0,
+      vega: 0,
+      theta: 0,
+      rho: 0,
+    };
   }
-  const sqrtT = Math.sqrt(T);
-  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
-  const d2 = d1 - sigma * sqrtT;
+  const { d1, d2 } = bsD1D2(S, K, r, sigma, T);
+  const phi = normPdf(d1);
+  const Nd1 = normCdf(d1);
+  const Nd2 = normCdf(d2);
+  const Nmd1 = normCdf(-d1);
+  const Nmd2 = normCdf(-d2);
 
-  let price, delta, rho;
-  if (type === "call") {
-    price = S * cdf(d1) - K * Math.exp(-r * T) * cdf(d2);
-    delta = cdf(d1);
-    rho =  K * T * Math.exp(-r * T) * cdf(d2); // per 1.0 rate
-  } else { // put
-    price = K * Math.exp(-r * T) * cdf(-d2) - S * cdf(-d1);
-    delta = cdf(d1) - 1;
-    rho = -K * T * Math.exp(-r * T) * cdf(-d2); // per 1.0 rate
+  const delta = type === "call" ? Nd1 : Nd1 - 1; // put: Nd1 - 1
+  const gamma = phi / (S * sigma * Math.sqrt(T));
+  // vega per $1 move in vol (not %)
+  const vega = S * phi * Math.sqrt(T);
+  // theta per 1 year, we show per day -> divide by 365 later in chart if needed
+  const theta =
+    type === "call"
+      ? (-S * phi * sigma) / (2 * Math.sqrt(T)) - r * K * Math.exp(-r * T) * Nd2
+      : (-S * phi * sigma) / (2 * Math.sqrt(T)) + r * K * Math.exp(-r * T) * Nmd2;
+  const rho =
+    type === "call"
+      ? K * T * Math.exp(-r * T) * Nd2
+      : -K * T * Math.exp(-r * T) * Nmd2;
+
+  return { delta, gamma, vega, theta, rho };
+}
+
+function aggregateGreekAtPrice(S, rows, env, greekKey) {
+  const r = Number(env?.riskFree ?? 0);
+  const sigma = Number(env?.sigma ?? 0.2);
+  const T = Math.max(0, Number(env?.T ?? 30)); // days
+  const Ty = Math.max(1e-8, T / 365); // years
+
+  let total = 0;
+  for (const r0 of rows) {
+    const type = r0.type || r0.position;
+    const kind = POS_KIND[type];
+    const sign = POS_SIGN[type] || 0;
+    const vol = Number(r0.volume ?? 0);
+    const K = Number(r0.strike);
+    if (!vol || !Number.isFinite(K)) continue;
+
+    if (kind === "stock") {
+      // Greeks for stock
+      if (greekKey === "delta") total += sign * vol;
+      // others are near 0 for stock
+      continue;
+    }
+
+    const g = bsGreeks({ S, K, r, sigma, T: Ty, type: kind });
+    let v = 0;
+    switch (greekKey) {
+      case "delta":
+        v = g.delta;
+        break;
+      case "gamma":
+        v = g.gamma;
+        break;
+      case "theta":
+        v = g.theta / 365; // show per day
+        break;
+      case "vega":
+        v = g.vega / 100; // per 1% vol move
+        break;
+      case "rho":
+        v = g.rho / 100; // per 1% rate move
+        break;
+      default:
+        v = 0;
+    }
+    total += sign * vol * v;
   }
-  const g = pdf(d1);
-  const gamma = g / (S * sigma * sqrtT);
-  const vegaRaw = S * g * sqrtT; // per 1.0 vol (100%)
-  const thetaYear = -(S * g * sigma) / (2 * sqrtT) + (type === "call"
-                    ? -r * K * Math.exp(-r * T) * cdf(d2)
-                    :  r * K * Math.exp(-r * T) * cdf(-d2));
-
-  // Convert units
-  const thetaDay = thetaYear / 365;   // per day
-  const vegaPt  = vegaRaw / 100;      // per 1 vol point (1%)
-  const rhoPct  = rho / 100;          // per 1% rate
-
-  return { price, delta, gamma, theta: thetaDay, vega: vegaPt, rho: rhoPct };
+  return total;
 }
 
-function intrinsicAtExpiry(S, K, type) {
-  return type === "call" ? Math.max(S - K, 0) : Math.max(K - S, 0);
-}
-
-function uniqueStrikes(rows) {
-  const s = new Set();
-  for (const r of rows) {
-    const k = Number(r.strike);
-    if (Number.isFinite(k)) s.add(k);
-  }
-  return Array.from(s.values()).sort((a, b) => a - b);
-}
-
-function breakEvens(X, Y) {
-  const out = [];
+/* =========================
+   Breakevens from payoff grid
+   ========================= */
+function breakevensFromGrid(X, Y) {
+  const xs = [];
   for (let i = 1; i < X.length; i++) {
-    const y0 = Y[i - 1], y1 = Y[i];
-    if ((y0 <= 0 && y1 >= 0) || (y0 >= 0 && y1 <= 0)) {
-      const x0 = X[i - 1], x1 = X[i];
-      const t = y1 === y0 ? 0 : -y0 / (y1 - y0);
-      out.push(x0 + t * (x1 - x0));
+    const y1 = Y[i - 1];
+    const y2 = Y[i];
+    if ((y1 <= 0 && y2 >= 0) || (y1 >= 0 && y2 <= 0)) {
+      if (y1 === y2) continue;
+      const t = -y1 / (y2 - y1);
+      const x = X[i - 1] + t * (X[i] - X[i - 1]);
+      xs.push(x);
     }
   }
-  return out;
+  if (!xs.length) return { lo: null, hi: null };
+  const lo = Math.min(...xs);
+  const hi = Math.max(...xs);
+  return { lo, hi };
 }
 
-/* -----------------------------------------------------------
-   Curves calculator (one pass for P&L and all greeks)
------------------------------------------------------------ */
-function computeCurves(rows, minX, maxX, nPoints, env, contractSize = 1) {
-  const { spot, sigma = 0.2, T: Tdays = 30, riskFree = 0 } = env || {};
-  const T = Number(Tdays) / 365;
-
-  const X = new Array(nPoints);
-  const Y_now = new Array(nPoints).fill(0);
-  const Y_exp = new Array(nPoints).fill(0);
-  const G = {
-    Delta: new Array(nPoints).fill(0),
-    Gamma: new Array(nPoints).fill(0),
-    Theta: new Array(nPoints).fill(0),
-    Vega:  new Array(nPoints).fill(0),
-    Rho:   new Array(nPoints).fill(0),
-  };
-
-  const legs = (rows || []).filter(r => POS[r.type || r.position]);
-  for (let i = 0; i < nPoints; i++) {
-    const S = minX + (i / (nPoints - 1)) * (maxX - minX);
-    X[i] = S;
-
-    let cur = 0, exp = 0;
-    let d = 0, g = 0, th = 0, v = 0, r = 0;
-
-    for (const rRow of legs) {
-      const def = POS[rRow.type || rRow.position];
-      const qty   = Number(rRow.volume ?? 0);
-      const prem  = Number(rRow.premium ?? 0);
-      const K     = Number(rRow.strike);
-      const sign  = def.sign;
-      const mult  = qty * sign * contractSize;
-
-      if (def.stock) {
-        const priceNow = S; // treat premium as entry price for stock as well
-        cur += mult * (priceNow - prem);
-        exp += mult * (S - prem);
-        d   += mult * (def.sign); // +1 long stock, -1 short stock
-        // other greeks ~ 0
-      } else {
-        const { price, delta, gamma, theta, vega, rho } = bs(S, K, riskFree, sigma, T, def.opt);
-        cur += mult * (price - prem);
-        exp += mult * (intrinsicAtExpiry(S, K, def.opt) - prem);
-        d   += mult * delta;
-        g   += mult * gamma;
-        th  += mult * theta;
-        v   += mult * vega;
-        r   += mult * rho;
-      }
-    }
-
-    Y_now[i] = cur;
-    Y_exp[i] = exp;
-    G.Delta[i] = d; G.Gamma[i] = g; G.Theta[i] = th; G.Vega[i] = v; G.Rho[i] = r;
-  }
-
-  return { X, Y_now, Y_exp, G };
-}
-
-/* -----------------------------------------------------------
+/* =========================
    Chart
------------------------------------------------------------ */
+   ========================= */
 function ChartCanvas({
-  spot, rows, env, contractSize = 1, height = 420, currency = "USD",
-  greek = "Vega", xDomain, onZoomDomain,
+  spot,
+  rows,
+  env,
+  contractSize = 1,
+  height = 420,
+  currency = "USD",
+  greek = "Vega",
+  xDomain,
+  onZoomDomain,
 }) {
   const wrapRef = useRef(null);
   const width = useSize(wrapRef);
 
-  // domain
-  const ks = rows.map(r => Number(r.strike)).filter(Number.isFinite);
-  const sVal = Number(spot);
-  let [minX, maxX] = xDomain || [NaN, NaN];
-
-  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {
-    if (ks.length) {
-      const lo = Math.min(...ks), hi = Math.max(...ks), span = Math.max(1, hi - lo);
-      minX = lo - span * 0.25; maxX = hi + span * 0.25;
-    } else if (Number.isFinite(sVal)) {
-      minX = sVal * 0.9; maxX = sVal * 1.1;
-    } else {
-      minX = 90; maxX = 110;
-    }
-  }
-
-  // curves
-  const curves = useMemo(() => computeCurves(rows, minX, maxX, 300, env, contractSize),
-    [rows, minX, maxX, env?.sigma, env?.T, env?.riskFree, contractSize]);
-
-  const { X, Y_now, Y_exp, G } = curves;
-
-  // P&L axis
-  const yMin = Math.min(0, ...Y_now, ...Y_exp);
-  const yMax = Math.max(0, ...Y_now, ...Y_exp);
-  const pad  = Math.max(1, (yMax - yMin) * 0.1);
-  const minY = yMin - pad, maxY = yMax + pad;
-
-  // Greek axis (right)
-  const gArr = G[greek] || [];
-  let gMin = Math.min(...gArr), gMax = Math.max(...gArr);
-  if (!Number.isFinite(gMin) || !Number.isFinite(gMax) || gMin === gMax) {
-    gMin = -1; gMax = 1;
+  // Domain (keep sensible even with one strike)
+  const strikesFin = rows
+    .map((r) => Number(r.strike))
+    .filter((k) => Number.isFinite(k) && k > 0);
+  const s = Number(spot);
+  let minX, maxX;
+  if (xDomain && Array.isArray(xDomain)) {
+    [minX, maxX] = xDomain;
+  } else if (strikesFin.length) {
+    const lo = Math.min(...strikesFin, Number.isFinite(s) ? s : Infinity);
+    const hi = Math.max(...strikesFin, Number.isFinite(s) ? s : -Infinity);
+    let span = Math.max(hi - lo, (Number.isFinite(s) ? s : hi) * 0.15, 20);
+    const mid = (hi + lo) / 2;
+    minX = mid - span * 0.8;
+    maxX = mid + span * 0.8;
+  } else if (Number.isFinite(s)) {
+    const span = Math.max(20, s * 0.3);
+    minX = s - span;
+    maxX = s + span;
   } else {
-    const gp = (gMax - gMin) * 0.15;
-    gMin -= gp; gMax += gp;
+    minX = 100;
+    maxX = 200;
   }
 
-  const P = { t: 18, r: 42, b: 44, l: 68 };
+  // P&L at expiration (and "current" placeholder)
+  const GRID = 320;
+  const { X, Y } = useMemo(
+    () => gridPnl(rows, minX, maxX, GRID, contractSize),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, minX, maxX, contractSize]
+  );
+  const Ycur = Y; // real-time pricing can replace later
+
+  // Greeks curve (sum of legs)
+  const greekKey = greek.toLowerCase();
+  const G = useMemo(() => {
+    const arr = new Array(X.length);
+    for (let i = 0; i < X.length; i++) {
+      arr[i] = aggregateGreekAtPrice(X[i], rows, env, greekKey);
+    }
+    return arr;
+  }, [X, rows, env, greekKey]);
+
+  // Y domain (P&L axis)
+  const ymin = Math.min(0, ...Y, ...Ycur);
+  const ymax = Math.max(0, ...Y, ...Ycur);
+  const pad = Math.max(1, (ymax - ymin) * 0.1);
+  const minY = ymin - pad;
+  const maxY = ymax + pad;
+
+  // Right axis for Greeks (scaled)
+  const gMin = Math.min(...G, 0);
+  const gMax = Math.max(...G, 0);
+  const gPad = (gMax - gMin) * 0.2 || 1;
+  const minG = gMin - gPad;
+  const maxG = gMax + gPad;
+
+  // Layout + scales
+  const P = { t: 18, r: 40, b: 44, l: 68 };
   const W = width - P.l - P.r;
   const H = height - P.t - P.b;
+  const x = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
+  const y = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
+  const yG = (v) => P.t + (1 - (v - minG) / (maxG - minG)) * H;
 
-  const x  = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
-  const y  = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
-  const yg = (v) => P.t + (1 - (v - gMin) / (gMax - gMin)) * H;
+  // Build path helpers
+  const toPath = (arrX, arrY, mapY = y) =>
+    arrX.map((vx, i) => `${i ? "L" : "M"}${x(vx)},${mapY(arrY[i])}`).join(" ");
 
-  const toPath = (arrX, arrY, yy = y) =>
-    arrX.map((vx, i) => `${i ? "L" : "M"}${x(vx)},${yy(arrY[i])}`).join(" ");
+  // Positive/negative fill polygons for P&L
+  function areaPath(sign = +1) {
+    const path = [];
+    let open = false;
+    const push = (cmd) => path.push(cmd);
+    const baseY = y(0);
 
-  // wheel zoom (mild)
+    for (let i = 0; i < X.length; i++) {
+      const v = Y[i];
+      const isPos = v > 0;
+      if ((sign > 0 && isPos) || (sign < 0 && !isPos)) {
+        const px = x(X[i]);
+        const py = y(v);
+        if (!open) {
+          open = true;
+          push(`M${px},${baseY} L${px},${py}`);
+        } else {
+          push(`L${px},${py}`);
+        }
+      } else if (open) {
+        // close at intersection with 0
+        const i0 = i - 1;
+        if (i0 >= 0) {
+          const y1 = Y[i0];
+          const y2 = Y[i];
+          const t = (0 - y1) / (y2 - y1 || 1);
+          const cx = x(X[i0] + t * (X[i] - X[i0]));
+          push(`L${cx},${baseY} Z`);
+        }
+        open = false;
+      }
+    }
+    // close if still open at the end
+    if (open) {
+      push(`L${x(X[X.length - 1])},${baseY} Z`);
+    }
+    return path.join(" ");
+  }
+
+  // Breakevens for parent (not used inside the chart)
+  const breakevens = useMemo(() => breakevensFromGrid(X, Y), [X, Y]);
+
+  // Zoom (wheel to zoom, not too sensitive)
   useEffect(() => {
     const el = wrapRef.current;
-    if (!el) return;
-    const onWheel = (e) => {
-      if (!e.ctrlKey && !e.metaKey) return; // pinch/trackpad zoom only
+    if (!el || !onZoomDomain) return;
+    const handler = (e) => {
+      if (!W || W <= 0) return;
       e.preventDefault();
-      const zoom = e.deltaY > 0 ? 1.06 : 0.94; // gentle
-      const mx = minX + ((e.offsetX - P.l) / Math.max(1, W)) * (maxX - minX);
-      const newMin = mx - (mx - minX) * zoom;
-      const newMax = mx + (maxX - mx) * zoom;
-      onZoomDomain?.([newMin, newMax]);
+      const rect = el.getBoundingClientRect();
+      const mx = clamp(e.clientX - rect.left - P.l, 0, W);
+      const xAtMouse = minX + (mx / W) * (maxX - minX);
+
+      const factor = e.deltaY > 0 ? 1.12 : 0.88; // gentle zoom
+      const newLo = xAtMouse - (xAtMouse - minX) * factor;
+      const newHi = xAtMouse + (maxX - xAtMouse) * factor;
+
+      // keep minimum span
+      const minSpan = Math.max(10, (spot || 100) * 0.05);
+      if (newHi - newLo < minSpan) return;
+
+      onZoomDomain([newLo, newHi]);
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [minX, maxX, W, P.l, onZoomDomain]);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [wrapRef, onZoomDomain, minX, maxX, W, P.l, spot]);
 
-  // Right axis label
-  const greekUnit =
-    greek === "Theta" ? "/day" :
-    greek === "Vega"  ? "per 1 vol pt" :
-    greek === "Rho"   ? "per 1% rate" : "";
-
-  const strikeMarks = uniqueStrikes(rows);
+  const kMarks = uniqueStrikes(rows);
 
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
       <svg width={width} height={height} role="img" aria-label="Strategy payoff chart">
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
-        {/* Grid + labels (left y = $ P&L) */}
-        {Array.from({ length: 6 + 1 }).map((_, i) => {
+        {/* Shading relative to zero using the actual P&L sign */}
+        <path d={areaPath(+1)} fill="rgba(34,197,94,.12)" />
+        <path d={areaPath(-1)} fill="rgba(239,68,68,.12)" />
+
+        {/* Grid + axes */}
+        {/* horizontal grid */}
+        {Array.from({ length: 6 }).map((_, i) => {
           const yy = P.t + (i / 6) * H;
           const val = maxY - (i / 6) * (maxY - minY);
           return (
             <g key={`gy${i}`}>
               <line x1={P.l} y1={yy} x2={width - P.r} y2={yy} stroke="rgba(255,255,255,.07)" />
-              <text x={P.l - 10} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.65)">
+              <text x={P.l - 12} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.65)">
                 {fmtCur(val, currency, 0)}
               </text>
             </g>
           );
         })}
-        {/* X grid */}
-        {Array.from({ length: 8 + 1 }).map((_, i) => {
+        {/* vertical grid */}
+        {Array.from({ length: 8 }).map((_, i) => {
           const xx = P.l + (i / 8) * W;
           const val = minX + (i / 8) * (maxX - minX);
           return (
             <g key={`gx${i}`}>
               <line x1={xx} y1={P.t} x2={xx} y2={height - P.b} stroke="rgba(255,255,255,.05)" />
               <text x={xx} y={height - 12} textAnchor="middle" fontSize="10" fill="rgba(255,255,255,.65)">
-                {Math.round(val * 100) / 100}
+                {Math.round(val)}
               </text>
             </g>
           );
         })}
 
-        {/* Underlying price marker */}
-        {Number.isFinite(spot) && spot >= minX && spot <= maxX && (
-          <line x1={x(spot)} y1={P.t} x2={x(spot)} y2={height - P.b}
-            stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
+        {/* Underlying marker */}
+        {Number.isFinite(s) && s >= minX && s <= maxX && (
+          <line
+            x1={x(s)}
+            y1={P.t}
+            x2={x(s)}
+            y2={height - P.b}
+            stroke="rgba(255,255,255,.35)"
+            strokeDasharray="4 4"
+          />
         )}
 
         {/* Strike markers */}
-        {strikeMarks.map((k, i) => (
+        {kMarks.map((k, i) => (
           <g key={`k${i}`}>
             <line x1={x(k)} y1={P.t} x2={x(k)} y2={height - P.b} stroke="rgba(255,255,255,.12)" />
             <circle cx={x(k)} cy={y(0)} r="2.5" fill="rgba(255,255,255,.55)" />
           </g>
         ))}
 
-        {/* Win/Loss shading by P&L=0 */}
-        <rect x={P.l} y={P.t} width={W} height={Math.max(0, y(0) - P.t)} fill="rgba(16,185,129,.07)" />
-        <rect x={P.l} y={Math.max(P.t, y(0))} width={W} height={height - P.b - Math.max(P.t, y(0))} fill="rgba(244,63,94,.08)" />
+        {/* Legend */}
+        <g transform={`translate(${P.l + 6}, ${P.t + 12})`}>
+          <circle r="4" fill="#60a5fa" />
+          <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.9)">Current P&L</text>
+          <circle cx="98" r="4" fill="#e5e7eb" />
+          <text x="106" y="3" fontSize="10" fill="rgba(255,255,255,.9)">Expiration P&L</text>
+          <circle cx="212" r="4" fill="#f59e0b" />
+          <text x="220" y="3" fontSize="10" fill="rgba(255,255,255,.9)">{greek}</text>
+        </g>
 
-        {/* Curves */}
-        {/* Current P&L */}
-        <path d={toPath(X, Y_now, y)} fill="none" stroke="#60a5fa" strokeWidth="2" />
-        {/* Expiration P&L */}
-        <path d={toPath(X, Y_exp, y)} fill="none" stroke="#e5e7eb" strokeWidth="2" strokeDasharray="6 4" opacity="0.85" />
-        {/* Selected Greek (right axis) */}
-        <path d={toPath(X, gArr, yg)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 4" />
+        {/* Lines */}
+        <path d={toPath(X, Ycur)} fill="none" stroke="#60a5fa" strokeWidth="2" />
+        <path d={toPath(X, Y)} fill="none" stroke="#e5e7eb" strokeWidth="1.75" strokeDasharray="5 4" />
+        <path d={toPath(X, G, yG)} fill="none" stroke="#f59e0b" strokeWidth="1.75" strokeDasharray="6 5" />
 
-        {/* Right Y axis (Greeks) */}
-        {Array.from({ length: 5 + 1 }).map((_, i) => {
-          const yy = P.t + (i / 5) * H;
-          const val = gMax - (i / 5) * (gMax - gMin);
+        {/* Right y-axis ticks for greek */}
+        {Array.from({ length: 5 }).map((_, i) => {
+          const yy = P.t + (i / 4) * H;
+          const val = maxG - (i / 4) * (maxG - minG);
           return (
-            <g key={`gry${i}`}>
-              <text x={width - P.r + 34} y={yy + 4} textAnchor="end" fontSize="10" fill="rgba(255,255,255,.65)">
-                {Math.round(val * 100) / 100}
+            <g key={`rg${i}`}>
+              <text x={width - P.r + 6} y={yy + 4} fontSize="10" fill="rgba(255,255,255,.65)">
+                {val.toFixed(2)}
               </text>
             </g>
           );
         })}
-
-        {/* Right axis label */}
-        <text x={width - 8} y={P.t + 10} textAnchor="end" fontSize="11" fill="rgba(255,255,255,.8)">
-          {greek}{greekUnit ? ` (${greekUnit})` : ""}
-        </text>
-
-        {/* Legend */}
-        <g transform={`translate(${P.l + 6}, ${P.t + 12})`}>
-          <circle r="4" fill="#60a5fa" />
-          <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.9)">Current P&amp;L</text>
-          <circle cx="98" r="4" fill="#e5e7eb" />
-          <text x="106" y="3" fontSize="10" fill="rgba(255,255,255,.9)">Expiration P&amp;L</text>
-          <circle cx="212" r="4" fill="#f59e0b" />
-          <text x="220" y="3" fontSize="10" fill="rgba(255,255,255,.9)">{greek}</text>
-        </g>
       </svg>
     </div>
   );
 }
 
-/* -----------------------------------------------------------
+/* =========================
+   Subcomponents
+   ========================= */
+function TrashBtn({ onClick, title = "Delete" }) {
+  return (
+    <button className="icon-btn" type="button" aria-label={title} onClick={onClick} title={title}>
+      {/* refined delete icon */}
+      <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M9 3h6m-9 3h12M9 9v8m6-8v8M5 6l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
+function MetricBox({ label, value }) {
+  return (
+    <div className="card dense metric">
+      <div className="small muted">{label}</div>
+      <div className="value">{value}</div>
+    </div>
+  );
+}
+
+function SummaryRow({ r, currency }) {
+  return (
+    <div className="sum-row">
+      <div>{r.position || r.type}</div>
+      <div>{Number.isFinite(Number(r.strike)) ? Number(r.strike) : "—"}</div>
+      <div>{Number.isFinite(Number(r.expiration)) ? `${r.expiration}d` : "—"}</div>
+      <div>{Number.isFinite(Number(r.premium)) ? fmtCur(r.premium, currency) : "—"}</div>
+    </div>
+  );
+}
+
+/* =========================
    Modal
------------------------------------------------------------ */
-export default function StrategyModal({ strategy, env, onApply, onClose }) {
+   ========================= */
+export default function StrategyModal({ strategy, env, onClose, onApply }) {
   const { spot, currency = "USD" } = env || {};
-  const contractSize = 1;
 
-  // editable rows (position editor)
-  const [rows, setRows] = useState(() => (strategy?.legs || []).map(r => ({
-    position: r.position || r.type, type: r.type || r.position, strike: r.strike ?? "", volume: r.volume ?? 1, premium: r.premium ?? 0, expiration: r.expiration ?? (env?.T ?? 30),
-  }))));
-
-  const [greek, setGreek] = useState("Vega");
-  const [domain, setDomain] = useState(null); // [minX,maxX] from zoom
-
-  // metrics from curves (computed with same engine as chart)
-  const ks = rows.map(r => Number(r.strike)).filter(Number.isFinite);
-  const baseDomain = useMemo(() => {
-    if (domain) return { minX: domain[0], maxX: domain[1] };
-    if (ks.length) {
-      const lo = Math.min(...ks), hi = Math.max(...ks), span = Math.max(1, hi - lo);
-      return { minX: lo - span * 0.25, maxX: hi + span * 0.25 };
-    }
-    if (Number.isFinite(Number(spot))) {
-      const s = Number(spot); return { minX: s * 0.9, maxX: s * 1.1 };
-    }
-    return { minX: 90, maxX: 110 };
-  }, [ks.join(","), spot, domain]);
-
-  const curves = useMemo(
-    () => computeCurves(rows, baseDomain.minX, baseDomain.maxX, 300, env, contractSize),
-    [rows, baseDomain.minX, baseDomain.maxX, env?.sigma, env?.T, env?.riskFree]
+  // -------- editable rows (position editor) --------
+  const [rows, setRows] = useState(() =>
+    (strategy?.legs || []).map((r) => ({
+      // keep both names for backward compatibility
+      position: r.position || r.type,
+      type: r.type || r.position,
+      strike: r.strike ?? "",
+      volume: r.volume ?? 1,
+      premium: r.premium ?? 0,
+      // default expiration from the company card time (days)
+      expiration: r.expiration ?? (env?.T ?? 30),
+    }))
   );
 
-  const maxProfit = useMemo(() => Math.max(0, ...curves.Y_now), [curves.Y_now]);
-  const maxLoss   = useMemo(() => Math.min(0, ...curves.Y_now), [curves.Y_now]);
-  const winRate   = useMemo(() => (curves.Y_now.filter(v => v > 0).length / (curves.Y_now.length || 1)) * 100, [curves.Y_now]);
-  const BE        = useMemo(() => breakEvens(curves.X, curves.Y_exp), [curves.X, curves.Y_exp]);
+  // selected greek + optional zoom domain
+  const [greek, setGreek] = useState("Vega");
+  const [domain, setDomain] = useState(null); // [minX, maxX] from zoom
 
-  // Close on ESC + lock background scroll
+  // chart-ready rows for payoff utils
+  const payoffRows = useMemo(
+    () =>
+      rows
+        .filter((r) => (Number(r.volume) || 0) >= 0) // allow 0 volume (keeps line off)
+        .map((r) => ({
+          position: r.position || r.type, // gridPnl expects these labels
+          strike: Number(r.strike),
+          volume: Number(r.volume || 0),
+          premium: Number(r.premium || 0),
+        })),
+    [rows]
+  );
+
+  // payoff grid for metrics
+  const pnlGrid = useMemo(() => {
+    // derive domain from rows/spot when no zoom is active
+    // pick a safe range so the axis never collapses
+    let minX, maxX;
+    if (domain) {
+      [minX, maxX] = domain;
+    } else {
+      const strikes = rows
+        .map((r) => Number(r.strike))
+        .filter((k) => Number.isFinite(k) && k > 0);
+      const s = Number(spot);
+      if (strikes.length) {
+        const lo = Math.min(...strikes, Number.isFinite(s) ? s : Infinity);
+        const hi = Math.max(...strikes, Number.isFinite(s) ? s : -Infinity);
+        const span = Math.max(hi - lo, (Number.isFinite(s) ? s : hi) * 0.15, 20);
+        const mid = (hi + lo) / 2;
+        minX = mid - span * 0.8;
+        maxX = mid + span * 0.8;
+      } else if (Number.isFinite(s)) {
+        const span = Math.max(20, s * 0.3);
+        minX = s - span;
+        maxX = s + span;
+      } else {
+        minX = 100;
+        maxX = 200;
+      }
+    }
+    return gridPnl(payoffRows, minX, maxX, 320, 1);
+  }, [payoffRows, rows, spot, domain]);
+
+  const maxProfit = useMemo(() => Math.max(0, ...pnlGrid.Y), [pnlGrid.Y]);
+  const maxLoss = useMemo(() => Math.min(0, ...pnlGrid.Y), [pnlGrid.Y]);
+  const winRate = useMemo(() => {
+    const n = pnlGrid.Y.length || 1;
+    const wins = pnlGrid.Y.filter((v) => v > 0).length;
+    return (wins / n) * 100;
+  }, [pnlGrid.Y]);
+
+  const breakeven = useMemo(() => breakevensFromGrid(pnlGrid.X, pnlGrid.Y), [pnlGrid.X, pnlGrid.Y]);
+
+  const lotSize = useMemo(
+    () =>
+      rows
+        .filter((r) => POS_KIND[r.position || r.type] !== "stock")
+        .reduce((acc, r) => acc + Math.max(0, Number(r.volume || 0)), 0),
+    [rows]
+  );
+
+  const netPremium = useMemo(() => {
+    let sum = 0;
+    for (const r of rows) {
+      const type = r.position || r.type;
+      const sign = POS_SIGN[type] || 0;
+      const vol = Number(r.volume || 0);
+      const prem = Number(r.premium || 0);
+      if (Number.isFinite(vol) && Number.isFinite(prem)) sum += sign * vol * prem;
+    }
+    return sum;
+  }, [rows]);
+
+  const onReset = () => {
+    setRows(
+      (strategy?.legs || []).map((r) => ({
+        position: r.position || r.type,
+        type: r.type || r.position,
+        strike: r.strike ?? "",
+        volume: r.volume ?? 1,
+        premium: r.premium ?? 0,
+        expiration: r.expiration ?? (env?.T ?? 30),
+      }))
+    );
+    setDomain(null);
+  };
+
+  const addRow = () =>
+    setRows((prev) => [
+      ...prev,
+      {
+        position: "Long Call",
+        type: "Long Call",
+        strike: "",
+        volume: 1,
+        premium: 0,
+        expiration: env?.T ?? 30,
+      },
+    ]);
+
+  const removeRow = (i) =>
+    setRows((prev) => {
+      const next = [...prev];
+      next.splice(i, 1);
+      return next;
+    });
+
+  // Close on ESC + blur background scroll
+  const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onEsc);
     const prev = document.body.style.overflow;
+    const prevF = document.body.style.filter;
     document.body.style.overflow = "hidden";
-    return () => { window.removeEventListener("keydown", onEsc); document.body.style.overflow = prev || ""; };
+    document.body.style.filter = "blur(1.2px)";
+    return () => {
+      window.removeEventListener("keydown", onEsc);
+      document.body.style.overflow = prev || "";
+      document.body.style.filter = prevF || "";
+    };
   }, [onClose]);
 
   const GAP = 14;
@@ -407,83 +641,281 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   return (
     <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
       <div className="modal-backdrop" onClick={onClose} />
-      <div className="modal-sheet" style={{ maxWidth: 1120, maxHeight: "calc(100vh - 96px)", overflowY: "auto", padding: 16 }}>
+      <div
+        className="modal-sheet"
+        ref={dialogRef}
+        style={{
+          maxWidth: 1120,
+          maxHeight: "calc(100vh - 96px)",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
+          padding: 16,
+        }}
+      >
         {/* Header */}
         <div className="modal-head" style={{ marginBottom: GAP }}>
           <div className="mh-left">
-            <div className="mh-icon"><div className="badge" /></div>
+            <div className="mh-icon">{strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}</div>
             <div className="mh-meta">
               <div id="sg-modal-title" className="mh-name">{strategy?.name || "Strategy"}</div>
               <DirectionBadge value={strategy?.direction || "Neutral"} />
             </div>
           </div>
           <div className="mh-actions">
-            <button className="button" type="button" onClick={() => {/* future: persist preset */}}>Save</button>
-            <button className="button ghost" type="button" onClick={onClose}>Close</button>
+            <button className="button" type="button" onClick={() => { /* future: persist */ }}>
+              Save
+            </button>
+            <button className="button ghost" type="button" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
-        {/* Legend / Greek selector row */}
-        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:8 }}>
-          <label className="small muted" style={{ marginRight: 8 }}>Greek</label>
-          <select value={greek} onChange={(e)=>setGreek(e.target.value)} className="sort" aria-label="Greek">
-            {["Vega","Delta","Gamma","Theta","Rho"].map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
+        {/* Legend line + Greek selector */}
+        <div className="legend-row">
+          <div className="legend">
+            <span className="dot c1" /> Current P&L
+            <span className="dot c2" /> Expiration P&L
+            <span className="dot c3" /> {greek}
+          </div>
+          <div className="legend-tools">
+            <label className="small muted" style={{ marginRight: 8 }}>
+              Greek
+            </label>
+            <select value={greek} onChange={(e) => setGreek(e.target.value)} className="field">
+              {["Vega", "Delta", "Gamma", "Theta", "Rho"].map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Chart */}
+        {/* Chart — seamless */}
         <div style={{ marginBottom: GAP }}>
           <ChartCanvas
             spot={spot}
-            rows={rows.map(r=>({ ...r, type: r.type || r.position }))}
+            rows={rows.map((r) => ({ ...r, type: r.type || r.position }))}
             env={env}
-            contractSize={contractSize}
+            contractSize={1}
+            height={420}
             currency={currency}
             greek={greek}
             xDomain={domain || undefined}
-            onZoomDomain={(d)=>setDomain(d)}
-            height={420}
+            onZoomDomain={(d) => setDomain(d)}
           />
         </div>
 
-        {/* Metrics strip */}
-        <div className="metric-strip" style={{ display:"grid", gridTemplateColumns:"repeat(6, minmax(0,1fr))", gap:GAP, marginBottom:GAP, overflowX:"auto" }}>
+        {/* Metrics (horizontally scrollable rail) */}
+        <div className="metric-rail" style={{ marginBottom: GAP }}>
           <MetricBox label="Underlying price" value={fmtCur(spot, currency)} />
           <MetricBox label="Max profit" value={fmtCur(maxProfit, currency, 0)} />
           <MetricBox label="Max loss" value={fmtCur(maxLoss, currency, 0)} />
           <MetricBox label="Win rate" value={`${winRate.toFixed(2)}%`} />
-          <MetricBox label="Breakeven (Low | High)" value={
-            BE.length ? (BE.length === 1 ? `${Math.round(BE[0])} | —` : `${Math.round(BE[0])} | ${Math.round(BE[1])}`) : "—"
-          } />
-          <MetricBox label="Lot size" value={`${1}`} />
+          <MetricBox
+            label="Breakeven (Low | High)"
+            value={
+              breakeven.lo || breakeven.hi
+                ? `${breakeven.lo ? Math.round(breakeven.lo) : "—"} | ${breakeven.hi ? Math.round(breakeven.hi) : "—"}`
+                : "—"
+            }
+          />
+          <MetricBox label="Lot size" value={String(lotSize)} />
+          {/* extra placeholders (not yet computed) */}
+          <MetricBox label="CI (Low | High)" value="— | —" />
+          <MetricBox label="Delta" value="—" />
+          <MetricBox label="Gamma" value="—" />
+          <MetricBox label="Rho" value="—" />
+          <MetricBox label="Theta" value="—" />
+          <MetricBox label="Vega" value="—" />
+          <MetricBox label="Max" value="—" />
+          <MetricBox label="Mean[Price]" value="—" />
+          <MetricBox label="Max[Return]" value="—" />
+          <MetricBox label="E[Return]" value="—" />
+          <MetricBox label="Sharpe Ratio" value="—" />
+          <MetricBox label="BS(C)" value="—" />
+          <MetricBox label="BS(P)" value="—" />
         </div>
 
-        {/* Config editor and summary (unchanged UI from your current build) */}
-        {/* ... keep your existing editor implementation ... */}
+        {/* Configuration */}
+        <div className="card dense" style={{ marginBottom: GAP }}>
+          <div className="section-title">Configuration</div>
+
+          <div className="config-grid">
+            <div className="cg-head">Strike</div>
+            <div className="cg-head">Type</div>
+            <div className="cg-head">Expiration</div>
+            <div className="cg-head">Volume</div>
+            <div className="cg-head">Premium</div>
+            <div className="cg-head small right">Reset</div>
+
+            {rows.map((r, i) => (
+              <FragmentRow
+                key={i}
+                row={r}
+                onChange={(next) =>
+                  setRows((prev) => {
+                    const copy = [...prev];
+                    copy[i] = next;
+                    return copy;
+                  })
+                }
+                onDelete={() => removeRow(i)}
+                currency={currency}
+                i={i}
+              />
+            ))}
+          </div>
+
+          <div className="btn-row">
+            <button className="button ghost" onClick={addRow} type="button">
+              + New position
+            </button>
+            <div style={{ flex: 1 }} />
+            <button className="button ghost" onClick={onReset} type="button">
+              Reset
+            </button>
+          </div>
+        </div>
+
+        {/* Summary (non-editable) */}
+        <div className="card dense" style={{ marginBottom: 8 }}>
+          <div className="section-title">Summary</div>
+          <div className="sum-head">
+            <div>Position</div>
+            <div>Strike</div>
+            <div>Expiration</div>
+            <div>Premium</div>
+          </div>
+          {rows.map((r, i) => (
+            <SummaryRow key={`s${i}`} r={r} currency={currency} />
+          ))}
+          <div className="sum-foot">
+            <span className="muted">Net Premium:</span>&nbsp;
+            <strong>{fmtCur(netPremium, currency)}</strong>
+          </div>
+        </div>
       </div>
 
       <style jsx>{`
-        .modal-root { position:fixed; inset:0; z-index:80; }
-        .modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.45); backdrop-filter: blur(6px); }
-        .modal-sheet { position:relative; margin:48px auto; background:var(--bg); border:1px solid var(--border);
-          border-radius:16px; box-shadow:0 24px 60px rgba(0,0,0,.35); }
-        .mh-left { display:flex; gap:12px; align-items:center; }
-        .mh-name { font-size:18px; font-weight:700; }
-        .mh-actions { display:flex; gap:8px; }
-        .badge { width:24px; height:24px; border-radius:50%; background:var(--card); border:1px solid var(--border); }
-        .sort{ height:32px; min-width:150px; padding:0 10px; border-radius:10px;
-          border:1px solid var(--border); background:var(--bg); color:var(--text); }
+        .modal-root { position: fixed; inset: 0; z-index: 70; }
+        .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.45); backdrop-filter: blur(4px); }
+        .modal-sheet {
+          position: absolute; left: 50%; top: 4%;
+          transform: translateX(-50%);
+          background: var(--bg); border: 1px solid var(--border); border-radius: 16px;
+          box-shadow: 0 18px 50px rgba(0,0,0,.35);
+        }
+        .modal-head { display:flex; align-items:center; justify-content:space-between; }
+        .mh-left { display:flex; align-items:center; gap:10px; }
+        .mh-icon .badge{ width:28px; height:28px; border-radius:8px; background:var(--card); border:1px solid var(--border); }
+        .mh-name{ font-size:18px; font-weight:700; }
+        .mh-actions{ display:flex; gap:8px; }
+
+        .legend-row{ display:flex; align-items:center; justify-content:space-between; margin:6px 2px 10px; }
+        .legend{ display:flex; align-items:center; gap:14px; color:var(--muted); }
+        .dot{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+        .c1{ background:#60a5fa; } .c2{ background:#e5e7eb; } .c3{ background:#f59e0b; }
+        .legend-tools{ display:flex; align-items:center; gap:8px; }
+
+        .metric-rail{ display:flex; gap:12px; overflow-x:auto; padding-bottom:2px; }
+        .metric{ min-width:180px; padding:10px 12px; display:flex; flex-direction:column; gap:4px; }
+
+        .card{ border:1px solid var(--border); border-radius:14px; background:var(--card); }
+        .dense{ padding:12px; }
+        .section-title{ font-weight:700; margin-bottom:8px; }
+
+        .config-grid{
+          display:grid;
+          grid-template-columns: 1.2fr 1.2fr .8fr .8fr 1.2fr .4fr;
+          gap:8px; align-items:center;
+        }
+        .cg-head{ font-size:12px; color:var(--muted); }
+        .right{ text-align:right; }
+        .field{ height:36px; padding:0 10px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); width:100%; }
+
+        .icon-btn{ width:32px; height:32px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--text); display:flex; align-items:center; justify-content:center; }
+
+        .btn-row{ display:flex; align-items:center; gap:8px; margin-top:10px; }
+
+        .sum-head, .sum-row{
+          display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap:8px; align-items:center;
+        }
+        .sum-head{ font-size:12px; color:var(--muted); margin-bottom:6px; }
+        .sum-row{ padding:6px 4px; border-top:1px dashed var(--border); }
+        .sum-foot{ display:flex; justify-content:flex-end; gap:6px; padding-top:10px; }
+        .small{ font-size:12px; }
+        .muted{ opacity:.7; }
+        .value{ font-weight:700; }
+        .button{
+          height:36px; padding:0 14px; border-radius:12px; border:1px solid var(--border);
+          background:var(--accent, #0ea5e9); color:#fff; font-weight:700;
+        }
+        .button.ghost{ background:transparent; color:var(--text); }
       `}</style>
     </div>
   );
 }
 
-/* ------------------------ Subcomponents ------------------------ */
-function MetricBox({ label, value }) {
+/* ---------------- Row editor (inline) ---------------- */
+function FragmentRow({ row, onChange, onDelete, currency, i }) {
+  const set = (k, v) => onChange({ ...row, [k]: v });
   return (
-    <div className="card dense" style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, minWidth: 160 }}>
-      <div className="small muted">{label}</div>
-      <div className="value">{value}</div>
-    </div>
+    <>
+      <input
+        className="field"
+        type="number"
+        step="0.01"
+        placeholder="Strike"
+        value={row.strike ?? ""}
+        onChange={(e) => set("strike", e.target.value === "" ? "" : Number(e.target.value))}
+      />
+      <select
+        className="field"
+        value={row.type || row.position}
+        onChange={(e) => set("type", e.target.value) || set("position", e.target.value)}
+      >
+        {POS_LIST.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+      <input
+        className="field"
+        type="number"
+        step="1"
+        placeholder="Days"
+        value={row.expiration ?? ""}
+        onChange={(e) => set("expiration", e.target.value === "" ? "" : Number(e.target.value))}
+      />
+      <input
+        className="field"
+        type="number"
+        step="1"
+        min="0"
+        placeholder="Qty"
+        value={row.volume ?? ""}
+        onChange={(e) => set("volume", e.target.value === "" ? "" : Number(e.target.value))}
+      />
+      <div style={{ display: "grid", gridTemplateColumns: "12px 1fr", alignItems: "center" }}>
+        <span className="small muted" aria-hidden>
+          $
+        </span>
+        <input
+          className="field"
+          type="number"
+          step="0.01"
+          placeholder={currency}
+          value={row.premium ?? ""}
+          onChange={(e) => set("premium", e.target.value === "" ? "" : Number(e.target.value))}
+        />
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <TrashBtn onClick={onDelete} />
+      </div>
+    </>
   );
 }
