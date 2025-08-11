@@ -6,44 +6,13 @@ import DirectionBadge from "./DirectionBadge";
 import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
+import materializeTemplate from "./defs/materializeTemplate";
 
 /* ---------- helpers ---------- */
-const TYPE_KEY = { "Long Call": "lc", "Short Call": "sc", "Long Put": "lp", "Short Put": "sp" };
 const KEY_TO_LABEL = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put", ls: "Long Stock", ss: "Short Stock" };
 
-function seedRowsFromStrategy(strategy, spot, defaultDays = 30) {
-  // Strategy.legs may already be normalized; if not, create sensible blanks.
-  const base = Array.isArray(strategy?.legs) ? strategy.legs : [];
-  if (base.length) {
-    return base.map((r, i) => ({
-      id: r.id ?? `${i}-${Math.random().toString(36).slice(2, 7)}`,
-      type: r.type ?? TYPE_KEY[r.position] ?? r.key ?? "lc",
-      K: Number.isFinite(r.strike) ? r.strike : null,
-      premium: Number.isFinite(r.premium) ? r.premium : null,
-      qty: Number.isFinite(r.volume) ? r.volume : 1,
-      days: Number.isFinite(r.days) ? r.days : defaultDays,
-      enabled: r.enabled ?? true,
-    }));
-  }
-  // Fallback to one empty row of the strategy type, else none.
-  const guess = TYPE_KEY[strategy?.name] || null;
-  return guess
-    ? [
-        {
-          id: "seed-0",
-          type: guess,
-          K: spot ? Number(spot) : null,
-          premium: null,
-          qty: 1,
-          days: defaultDays,
-          enabled: true,
-        },
-      ]
-    : [];
-}
-
 function rowsToLegsObject(rows) {
-  // Legacy shape expected by parent chart: lc/sc/lp/sp only
+  // Legacy shape expected upstream (options only)
   const out = {
     lc: { enabled: false, K: null, qty: 0, premium: null },
     sc: { enabled: false, K: null, qty: 0, premium: null },
@@ -57,6 +26,9 @@ function rowsToLegsObject(rows) {
     const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : null;
     if (Number.isFinite(K) && Number.isFinite(qty)) {
       out[r.type] = { enabled: qty !== 0, K, qty, premium: prem };
+    } else {
+      // still pass through qty even if K not set, so toggles can persist
+      out[r.type] = { enabled: qty !== 0, K: Number.isFinite(K) ? K : null, qty, premium: prem };
     }
   }
   return out;
@@ -78,15 +50,34 @@ function netPremium(rows) {
 
 /* ---------- component ---------- */
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
-  const { spot, currency = "USD", high52, low52, riskFree = 0.02, sigma = 0.2, T = 30 / 365 } = env || {};
+  const {
+    spot = null,
+    currency = "USD",
+    high52,
+    low52,
+    riskFree = 0.02,
+    sigma = 0.2,
+    T = 30 / 365, // years from company card
+  } = env || {};
+
+  // For placeholders where needed (e.g., new manual rows), keep a days value handy
   const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
 
-  // rows = the single source of truth for config + summary + chart
-  const [rows, setRows] = useState(() => seedRowsFromStrategy(strategy, spot, defaultDays));
+  // Seed rows from the strategy template (legs, qty, expirations from company card's Time)
+  const [rows, setRows] = useState(() =>
+    materializeTemplate(strategy?.id, { T, defaultDays })
+  );
+
+  // Re-materialize when opening a different strategy
+  useEffect(() => {
+    setRows(materializeTemplate(strategy?.id, { T, defaultDays }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategy?.id]);
+
   const [greek, setGreek] = useState("vega");
 
+  // Lock page scroll + close on ESC
   useEffect(() => {
-    // Lock scroll + close on ESC
     const onEsc = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onEsc);
     const prev = document.body.style.overflow;
@@ -97,11 +88,10 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     };
   }, [onClose]);
 
+  // Save = previous Apply (compat)
   const legsObj = useMemo(() => rowsToLegsObject(rows), [rows]);
   const totalPrem = useMemo(() => netPremium(rows), [rows]);
-
   const save = () => {
-    // backwards compatible with previous Apply usage
     onApply?.(legsObj, totalPrem);
     onClose?.();
   };
@@ -149,7 +139,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             frameless
             spot={spot}
             currency={currency}
-            rows={rows}
+            rows={rows}                 // <-- chart now reflects all builder rows
             riskFree={riskFree}
             sigma={sigma}
             T={T}
@@ -158,8 +148,6 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             contractSize={1}
           />
         </div>
-
-        {/* Metrics under chart (kept minimal; chart already shows the strip) */}
 
         {/* Configuration */}
         <section className="card dense" style={{ marginBottom: GAP }}>
@@ -178,7 +166,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         .modal-backdrop {
           position: absolute; inset: 0;
           background: rgba(0, 0, 0, 0.32);
-          backdrop-filter: blur(6px); /* soft blur as requested */
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
         }
         .modal-sheet {
           position: relative; margin: 36px auto;
