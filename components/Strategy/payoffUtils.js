@@ -6,7 +6,8 @@ export const isShort = (pos) => /Short/.test(pos);
 export const isCall  = (pos) => /Call/.test(pos);
 export const isPut   = (pos)  => /Put/.test(pos);
 
-/* Net credit (short = +, long = −), per-contract, scaled by contractSize */
+/* Sign convention (premium):
+   short = + (credit), long = − (debit) — scaled by contractSize */
 export function netCredit(rows, contractSize = 1) {
   let sum = 0;
   for (const r of rows) {
@@ -18,7 +19,12 @@ export function netCredit(rows, contractSize = 1) {
   return sum * (Number(contractSize) || 1);
 }
 
-/* Expiry payoff for a single leg (per contract, not including premium) */
+/* How many option contracts in total (abs volumes) — used for commission */
+export function contractsCount(rows) {
+  return rows.reduce((acc, r) => acc + Math.abs(Number(r.volume || 0)), 0);
+}
+
+/* Expiry payoff for a single leg (per contract, *excluding* premium) */
 export function legPayoff(ST, r) {
   const K = Number(r.strike);
   const q = Number(r.volume || 0);
@@ -36,12 +42,12 @@ export function expiryPayoff(ST, rows, contractSize = 1) {
   return perContract * (Number(contractSize) || 1);
 }
 
-/* Convenience: build X grid and compute P&L (expiry + credit) */
-export function buildPayoffSeries({ lo, hi, rows, contractSize = 1, n = 400 }) {
+/* Build X grid and compute P&L = expiryPayoff + offset
+   where offset typically = netCredit - commissions */
+export function buildPayoffSeries({ lo, hi, rows, contractSize = 1, n = 400, offset = 0 }) {
   const xs = Array.from({ length: n }, (_, i) => lo + (i * (hi - lo)) / (n - 1));
-  const credit = netCredit(rows, contractSize);
-  const ys = xs.map((ST) => expiryPayoff(ST, rows, contractSize) + credit);
-  return { xs, ys, credit };
+  const ys = xs.map((ST) => expiryPayoff(ST, rows, contractSize) + (Number(offset) || 0));
+  return { xs, ys, offset: Number(offset) || 0 };
 }
 
 /* Find break-evens by linear interpolation between sign changes */
@@ -56,11 +62,10 @@ export function findBreakEvens(xs, ys) {
       out.push(xs[i - 1] + t * (xs[i] - xs[i - 1]));
     }
   }
-  // dedupe + sort
   return Array.from(new Set(out.map((v) => +v.toFixed(4)))).sort((a, b) => a - b);
 }
 
-/* Utility for labels */
+/* Formatting */
 export function fmtCur(v, ccy = "USD") {
   const n = Number(v);
   if (!Number.isFinite(n)) return "—";
