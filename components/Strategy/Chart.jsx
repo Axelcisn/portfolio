@@ -6,7 +6,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 /* ------------------------------ Math helpers ------------------------------ */
 const SQRT2 = Math.SQRT2;
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
-
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 function erf(x) {
   const sign = x < 0 ? -1 : 1;
@@ -24,7 +23,7 @@ function d1(S, K, r, sigma, T) {
   if (!(S > 0) || !(K > 0) || !(sigma > 0) || !(T > 0)) return 0;
   return (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
 }
-function d2(d1, sigma, T) { return d1 - sigma * Math.sqrt(T); }
+function d2(d1v, sigma, T) { return d1v - sigma * Math.sqrt(T); }
 
 function bsPrice(S, K, r, sigma, T, type) {
   if (!(S > 0) || !(K > 0)) return 0;
@@ -94,7 +93,6 @@ function ticks(min, max, count = 6) {
 
 /* ------------------------------- Leg helpers ------------------------------ */
 const LEG_LABEL = { lc: "Long Call", sc: "Short Call", lp: "Long Put", sp: "Short Put" };
-
 function sanitizeLeg(leg) {
   const q = Number(leg?.qty || 0);
   return {
@@ -104,7 +102,6 @@ function sanitizeLeg(leg) {
     premium: Number.isFinite(leg?.premium) ? Number(leg.premium) : null,
   };
 }
-
 function collectStrikes(legs) {
   const ks = [];
   const L = legs || {};
@@ -126,7 +123,6 @@ function netPremiumFromLegs(legs) {
   const lp = n(L?.lp?.premium) * n(L?.lp?.qty);
   const sc = n(L?.sc?.premium) * n(L?.sc?.qty);
   const sp = n(L?.sp?.premium) * n(L?.sp?.qty);
-  // long = debit (+), short = credit (−)
   return (lc + lp) - (sc + sp);
 }
 
@@ -188,12 +184,13 @@ export default function Chart({
   riskFree = 0.02,
   sigma = 0.2,
   T = 30 / 365,
-  greek: greekProp,            // optional controlled greek name
-  onGreekChange,               // optional callback(name)
-  onLegsChange,                // optional callback(updatedLegs)
+  greek: greekProp,
+  onGreekChange,
+  onLegsChange,
   contractSize = 1,
+  showControls = true,         // NEW: hide editor when modal shows its own table
+  frameless = false,           // NEW: no card/border; blends with page
 }) {
-  /* ------------ internal editable legs (so you can type immediately) ------ */
   const [editable, setEditable] = useState(() => legs || {});
   useEffect(() => { setEditable(legs || {}); }, [legs]);
 
@@ -201,7 +198,6 @@ export default function Chart({
 
   const safeLegs = useMemo(() => {
     const L = { lc: {}, sc: {}, lp: {}, sp: {}, ...(editable || {}) };
-    // sanitize + auto-disable legs without a valid strike
     const mk = (leg) => {
       const q = Number(leg?.qty || 0);
       const K = Number(leg?.K);
@@ -211,12 +207,10 @@ export default function Chart({
     return { lc: mk(L.lc), sc: mk(L.sc), lp: mk(L.lp), sp: mk(L.sp) };
   }, [editable]);
 
-  /* ---------------------------- Greek selector ---------------------------- */
   const [greekInner, setGreekInner] = useState("vega");
   const greek = (greekProp || greekInner || "vega").toLowerCase();
   useEffect(() => { if (greekProp) setGreekInner(greekProp); }, [greekProp]);
 
-  /* ------------------------------- Domains -------------------------------- */
   const ks = collectStrikes(safeLegs);
   const centerStrike = ks.length === 1 ? ks[0] : (ks[0] + ks[ks.length - 1]) / 2 || spot || 0;
 
@@ -256,12 +250,11 @@ export default function Chart({
   const maxProfit = (slopeRight > 1e-6) ? Infinity : yExpMax;
   const maxLoss   = (slopeLeft  < -1e-6) ? -Infinity : yExpMin;
 
-  // Quick win-rate using lognormal PDF
+  // Quick win-rate proxy
   const mu = riskFree;
   const m = Math.log(Math.max(1e-9, spot || 1)) + (mu - 0.5 * sigma * sigma) * T;
   const s = sigma * Math.sqrt(T);
   const lognormPdf = (x) => (x > 0) ? (1 / (x * s * Math.sqrt(2 * Math.PI))) * Math.exp(-Math.pow(Math.log(x) - m, 2) / (2 * s * s)) : 0;
-
   const winMass = useMemo(() => {
     let mass = 0, total = 0;
     for (let i = 1; i < xs.length; i++) {
@@ -277,7 +270,6 @@ export default function Chart({
 
   const lotSize = useMemo(() => lotSizeFromLegs(safeLegs) || 1, [safeLegs]);
 
-  /* ------------------------------ SVG geometry ----------------------------- */
   const ref = useRef(null);
   const [w, setW] = useState(900);
   const [h, setH] = useState(420);
@@ -321,8 +313,10 @@ export default function Chart({
     return d;
   }
 
-  // Profit/loss region shading split by break-evens
+  // Profit/loss shading split by break-evens; only if there is signal
   const shadingRects = useMemo(() => {
+    const maxAbs = series.yExp.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    if (maxAbs < 1e-8) return []; // no legs active -> no shading
     const boundsX = [xDomain[0], ...be, xDomain[1]];
     const rects = [];
     for (let i = 0; i < boundsX.length - 1; i++) {
@@ -332,7 +326,7 @@ export default function Chart({
       rects.push({ x0: a, x1: b, sign: yMid >= 0 ? 1 : -1 });
     }
     return rects;
-  }, [xDomain, be, safeLegs, netPrem, contractSize]);
+  }, [xDomain, be, safeLegs, netPrem, contractSize, series.yExp]);
 
   const legend = [
     { key: "now", label: "Current P&L", stroke: "var(--accent)" },
@@ -340,7 +334,6 @@ export default function Chart({
     { key: "greek", label: GREEK_LABEL[greek] || "Greek", stroke: "var(--warn, #f59e0b)", dash: [6, 6] },
   ];
 
-  /* ----------------------------- Handlers (edit) --------------------------- */
   function updateLeg(key, field, value) {
     setEditable((prev) => {
       const next = { ...prev, [key]: { ...(prev?.[key] || {}) } };
@@ -352,21 +345,21 @@ export default function Chart({
       } else if (field === "K") {
         const v = value === "" ? null : Number(value);
         next[key].K = Number.isFinite(v) ? v : null;
-        // If strike cleared, auto-disable to avoid phantom legs
         if (!Number.isFinite(v)) next[key].enabled = false;
       } else if (field === "premium") {
         const v = value === "" ? null : Number(value);
         next[key].premium = Number.isFinite(v) ? v : null;
       }
-      // notify parent if requested
       onLegsChange?.(next);
       return next;
     });
   }
 
-  /* --------------------------------- Render -------------------------------- */
+  const Wrapper = frameless ? "div" : "section";
+  const wrapClass = frameless ? "chart-wrap" : "card chart-wrap";
+
   return (
-    <section className="card" ref={ref}>
+    <Wrapper className={wrapClass} ref={ref}>
       {/* Header with Greek selector */}
       <div className="chart-header">
         <div className="legend">
@@ -377,22 +370,36 @@ export default function Chart({
             </div>
           ))}
         </div>
-        <div className="greek-ctl">
-          <label className="small muted" htmlFor="greek">Greek</label>
-          <select
-            id="greek"
-            value={greek}
-            onChange={(e) => {
-              setGreekInner(e.target.value);
-              onGreekChange?.(e.target.value);
-            }}
-          >
-            <option value="vega">Vega</option>
-            <option value="delta">Delta</option>
-            <option value="gamma">Gamma</option>
-            <option value="theta">Theta</option>
-            <option value="rho">Rho</option>
-          </select>
+        <div className="header-tools">
+          <div className="greek-ctl">
+            <label className="small muted" htmlFor="greek">Greek</label>
+            <select
+              id="greek"
+              value={greek}
+              onChange={(e) => {
+                setGreekInner(e.target.value);
+                onGreekChange?.(e.target.value);
+              }}
+            >
+              <option value="vega">Vega</option>
+              <option value="delta">Delta</option>
+              <option value="gamma">Gamma</option>
+              <option value="theta">Theta</option>
+              <option value="rho">Rho</option>
+            </select>
+          </div>
+
+          {/* Unlock toggle (no text) — only when controls are shown */}
+          {showControls && (
+            <button
+              className={`switch ${lockStructure ? "" : "on"}`}
+              aria-label="Unlock structure"
+              role="switch"
+              aria-checked={!lockStructure}
+              onClick={() => setLockStructure((v) => !v)}
+              title={lockStructure ? "Unlock volume" : "Lock volume"}
+            />
+          )}
         </div>
       </div>
 
@@ -416,7 +423,7 @@ export default function Chart({
           />
         ))}
 
-        {/* Grid lines */}
+        {/* Grid */}
         {xTicks.map((t, i) => (
           <line key={`xg-${i}`} x1={xScale(t)} x2={xScale(t)} y1={pad.t} y2={pad.t + innerH}
             stroke="var(--border)" strokeOpacity="0.6" />
@@ -429,7 +436,7 @@ export default function Chart({
         {/* Axes */}
         <line x1={pad.l} x2={pad.l + innerW} y1={yScale(0)} y2={yScale(0)} stroke="var(--text)" strokeOpacity="0.8" />
 
-        {/* Left axis ticks/labels */}
+        {/* Left axis ticks */}
         {yTicks.map((t, i) => (
           <g key={`yl-${i}`}>
             <line x1={pad.l - 4} x2={pad.l} y1={yScale(t)} y2={yScale(t)} stroke="var(--text)" />
@@ -438,7 +445,7 @@ export default function Chart({
             </text>
           </g>
         ))}
-        {/* Bottom axis ticks/labels */}
+        {/* Bottom axis ticks */}
         {xTicks.map((t, i) => (
           <g key={`xl-${i}`}>
             <line x1={xScale(t)} x2={xScale(t)} y1={pad.t + innerH} y2={pad.t + innerH + 4} stroke="var(--text)" />
@@ -459,13 +466,11 @@ export default function Chart({
           </g>
         ))}
 
-        {/* Spot marker */}
+        {/* Spot & center markers */}
         {Number.isFinite(spot) && (
           <line x1={xScale(spot)} x2={xScale(spot)} y1={pad.t} y2={pad.t + innerH}
             stroke="var(--text)" strokeDasharray="4 6" strokeOpacity="0.6" />
         )}
-
-        {/* Center strike marker */}
         {Number.isFinite(centerStrike) && (
           <line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t + innerH}
             stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />
@@ -476,7 +481,7 @@ export default function Chart({
         <path d={linePath(xs, series.yExp, xScale, yScale)} fill="none" stroke="var(--text-muted, #8a8a8a)" strokeWidth="2" />
         <path d={linePath(xs, series.gVals, xScale, gScale)} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 6" />
 
-        {/* Break-even points */}
+        {/* Break-evens */}
         {be.map((b, i) => (
           <g key={`be-${i}`}>
             <line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t + innerH} stroke="var(--text)" strokeOpacity="0.25" />
@@ -510,83 +515,99 @@ export default function Chart({
       </div>
 
       {/* ---------------------------- Control Panel --------------------------- */}
-      <div className="ctrl">
-        <div className="ctrl-head">
-          <div className="title">Legs</div>
-          <label className="small">
-            <input type="checkbox" checked={!lockStructure} onChange={(e)=>setLockStructure(!e.target.checked)} />
-            <span style={{ marginLeft: 6 }}>Unlock structure</span>
-          </label>
-        </div>
-
-        <div className="table">
-          <div className="row header">
-            <div>On</div><div>Leg</div><div>Strike (K)</div><div>Volume</div><div>Premium</div>
+      {showControls && (
+        <div className="ctrl">
+          <div className="ctrl-head">
+            <div className="title">Legs</div>
           </div>
 
-          {["lc","sc","lp","sp"].map((k) => {
-            const leg = safeLegs[k]; // sanitized
-            const src = editable?.[k] || {};
-            return (
-              <div className="row" key={k}>
-                <div>
-                  <input
-                    type="checkbox"
-                    checked={!!src.enabled}
-                    onChange={(e)=>updateLeg(k, "enabled", e.target.checked)}
-                    aria-label={`Enable ${LEG_LABEL[k]}`}
-                  />
+          <div className="table">
+            <div className="row header">
+              <div>On</div><div>Leg</div><div>Strike (K)</div><div>Volume</div><div>Premium</div>
+            </div>
+
+            {["lc","sc","lp","sp"].map((k) => {
+              const leg = safeLegs[k];
+              const src = editable?.[k] || {};
+              return (
+                <div className="row" key={k}>
+                  <div>
+                    <input
+                      type="checkbox"
+                      checked={!!src.enabled}
+                      onChange={(e)=>updateLeg(k, "enabled", e.target.checked)}
+                      aria-label={`Enable ${LEG_LABEL[k]}`}
+                    />
+                  </div>
+                  <div className="leglbl">{LEG_LABEL[k]}</div>
+                  <div>
+                    <input
+                      className="field small"
+                      placeholder="e.g. 100"
+                      value={src.K ?? ""}
+                      onChange={(e)=>updateLeg(k, "K", e.target.value)}
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      className="field small"
+                      value={src.qty ?? 0}
+                      onChange={(e)=>updateLeg(k, "qty", e.target.value)}
+                      inputMode="numeric"
+                      disabled={lockStructure}
+                    />
+                  </div>
+                  <div>
+                    <input
+                      className="field small"
+                      placeholder="e.g. 1.25"
+                      value={src.premium ?? ""}
+                      onChange={(e)=>updateLeg(k, "premium", e.target.value)}
+                      inputMode="decimal"
+                    />
+                  </div>
                 </div>
-                <div className="leglbl">{LEG_LABEL[k]}</div>
-                <div>
-                  <input
-                    className="field small"
-                    placeholder="e.g. 100"
-                    value={src.K ?? ""}
-                    onChange={(e)=>updateLeg(k, "K", e.target.value)}
-                    inputMode="decimal"
-                  />
-                </div>
-                <div>
-                  <input
-                    className="field small"
-                    value={src.qty ?? 0}
-                    onChange={(e)=>updateLeg(k, "qty", e.target.value)}
-                    inputMode="numeric"
-                    disabled={lockStructure}
-                  />
-                </div>
-                <div>
-                  <input
-                    className="field small"
-                    placeholder="e.g. 1.25"
-                    value={src.premium ?? ""}
-                    onChange={(e)=>updateLeg(k, "premium", e.target.value)}
-                    inputMode="decimal"
-                  />
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       <style jsx>{`
-        .chart-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px 2px; }
+        .chart-wrap{ display:block; }
+        .chart-header{
+          display:flex; align-items:center; justify-content:space-between;
+          gap:12px; padding:8px 6px 2px;
+        }
         .legend{ display:flex; gap:14px; flex-wrap:wrap; }
         .leg{ display:inline-flex; align-items:center; gap:8px; font-size:12.5px; opacity:.9; }
         .sw{ width:18px; height:0; border-top:2px solid; border-radius:2px; }
+        .header-tools{ display:flex; align-items:center; gap:10px; }
         .greek-ctl{ display:flex; align-items:center; gap:8px; }
         .greek-ctl select{ height:28px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:0 8px; }
 
-        .empty-hint{ margin:10px 12px; padding:10px; border:1px dashed var(--border); border-radius:10px; opacity:.8; }
+        /* iOS-like switch (no text) */
+        .switch{
+          position:relative; width:44px; height:26px; border-radius:999px;
+          background:var(--card); border:1px solid var(--border);
+          display:inline-flex; align-items:center; transition:background .18s ease;
+        }
+        .switch::after{
+          content:""; width:18px; height:18px; border-radius:50%;
+          background:#d1d5db; position:absolute; left:4px; transition:left .18s ease;
+        }
+        .switch.on{ background:#3b82f6; border-color:#1e40af; }
+        .switch.on::after{ left:22px; background:#fff; }
+
+        .empty-hint{ margin:10px 6px; padding:10px; border:1px dashed var(--border); border-radius:10px; opacity:.8; }
 
         .tick{ font-size:11px; fill:var(--text); opacity:.75; }
         .axis{ font-size:12px; fill:var(--text); opacity:.7; }
 
         .metrics{
           display:grid; grid-template-columns: repeat(6, minmax(0,1fr));
-          gap:10px; padding:10px 12px 12px; border-top:1px solid var(--border);
+          gap:10px; padding:10px 6px 12px; border-top:1px solid var(--border);
         }
         .m .k{ font-size:12px; opacity:.7; }
         .m .v{ font-weight:700; }
@@ -594,15 +615,15 @@ export default function Chart({
           .metrics{ grid-template-columns: repeat(3, minmax(0,1fr)); }
         }
 
-        .ctrl{ margin-top:10px; border-top:1px solid var(--border); padding:10px 10px 4px; }
+        .ctrl{ margin-top:10px; border-top:1px solid var(--border); padding:10px 6px 4px; }
         .ctrl-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-        .ctrl .title{ font-weight:700; }
+        .title{ font-weight:700; }
         .table{ display:grid; gap:6px; }
         .row{ display:grid; grid-template-columns: 60px 1.2fr 1.2fr 1fr 1.2fr; gap:8px; align-items:center; }
         .row.header{ font-size:12px; opacity:.7; }
         .leglbl{ font-weight:600; }
         .field.small{ height:30px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:0 8px; width:100%; }
       `}</style>
-    </section>
+    </Wrapper>
   );
 }
