@@ -185,7 +185,7 @@ function ChartCanvas({
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
           <circle cx="118" r="4" fill="#f472b6" />
           <text x="126" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Expiration P&L</text>
-          {hasG && (
+          {showGreek && greekYs.length > 0 && (
             <>
               <circle cx="268" r="4" fill="#f59e0b" />
               <text x="276" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
@@ -200,7 +200,9 @@ function ChartCanvas({
             <path d={plPath} fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" />
           </>
         )}
-        {hasG && <path d={gPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />}
+        {showGreek && greekYs.length > 0 && (
+          <path d={gPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" />
+        )}
       </svg>
     </div>
   );
@@ -305,7 +307,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const maxProfit = useMemo(() => Math.max(...payoffSeries.ys, 0), [payoffSeries.ys]);
   const maxLoss   = useMemo(() => Math.min(...payoffSeries.ys, 0), [payoffSeries.ys]);
 
-  /* ===== Win Rate & Expected Profit (EV) using MC pdf ===== */
+  /* ===== Win Rate & EV using MC pdf ===== */
   const { winRate, evAbs } = useMemo(() => {
     if (!bellXs.length || !pdf.length) return { winRate: null, evAbs: null };
     let pWin = 0;
@@ -319,6 +321,22 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     }
     return { winRate: pWin, evAbs: ev };
   }, [bellXs, pdf, rows, contractSize, offset]);
+
+  /* ===== Probability of hitting near max profit / max loss (realistic) ===== */
+  const { pMaxProfit, pMaxLoss } = useMemo(() => {
+    if (!bellXs.length || !pdf.length) return { pMaxProfit: null, pMaxLoss: null };
+    const hiThr = maxProfit > 0 ? maxProfit * 0.98 : Infinity;
+    const loThr = maxLoss   < 0 ? maxLoss   * 0.98 : -Infinity;
+    let pHi = 0, pLo = 0;
+    for (let i = 0; i < bellXs.length; i++) {
+      const ST = bellXs[i];
+      const pnl = expiryPayoff(ST, rows, contractSize) + offset;
+      const pr  = pdf[i] || 0;
+      if (maxProfit > 0 && pnl >= hiThr) pHi += pr;
+      if (maxLoss   < 0 && pnl <= loThr) pLo += pr;
+    }
+    return { pMaxProfit: pHi, pMaxLoss: pLo };
+  }, [bellXs, pdf, rows, contractSize, offset, maxProfit, maxLoss]);
 
   /* ===== Greeks (right axis) ===== */
   const greekYs = useMemo(() => {
@@ -470,7 +488,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             <Spec title="Max Loss">{fmtCur(maxLoss, currency || "USD")}</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
             <Spec title="Expected Profit (EV)">{evAbs == null ? "—" : fmtCur(evAbs, currency || "USD")}</Spec>
+            <Spec title="P(Max Profit region)">{pMaxProfit == null ? "—" : `${Math.round(pMaxProfit * 100)}%`}</Spec>
+            <Spec title="P(Max Loss region)">{pMaxLoss == null ? "—" : `${Math.round(pMaxLoss * 100)}%`}</Spec>
             <Spec title="Net Credit (after commission)">{fmtCur(offset, currency || "USD")}</Spec>
+            <Spec title="Commission">
+              {fmtCur((Number(commission) || 0) * contracts, currency || "USD")} ({contracts} contracts)
+            </Spec>
           </div>
         </div>
 
