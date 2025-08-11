@@ -23,17 +23,18 @@ function netPremium(legs) {
 
 /**
  * Props
- * - legs: { lc?, sc?, lp?, sp? } where each leg looks like:
- *         { enabled?:boolean, K:null|number, qty:number, premium:null|number }
- * - currency?: "USD" | "EUR" | ...
+ * - legs: { lc?, sc?, lp?, sp? } with { enabled?:boolean, K:null|number, qty:number, premium:null|number }
+ * - currency?: ISO code (default "USD")
  * - onChange?: (updatedLegs) => void
- * - canEditVolume?: boolean  (default false; when true, Volume becomes editable)
+ * - canEditVolume?: boolean (default false)
+ * - showNetPremium?: boolean (default false) — renders a one-line total if desired
  */
 export default function StrategyConfigTable({
   legs = {},
   currency = "USD",
   onChange,
   canEditVolume = false,
+  showNetPremium = false,
 }) {
   const [rows, setRows] = useState(() => ({ lc: legs.lc, sc: legs.sc, lp: legs.lp, sp: legs.sp }));
 
@@ -41,21 +42,18 @@ export default function StrategyConfigTable({
     setRows({ lc: legs.lc, sc: legs.sc, lp: legs.lp, sp: legs.sp });
   }, [legs?.lc, legs?.sc, legs?.lp, legs?.sp]);
 
-  // Only show legs that exist in the spec (qty !== 0 or explicitly present)
-  const order = ["lc", "sc", "lp", "sp"].filter((k) => rows?.[k] && (rows[k].qty !== 0 || rows[k].enabled || rows[k].K != null));
+  const order = ["lc", "sc", "lp", "sp"].filter(
+    (k) => rows?.[k] && (rows[k].qty !== 0 || rows[k].enabled || rows[k].K != null)
+  );
 
   const total = useMemo(() => netPremium(rows), [rows]);
 
   function updateLeg(key, field, value) {
     setRows((prev) => {
       const next = { ...prev, [key]: { ...(prev?.[key] || { qty: 0 }) } };
-      if (field === "K") {
-        const v = numOrNull(value);
-        next[key].K = v;
-        // do not force-enable here; the chart handles enabling on valid K
-      } else if (field === "premium") {
-        next[key].premium = numOrNull(value);
-      } else if (field === "qty") {
+      if (field === "K") next[key].K = numOrNull(value);
+      else if (field === "premium") next[key].premium = numOrNull(value);
+      else if (field === "qty") {
         const n = Number(value);
         next[key].qty = Number.isFinite(n) ? n : (prev?.[key]?.qty ?? 0);
       }
@@ -119,18 +117,20 @@ export default function StrategyConfigTable({
         );
       })}
 
-      <div className="footer">
-        <div className="np-label">Net Premium:</div>
-        <div className="np-value">
-          {new Intl.NumberFormat("en-US", { style: "currency", currency }).format(total || 0)}
+      {showNetPremium && (
+        <div className="footer">
+          <div className="np-label">Net Premium:</div>
+          <div className="np-value">
+            {new Intl.NumberFormat("en-US", { style: "currency", currency }).format(total || 0)}
+          </div>
         </div>
-      </div>
+      )}
 
       <style jsx>{`
-        .cfg { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+        .cfg { margin-top: 4px; }
         .row {
           display: grid;
-          grid-template-columns: 1.4fr 1.1fr 0.9fr 1.1fr;
+          grid-template-columns: 1.4fr 1.1fr 0.9fr 1.1fr; /* matches Summary */
           gap: 10px;
           align-items: center;
           padding: 6px 0;
@@ -145,7 +145,7 @@ export default function StrategyConfigTable({
           border-radius: 8px;
           padding: 0 10px;
         }
-        .vol.ro { opacity: 0.8; }
+        .vol.ro { opacity: 0.85; }
         .empty {
           margin: 8px 0 6px; padding: 10px;
           border: 1px dashed var(--border); border-radius: 8px;
@@ -153,8 +153,8 @@ export default function StrategyConfigTable({
         }
         .footer {
           display: flex; justify-content: flex-end; gap: 8px;
-          padding-top: 8px; border-top: 1px solid var(--border);
-          margin-top: 6px;
+          padding-top: 8px; margin-top: 6px;
+          border-top: 1px solid var(--border);
         }
         .np-label { font-size: 12px; opacity: 0.7; }
         .np-value { font-weight: 700; }
