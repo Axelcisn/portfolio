@@ -17,35 +17,45 @@ function uid() {
 }
 
 /**
- * Row shape we emit/consume:
+ * Row shape:
  * { id, type: 'lc'|'sc'|'lp'|'sp'|'ls'|'ss', K: number|null, premium: number|null,
  *   qty: number, days: number|null, enabled: boolean }
  *
  * Notes
- * - For stock rows (ls/ss) `K` acts as the entry **price**.
- * - `days` is days to expiration; for stock rows it may be null and is ignored.
+ * - For stock rows (ls/ss) `K` acts as entry price; `days` is ignored (disabled).
  */
 export default function PositionBuilder({
   rows: rowsProp = [],
   onChange,
   currency = "USD",
-  defaultDays = 30,   // fallback if not provided by the page
+  defaultDays = 30,
 }) {
   const [rows, setRows] = useState(() =>
-    (rowsProp && rowsProp.length ? rowsProp : [])
-      .map((r) => ({ id: r.id ?? uid(), enabled: true, qty: 1, ...r }))
+    (rowsProp && rowsProp.length ? rowsProp : []).map((r) => ({
+      id: r.id ?? uid(),
+      enabled: r.enabled ?? true,
+      qty: Math.max(1, Number(r.qty ?? 1)),
+      ...r,
+    }))
   );
 
+  // sync from parent if it replaces rows
   useEffect(() => {
-    // keep in sync if parent replaces rows
     if (rowsProp) {
       setRows(
-        rowsProp.map((r) => ({ id: r.id ?? uid(), enabled: r.enabled ?? true, qty: r.qty ?? 1, ...r }))
+        rowsProp.map((r) => ({
+          id: r.id ?? uid(),
+          enabled: r.enabled ?? true,
+          qty: Math.max(1, Number(r.qty ?? 1)),
+          ...r,
+        }))
       );
     }
   }, [rowsProp?.length]);
 
-  useEffect(() => { onChange?.(rows); }, [rows]);
+  useEffect(() => {
+    onChange?.(rows);
+  }, [rows, onChange]);
 
   function setRow(id, patch) {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -69,7 +79,7 @@ export default function PositionBuilder({
   }
 
   const headerCols = useMemo(
-    () => ["Strike", "Type", "Expiration", "Premium"],
+    () => ["Strike", "Type", "Expiration", "Volume", "Premium"],
     []
   );
 
@@ -88,69 +98,120 @@ export default function PositionBuilder({
         <div className="empty">No positions yet. Use “+ New position”.</div>
       )}
 
-      {rows.map((r) => (
-        <div key={r.id} className="grid row">
-          {/* Strike / Price */}
-          <div>
-            <input
-              className="field"
-              placeholder={r.type === "ls" || r.type === "ss" ? "Entry price" : "Strike"}
-              inputMode="decimal"
-              value={r.K ?? ""}
-              onChange={(e) => setRow(r.id, { K: e.target.value === "" ? null : Number(e.target.value) })}
-            />
-          </div>
+      {rows.map((r) => {
+        const isStock = r.type === "ls" || r.type === "ss";
+        return (
+          <div key={r.id} className="grid row">
+            {/* Strike / Entry price */}
+            <div>
+              <input
+                className="field"
+                placeholder={isStock ? "Entry price" : "Strike"}
+                inputMode="decimal"
+                step="0.01"
+                value={r.K ?? ""}
+                onChange={(e) =>
+                  setRow(r.id, { K: e.target.value === "" ? null : Number(e.target.value) })
+                }
+              />
+            </div>
 
-          {/* Type */}
-          <div>
-            <select
-              className="field"
-              value={r.type}
-              onChange={(e) => setRow(r.id, { type: e.target.value })}
-            >
-              {TYPE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+            {/* Type */}
+            <div>
+              <select
+                className="field"
+                value={r.type}
+                onChange={(e) => setRow(r.id, { type: e.target.value })}
+              >
+                {TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          {/* Expiration (days) — disabled for stock */}
-          <div>
-            <input
-              className="field"
-              placeholder="days"
-              inputMode="numeric"
-              disabled={r.type === "ls" || r.type === "ss"}
-              value={
-                r.type === "ls" || r.type === "ss"
-                  ? ""
-                  : (Number.isFinite(r.days) ? r.days : (defaultDays ?? 30))
-              }
-              onChange={(e) => setRow(r.id, { days: e.target.value === "" ? null : Number(e.target.value) })}
-            />
-          </div>
+            {/* Expiration (days) — disabled for stock */}
+            <div>
+              <input
+                className="field"
+                placeholder="days"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                disabled={isStock}
+                value={
+                  isStock
+                    ? ""
+                    : Number.isFinite(r.days)
+                    ? r.days
+                    : (defaultDays ?? 30)
+                }
+                onChange={(e) =>
+                  setRow(r.id, {
+                    days: e.target.value === "" ? null : Math.max(1, Number(e.target.value)),
+                  })
+                }
+              />
+            </div>
 
-          {/* Premium */}
-          <div>
-            <input
-              className="field"
-              placeholder={currency}
-              inputMode="decimal"
-              value={r.premium ?? ""}
-              onChange={(e) => setRow(r.id, { premium: e.target.value === "" ? null : Number(e.target.value) })}
-            />
-          </div>
+            {/* Volume (lots/shares) */}
+            <div>
+              <input
+                className="field"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                value={r.qty ?? 1}
+                onChange={(e) =>
+                  setRow(r.id, {
+                    qty: Math.max(1, Number(e.target.value || 1)),
+                  })
+                }
+              />
+            </div>
 
-          {/* Row actions */}
-          <div className="end">
-            <button className="icon" onClick={() => removeRow(r.id)} aria-label="Remove position">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                <path d="M6 7h12M10 7v10m4-10v10M9 7l1-2h4l1 2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
+            {/* Premium */}
+            <div>
+              <input
+                className="field"
+                placeholder={currency}
+                inputMode="decimal"
+                step="0.01"
+                value={r.premium ?? ""}
+                onChange={(e) =>
+                  setRow(r.id, {
+                    premium: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+              />
+            </div>
+
+            {/* Row actions: improved trash icon */}
+            <div className="end">
+              <button
+                className="icon"
+                title="Remove position"
+                aria-label="Remove position"
+                onClick={() => removeRow(r.id)}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  {/* Trash can with lid (clean outline) */}
+                  <path
+                    d="M9 3.5h6m-9 3h12M8 7v11a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V7M9 7l1-3h4l1 3"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M10 10v7M14 10v7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       {/* Add new position */}
       <div className="add">
@@ -161,7 +222,7 @@ export default function PositionBuilder({
         .pb { display: grid; gap: 8px; }
         .grid {
           display: grid;
-          grid-template-columns: 1.2fr 1.3fr 1.0fr 1.0fr 40px;
+          grid-template-columns: 1.2fr 1.3fr 0.9fr 0.8fr 1.0fr 40px; /* + actions */
           gap: 10px;
           align-items: center;
         }
@@ -181,7 +242,11 @@ export default function PositionBuilder({
           width: 32px; height: 32px; border-radius: 8px;
           border: 1px solid var(--border);
           background: var(--card); color: var(--text);
+          display: inline-flex; align-items: center; justify-content: center;
+          transition: background .15s ease, border-color .15s ease, transform .08s ease;
         }
+        .icon:hover { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.45); color: #ef4444; }
+        .icon:active { transform: translateY(1px); }
         .add { display: flex; justify-content: center; }
         .addBtn {
           width: 100%; max-width: 520px; height: 36px;
