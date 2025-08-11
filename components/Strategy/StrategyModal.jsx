@@ -8,12 +8,9 @@ import useMonteCarlo from "./useMonteCarlo";
 /* =========================
    Helpers
    ========================= */
-const POS_MAP = {
-  "Long Call": { key: "lc", sign: +1 },
-  "Short Call": { key: "sc", sign: -1 },
-  "Long Put": { key: "lp", sign: +1 },
-  "Short Put": { key: "sp", sign: -1 },
-};
+const isShort = (pos) => /Short/.test(pos);
+const isCall = (pos) => /Call/.test(pos);
+const isPut  = (pos) => /Put/.test(pos);
 
 const fmtCur = (v, ccy = "USD") => {
   const n = Number(v);
@@ -29,33 +26,38 @@ const fmtCur = (v, ccy = "USD") => {
   }
 };
 
-function toChartLegs(rows) {
-  const empty = { enabled: false, K: NaN, qty: 0 };
-  const obj = { lc: { ...empty }, sc: { ...empty }, lp: { ...empty }, sp: { ...empty } };
-
-  rows.forEach((r) => {
-    const map = POS_MAP[r.position];
-    if (!map) return;
-    const qty = Number(r.volume || 0);
-    const k = Number(r.strike);
-    if (!Number.isFinite(qty) || !Number.isFinite(k)) return;
-    obj[map.key] = { enabled: qty > 0, K: k, qty };
-  });
-  return obj;
+function uniqueSorted(arr) {
+  return Array.from(new Set(arr.filter(Number.isFinite))).sort((a, b) => a - b);
 }
 
-function netPremium(rows) {
+// premium credit (short +, long −), per contract, scaled by contractSize
+function netCredit(rows, contractSize) {
   let sum = 0;
-  rows.forEach((r) => {
-    const map = POS_MAP[r.position];
-    if (!map) return;
+  for (const r of rows) {
     const vol = Number(r.volume || 0);
     const prem = Number(r.premium || 0);
-    if (Number.isFinite(vol) && Number.isFinite(prem)) {
-      sum += map.sign * vol * prem;
-    }
-  });
-  return sum;
+    if (!Number.isFinite(vol) || !Number.isFinite(prem)) continue;
+    sum += (isShort(r.position) ? +1 : -1) * vol * prem;
+  }
+  return sum * (Number(contractSize) || 1);
+}
+
+// payoff at expiry for a single leg, per contract
+function legPayoff(ST, r) {
+  const K = Number(r.strike);
+  const q = Number(r.volume || 0);
+  if (!Number.isFinite(K) || !Number.isFinite(q)) return 0;
+  let p = 0;
+  if (isCall(r.position)) p = Math.max(ST - K, 0);
+  if (isPut(r.position))  p = Math.max(K - ST, 0);
+  const sign = isShort(r.position) ? -1 : +1; // short loses payoff
+  return sign * q * p;
+}
+
+// total expiry payoff (sum of legs) scaled by contractSize
+function payoffAt(ST, rows, contractSize) {
+  const perContract = rows.reduce((acc, r) => acc + legPayoff(ST, r), 0);
+  return perContract * (Number(contractSize) || 1);
 }
 
 /* =========================
@@ -86,15 +88,13 @@ function ChartCanvas({
   const wrapRef = useRef(null);
   const width = useSize(wrapRef);
 
-  // X-domain from strikes (fallback ±20% around spot)
   const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
   const s = Number(spot);
   const minX = strikes.length ? Math.min(...strikes, s || Infinity) : Number.isFinite(s) ? s * 0.8 : 180;
   const maxX = strikes.length ? Math.max(...strikes, s || -Infinity) : Number.isFinite(s) ? s * 1.2 : 275;
 
-  // Y-domain for P&L placeholder (until payoff wiring)
   const minY = -0.08;
-  const maxY = 0.08;
+  const maxY =  0.08;
 
   const P = { t: 18, r: 18, b: 46, l: 64 };
   const W = width - P.l - P.r;
@@ -103,17 +103,11 @@ function ChartCanvas({
   const sx = (v) => P.l + ((v - minX) / (maxX - minX)) * W;
   const sy = (v) => P.t + (1 - (v - minY) / (maxY - minY)) * H;
 
-  const yTicks = 6;
-  const xTicks = 8;
+  const yTicks = 6, xTicks = 8;
 
-  // MC bell -> scaled to chart band
   const bellPts =
     bellXs.length && bellYs.length
-      ? bellXs.map((vx, i) => {
-          const n = bellYs[i]; // 0..1
-          const mapped = -0.08 + n * 0.06; // vertical placement inside band
-          return `${sx(vx)},${sy(mapped)}`;
-        })
+      ? bellXs.map((vx, i) => `${sx(vx)},${sy(-0.08 + bellYs[i] * 0.06)}`)
       : [];
 
   return (
@@ -121,7 +115,6 @@ function ChartCanvas({
       <svg width={width} height={height} role="img" aria-label="Strategy chart">
         <rect x="0" y="0" width={width} height={height} fill="transparent" />
 
-        {/* grid Y */}
         {Array.from({ length: yTicks + 1 }).map((_, i) => {
           const yy = P.t + (i / yTicks) * H;
           const val = maxY - (i / yTicks) * (maxY - minY);
@@ -135,7 +128,6 @@ function ChartCanvas({
           );
         })}
 
-        {/* grid X */}
         {Array.from({ length: xTicks + 1 }).map((_, i) => {
           const xx = P.l + (i / xTicks) * W;
           const val = minX + (i / xTicks) * (maxX - minX);
@@ -149,12 +141,10 @@ function ChartCanvas({
           );
         })}
 
-        {/* underlying vertical */}
         {Number.isFinite(s) && s >= minX && s <= maxX && (
           <line x1={sx(s)} y1={P.t} x2={sx(s)} y2={height - P.b} stroke="rgba(255,255,255,.35)" strokeDasharray="4 4" />
         )}
 
-        {/* legends */}
         <g transform={`translate(${P.l + 4}, ${P.t + 10})`}>
           <circle r="4" fill="#60a5fa" />
           <text x="8" y="3" fontSize="10" fill="rgba(255,255,255,.85)">Current P&L</text>
@@ -164,11 +154,9 @@ function ChartCanvas({
           <text x="238" y="3" fontSize="10" fill="rgba(255,255,255,.85)">{greekLabel}</text>
         </g>
 
-        {/* placeholder P&L lines (until payoff wiring) */}
         <polyline fill="none" stroke="#60a5fa" strokeWidth="2" points={`${P.l},${sy(-0.015)} ${width - P.r},${sy(-0.015)}`} />
         <polyline fill="none" stroke="#f472b6" strokeWidth="2" strokeDasharray="4 3" points={`${P.l},${sy(-0.015)} ${width - P.r},${sy(-0.015)}`} />
 
-        {/* Monte‑Carlo bell / Greek curve */}
         {bellPts.length > 1 && (
           <polyline fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 5" points={bellPts.join(" ")} />
         )}
@@ -183,7 +171,6 @@ function ChartCanvas({
 export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const { spot, currency, sigma: sigmaEnv, T: TEnv, riskFree } = env || {};
 
-  // editable rows
   const [rows, setRows] = useState(() => {
     const s = Number(spot) || 0;
     return (strategy?.legs || []).map((r) => {
@@ -191,22 +178,17 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         const dir = strategy?.direction;
         const pos = r.position;
         let k = s;
-        if (pos.includes("Call")) k = dir === "Bullish" ? s * 1.05 : s * 1.03;
-        if (pos.includes("Put")) k = dir === "Bearish" ? s * 0.95 : s * 0.97;
+        if (isCall(pos)) k = dir === "Bullish" ? s * 1.05 : s * 1.03;
+        if (isPut(pos))  k = dir === "Bearish" ? s * 0.95 : s * 0.97;
         return { ...r, strike: Math.round(k * 100) / 100, volume: r.volume ?? 1 };
       }
       return { ...r, volume: r.volume ?? 1 };
     });
   });
 
-  const chartLegs = useMemo(() => toChartLegs(rows), [rows]);
-  const totalPrem = useMemo(() => netPremium(rows), [rows]);
-
-  // UI bits
-  const [greek, setGreek] = useState("Vega");        // label only for now
+  const [greek, setGreek] = useState("Vega");
   const [contractSize, setContractSize] = useState(100);
 
-  // Close on ESC + lock background
   const dialogRef = useRef(null);
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onClose?.();
@@ -227,29 +209,50 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     });
   };
 
-  // ===== Monte‑Carlo distribution =====
-  const { xs, ys, progress, run } = useMonteCarlo();
+  // ===== Monte‑Carlo distribution & realistic band =====
+  const { xs, ys, band, progress, run } = useMonteCarlo();
   const strikes = rows.map((r) => Number(r.strike)).filter((n) => Number.isFinite(n));
-  const lo = strikes.length ? Math.min(...strikes) : (spot || 0) * 0.6;
-  const hi = strikes.length ? Math.max(...strikes) : (spot || 0) * 1.4;
+  const loFallback = strikes.length ? Math.min(...strikes) : (spot || 0) * 0.6;
+  const hiFallback = strikes.length ? Math.max(...strikes) : (spot || 0) * 1.4;
 
   useEffect(() => {
-    // Prefer 1,000,000 if possible; otherwise 500,000
     const n = (typeof navigator !== "undefined" && navigator.hardwareConcurrency >= 8) ? 1_000_000 : 500_000;
     run({
       S0: Number(spot) || 0,
       sigma: Number.isFinite(sigmaEnv) ? sigmaEnv : 0.25,
-      mu: Number.isFinite(riskFree) ? riskFree / 100 : 0, // assume % if provided as 2.00
+      mu: Number.isFinite(riskFree) ? riskFree / 100 : 0,
       T: Number.isFinite(TEnv) ? TEnv : 30 / 365,
       n,
       bins: 140,
-      minX: lo,
-      maxX: hi,
+      minX: loFallback,
+      maxX: hiFallback,
     });
-  }, [spot, sigmaEnv, TEnv, riskFree, lo, hi, run]);
+  }, [spot, sigmaEnv, TEnv, riskFree, loFallback, hiFallback, run]);
+
+  // ===== Max Profit / Max Loss (realistic over MC 1%..99% band) =====
+  const { maxProfit, maxLoss } = useMemo(() => {
+    const domainLo = Number.isFinite(band.q01) ? band.q01 : loFallback;
+    const domainHi = Number.isFinite(band.q99) ? band.q99 : hiFallback;
+    const pts = uniqueSorted([domainLo, ...strikes, domainHi]);
+    let mx = -Infinity, mn = Infinity;
+    const credit = netCredit(rows, contractSize);
+
+    for (const ST of pts) {
+      const p = payoffAt(ST, rows, contractSize) + credit;
+      if (p > mx) mx = p;
+      if (p < mn) mn = p;
+    }
+    // guard if nothing valid
+    if (!Number.isFinite(mx)) mx = 0;
+    if (!Number.isFinite(mn)) mn = 0;
+    return { maxProfit: mx, maxLoss: mn };
+  }, [rows, strikes, band, contractSize, loFallback, hiFallback]);
 
   // unified spacing
   const GAP = 14;
+
+  // net credit for display
+  const netCred = useMemo(() => netCredit(rows, contractSize), [rows, contractSize]);
 
   return (
     <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
@@ -273,35 +276,19 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
               {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
             </div>
             <div className="mh-meta">
-              <div id="sg-modal-title" className="mh-name">
-                {strategy?.name || "Strategy"}
-              </div>
+              <div id="sg-modal-title" className="mh-name">{strategy?.name || "Strategy"}</div>
               <DirectionBadge value={strategy?.direction || "Neutral"} />
             </div>
           </div>
           <div className="mh-actions">
-            <button className="button ghost" type="button" onClick={() => {}}>
-              Save
-            </button>
-            <button className="button" type="button" onClick={() => onApply?.(chartLegs, totalPrem)}>
-              Apply
-            </button>
-            <button className="button ghost" type="button" onClick={onClose}>
-              Close
-            </button>
+            <button className="button ghost" type="button" onClick={() => {}}>Save</button>
+            <button className="button" type="button" onClick={() => onApply?.({}, netCred)}>Apply</button>
+            <button className="button ghost" type="button" onClick={onClose}>Close</button>
           </div>
         </div>
 
-        {/* Chart controls (top-right), with compact select to fix clipped text */}
-        <div
-          style={{
-            display: "flex",
-            gap: GAP,
-            alignItems: "center",
-            justifyContent: "flex-end",
-            marginBottom: 6,
-          }}
-        >
+        {/* Controls above chart */}
+        <div style={{ display: "flex", gap: GAP, alignItems: "center", justifyContent: "flex-end", marginBottom: 6 }}>
           <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             Contract size
             <input
@@ -314,14 +301,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
               style={{ width: 120 }}
             />
           </label>
-
           <label className="small muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             Greek
             <select
               className="field"
               value={greek}
               onChange={(e) => setGreek(e.target.value)}
-              // Fix for text clipping (as seen with "Vega")
               style={{ width: 150, height: 40, lineHeight: "20px", paddingTop: 10, paddingBottom: 10 }}
             >
               <option>Not selected</option>
@@ -334,36 +319,21 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </label>
         </div>
 
-        {/* CHART — no card/border, full bleed to the modal padding */}
+        {/* Chart */}
         <div style={{ marginBottom: 6 }}>
-          <ChartCanvas
-            spot={spot}
-            rows={rows}
-            bellXs={xs}
-            bellYs={ys}
-            greekLabel={greek === "Not selected" ? "Distribution" : greek}
-            height={420} // slightly taller for readability
-          />
+          <ChartCanvas spot={spot} rows={rows} bellXs={xs} bellYs={ys} greekLabel={greek === "Not selected" ? "Distribution" : greek} height={420} />
         </div>
 
-        {/* Progress under chart */}
+        {/* Progress */}
         <div className="small muted" style={{ marginBottom: GAP }}>
           Paths: {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
         </div>
 
-        {/* Metrics under chart */}
-        <div
-          className="metric-strip"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(5, minmax(0,1fr))",
-            gap: GAP,
-            marginBottom: GAP,
-          }}
-        >
+        {/* Metrics */}
+        <div className="metric-strip" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0,1fr))", gap: GAP, marginBottom: GAP }}>
           <MetricBox label="Underlying" value={fmtCur(spot, currency || "USD")} />
-          <MetricBox label="Max Profit" value="—" />
-          <MetricBox label="Max Loss" value="—" />
+          <MetricBox label="Max Profit" value={fmtCur(maxProfit, currency || "USD")} />
+          <MetricBox label="Max Loss" value={fmtCur(maxLoss,   currency || "USD")} />
           <MetricBox label="Win Rate" value="—" />
           <MetricBox label="Breakeven" value="—" />
         </div>
@@ -375,12 +345,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             <Spec title="Composition">
               {rows.length ? rows.map((r) => `${r.position}×${r.volume ?? 0}`).join(" · ") : "—"}
             </Spec>
-            <Spec title="Breakeven(s)">—{/* will fill when BE rules are added */}</Spec>
-            <Spec title="Max Profit">—</Spec>
-            <Spec title="Max Loss">—</Spec>
+            <Spec title="Breakeven(s)">—</Spec>
+            <Spec title="Max Profit">{fmtCur(maxProfit, currency || "USD")}</Spec>
+            <Spec title="Max Loss">{fmtCur(maxLoss, currency || "USD")}</Spec>
             <Spec title="Risk Profile">{strategy?.direction || "Neutral"}</Spec>
             <Spec title="Greeks Exposure">Δ/Γ/Θ/ν —</Spec>
-            <Spec title="Margin Requirement">—</Spec>
+            <Spec title="Net Credit">{fmtCur(netCred, currency || "USD")}</Spec>
           </div>
         </div>
 
@@ -406,8 +376,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           </div>
 
           <div className="row-right small" style={{ marginTop: 10 }}>
-            <span className="muted">Net Premium:</span>&nbsp;
-            <strong>{fmtCur(totalPrem, currency || "USD")}</strong>
+            <span className="muted">Net Credit:</span>&nbsp;<strong>{fmtCur(netCred, currency || "USD")}</strong>
           </div>
         </div>
       </div>
@@ -441,38 +410,15 @@ function RowEditor({ row, onStrike, onVol, onPremium, currency }) {
     <>
       <div className="sg-td strong">{row.position}</div>
       <div className="sg-td">
-        <input
-          className="field"
-          type="number"
-          step="0.01"
-          value={row.strike ?? ""}
-          onChange={(e) => onStrike(e.target.value)}
-          placeholder="Strike"
-        />
+        <input className="field" type="number" step="0.01" value={row.strike ?? ""} onChange={(e) => onStrike(e.target.value)} placeholder="Strike" />
       </div>
       <div className="sg-td">
-        <input
-          className="field"
-          type="number"
-          step="1"
-          value={row.volume ?? ""}
-          onChange={(e) => onVol(e.target.value)}
-          placeholder="0"
-        />
+        <input className="field" type="number" step="1" value={row.volume ?? ""} onChange={(e) => onVol(e.target.value)} placeholder="0" />
       </div>
       <div className="sg-td">
         <div style={{ display: "grid", gridTemplateColumns: "12px 1fr", alignItems: "center" }}>
-          <span className="small muted" aria-hidden>
-            $
-          </span>
-          <input
-            className="field"
-            type="number"
-            step="0.01"
-            value={row.premium ?? ""}
-            onChange={(e) => onPremium(e.target.value)}
-            placeholder={currency}
-          />
+          <span className="small muted" aria-hidden>$</span>
+          <input className="field" type="number" step="0.01" value={row.premium ?? ""} onChange={(e) => onPremium(e.target.value)} placeholder={currency} />
         </div>
       </div>
     </>
