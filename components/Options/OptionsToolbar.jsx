@@ -5,8 +5,8 @@ import { createPortal } from "react-dom";
 import ChainSettings from "./ChainSettings";
 
 /**
- * Minimal change: make the gear button open/close the settings popover
- * with a rock-solid portal positioned off the button. No other UI touched.
+ * Night-mode ready toolbar. No behavior changes.
+ * Uses site tokens: --text, --card, --border, --surface, --accent.
  */
 export default function OptionsToolbar({
   provider = "api",
@@ -78,7 +78,7 @@ export default function OptionsToolbar({
 
   // Render the popover through a portal so no parent overflow/stacking can hide it
   const Popover = () => {
-    if (typeof document === "undefined") return null; // SSR guard
+    if (typeof document === "undefined") return null; // client guard
     return createPortal(
       <div
         ref={popRef}
@@ -87,7 +87,6 @@ export default function OptionsToolbar({
         role="dialog"
         aria-label="Chain settings"
       >
-        {/* ChainSettings can still read the `open` prop if it needs it */}
         <ChainSettings open={open} onClose={() => setOpen(false)} />
       </div>,
       document.body
@@ -142,6 +141,7 @@ export default function OptionsToolbar({
           aria-label="Chain table settings"
           onClick={toggle}
         >
+          {/* uses currentColor; adapts to theme */}
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
             <path
               fill="currentColor"
@@ -163,28 +163,40 @@ export default function OptionsToolbar({
 
         .pill{
           height:36px; padding:0 14px; border-radius:12px;
-          border:1px solid var(--border,#E6E9EF); background:#fff;
-          font-weight:700; font-size:14px; line-height:1; color:#0f172a;
+          border:1px solid var(--border, #E6E9EF);
+          background: var(--card, #fff);
+          color: var(--text, #0f172a);
+          font-weight:700; font-size:14px; line-height:1;
         }
-        .pill.is-on{ border-color:#bcd3ff; background:#eef5ff; }
+        .pill.is-on{
+          border-color: var(--accent, #3b82f6);
+          /* pale accent bg with safe fallback */
+          background: var(--accent-bg, rgba(59,130,246,.12));
+        }
 
         .seg{
           height:38px; padding:0 16px; border-radius:14px;
-          border:1px solid var(--border,#E6E9EF);
-          background:#f5f7fa; font-weight:800; font-size:15px; color:#0f172a;
+          border:1px solid var(--border, #E6E9EF);
+          background: var(--surface, #f5f7fa);
+          color: var(--text, #0f172a);
+          font-weight:800; font-size:15px; line-height:1;
         }
-        .seg.is-on{ background:#eaf2ff; border-color:#cfe2ff; }
+        .seg.is-on{
+          border-color: var(--accent, #3b82f6);
+          background: var(--accent-bg, rgba(59,130,246,.12));
+        }
 
         .gear{
           height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px; border:1px solid var(--border,#E6E9EF); background:#fff;
-          color:#0f172a;
+          border-radius:14px; border:1px solid var(--border, #E6E9EF);
+          background: var(--card, #fff);
+          color: var(--text, #0f172a);
         }
 
-        /* Portal wrapper */
+        /* Portal wrapper (panel styling lives inside ChainSettings) */
         :global(.cs-popover){
           position:fixed; z-index:1000;
-          display:none; /* visibility controlled via class below */
+          display:none;
         }
         :global(.cs-popover.is-open){
           display:block;
