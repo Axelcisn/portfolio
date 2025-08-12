@@ -1,89 +1,125 @@
+// components/Options/ChainTable.jsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchOptions } from "../../lib/client/options";
 
 export default function ChainTable({ symbol, currency, provider, groupBy, expiry }) {
-  const [state, setState] = useState({ status: "idle", error: null, data: null });
+  const [status, setStatus] = useState("idle"); // idle | loading | ready | error
+  const [error, setError] = useState(null);
+  const [meta, setMeta] = useState(null);      // {spot, currency, expiry}
+  const [rows, setRows] = useState([]);        // merged by strike: { strike, call: {...}, put: {...}, ivPct }
 
-  const dateParam = useMemo(() => {
-    if (!expiry) return undefined;
-    if (expiry.iso) return expiry.iso;
-    if (expiry.date) return expiry.date;
-    if (typeof expiry.ts === "number") return String(expiry.ts);
-    return undefined;
-    // NOTE: demo {m,d} doesn't produce a real date → omit so Yahoo picks nearest
-  }, [expiry]);
+  const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
 
-  useEffect(() => {
-    let alive = true;
+  // --- helpers to mirror the month labeling from OptionsTab (Jan shows year, others don't)
+  const monthLabel = (d) => {
+    const m = d.toLocaleString(undefined, { month: "short" });
+    return d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
+  };
 
-    if (!symbol) {
-      setState({ status: "idle", error: null, data: null });
-      return () => {};
-    }
-
-    setState((s) => ({ ...s, status: "loading", error: null }));
-
-    fetchOptions(symbol, dateParam)
-      .then((data) => {
-        if (!alive) return;
-        setState({ status: "done", error: null, data });
-      })
-      .catch((err) => {
-        if (!alive) return;
-        setState({ status: "error", error: err?.message || "Failed to load", data: null });
+  // Pick the best YYYY-MM-DD from /api/expiries that matches { m, d }
+  async function resolveDate(sym, sel) {
+    if (!sym || !sel?.m || !sel?.d) return null;
+    try {
+      const r = await fetch(`/api/expiries?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+      const j = await r.json();
+      const list = Array.isArray(j?.expiries) ? j.expiries : [];
+      const matches = list.filter((s) => {
+        const d = new Date(s);
+        if (!Number.isFinite(d.getTime())) return false;
+        return monthLabel(d) === sel.m && d.getDate() === sel.d;
       });
+      if (!matches.length) return null;
+      // choose the nearest-in-time date (usually only 1 match anyway)
+      const now = Date.now();
+      matches.sort((a, b) => Math.abs(new Date(a) - now) - Math.abs(new Date(b) - now));
+      return matches[0];
+    } catch {
+      return null;
+    }
+  }
 
-    return () => {
-      alive = false;
+  // Merge calls & puts by strike; compute a center IV (%) as mid(callIV, putIV) when both exist
+  const buildRows = (calls, puts) => {
+    const byStrike = new Map();
+    const add = (side, o) => {
+      if (!Number.isFinite(o?.strike)) return;
+      const k = Number(o.strike);
+      if (!byStrike.has(k)) byStrike.set(k, { strike: k, call: null, put: null, ivPct: null });
+      const row = byStrike.get(k);
+      row[side] = {
+        price: Number.isFinite(o.price) ? o.price : null,
+        ask: Number.isFinite(o.ask) ? o.ask : null,
+        bid: Number.isFinite(o.bid) ? o.bid : null,
+        ivPct: Number.isFinite(o.ivPct) ? o.ivPct : null,
+      };
+      // center IV as mid if both; else whichever exists
+      const cIV = row.call?.ivPct;
+      const pIV = row.put?.ivPct;
+      row.ivPct =
+        Number.isFinite(cIV) && Number.isFinite(pIV)
+          ? (cIV + pIV) / 2
+          : (Number.isFinite(cIV) ? cIV : (Number.isFinite(pIV) ? pIV : null));
     };
-  }, [symbol, dateParam]);
+    for (const c of calls || []) add("call", c);
+    for (const p of puts || []) add("put", p);
+    return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
+  };
 
-  const rows = useMemo(() => {
-    const d = state.data;
-    if (!d) return [];
-    const map = new Map();
+  // Load chain when symbol/expiry changes
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setError(null);
+      setMeta(null);
+      setRows([]);
+      if (!symbol || !expiry?.m || !expiry?.d) { setStatus("idle"); return; }
 
-    for (const c of d.calls || []) {
-      if (c?.strike == null) continue;
-      const key = Number(c.strike);
-      const row = map.get(key) || { strike: key, call: null, put: null };
-      row.call = c;
-      map.set(key, row);
+      setStatus("loading");
+      const dateISO = await resolveDate(symbol, expiry);
+      if (!dateISO) {
+        if (!cancelled) { setStatus("error"); setError("No chain for selected expiry."); }
+        return;
+      }
+
+      try {
+        const u = `/api/options?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(dateISO)}`;
+        const r = await fetch(u, { cache: "no-store" });
+        const j = await r.json();
+        if (!r.ok || j?.ok === false) throw new Error(j?.error || "Fetch failed");
+
+        const calls = Array.isArray(j?.data?.calls) ? j.data.calls : [];
+        const puts  = Array.isArray(j?.data?.puts)  ? j.data.puts  : [];
+        const m = j?.data?.meta || {};
+        const merged = buildRows(calls, puts);
+
+        if (cancelled) return;
+        setMeta({ spot: m.spot ?? null, currency: m.currency || currency, expiry: m.expiry || dateISO });
+        setRows(merged);
+        setStatus("ready");
+      } catch (e) {
+        if (cancelled) return;
+        setError(e?.message || "Fetch failed");
+        setStatus("error");
+      }
     }
-    for (const p of d.puts || []) {
-      if (p?.strike == null) continue;
-      const key = Number(p.strike);
-      const row = map.get(key) || { strike: key, call: null, put: null };
-      row.put = p;
-      map.set(key, row);
-    }
+    load();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, expiry?.m, expiry?.d]);
 
-    return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
-  }, [state.data]);
-
-  const fmt = (v, d = 2) => (v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(d));
-  const fmtIv = (v) => (v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(1));
-
-  const renderCard = (title, sub) => (
-    <div className="empty card">
-      <div className="title">{title}</div>
-      {sub ? <div className="sub">{sub}</div> : null}
-    </div>
-  );
-
-  const showEmpty =
-    !symbol || state.status === "idle" || (state.status === "done" && rows.length === 0);
+  // Limit rows for readability (you can change count later via settings)
+  const visible = useMemo(() => rows.slice(0, 40), [rows]);
 
   return (
-    <div className="wrap">
+    <div className="wrap" aria-live="polite">
       <div className="heads">
         <div className="h-left">Calls</div>
         <div className="h-mid" />
         <div className="h-right">Puts</div>
       </div>
 
+      {/* Column headers — unchanged */}
       <div className="grid head-row" role="row">
         <div className="c cell" role="columnheader">Price</div>
         <div className="c cell" role="columnheader">Ask</div>
@@ -99,43 +135,58 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         <div className="p cell" role="columnheader">Price</div>
       </div>
 
-      {state.status === "loading" &&
-        renderCard("Fetching option chain…", "Pulling data from Yahoo Finance.")}
-
-      {state.status === "error" &&
-        renderCard("Couldn’t load options", state.error)}
-
-      {showEmpty &&
-        renderCard(
-          "No options loaded",
-          `Pick a provider or upload a screenshot, then choose an expiry${
-            expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""
-          }.`
-        )}
-
-      {state.status === "done" && rows.length > 0 && (
-        <div className="rows">
-          {rows.slice(0, 25).map((r) => {
-            const c = r.call || {};
-            const p = r.put || {};
-            const ivMid = c.ivPct ?? p.ivPct ?? null;
-
-            return (
-              <div className="grid row" key={r.strike}>
-                <div className="c cell">{fmt(c.price)}</div>
-                <div className="c cell">{fmt(c.ask)}</div>
-                <div className="c cell">{fmt(c.bid)}</div>
-
-                <div className="mid cell">{fmt(r.strike, 0)}</div>
-                <div className="mid cell">{fmtIv(ivMid)}</div>
-
-                <div className="p cell">{fmt(p.bid)}</div>
-                <div className="p cell">{fmt(p.ask)}</div>
-                <div className="p cell">{fmt(p.price)}</div>
-              </div>
-            );
-          })}
+      {/* States */}
+      {status !== "ready" && (
+        <div className="card">
+          <div className="title">
+            {status === "loading" ? "Loading options…" : status === "error" ? "Couldn’t load options" : "No options loaded"}
+          </div>
+          <div className="sub">
+            {status === "loading" && "Fetching the chain for the selected expiry."}
+            {status === "error" && (error || "Unknown error")}
+            {status === "idle" && (
+              <>
+                Pick a provider or upload a screenshot, then choose an expiry
+                {expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""}.
+              </>
+            )}
+          </div>
+          {meta?.expiry && (
+            <div className="meta">
+              Expiry: <b>{meta.expiry}</b>{meta?.spot ? <> • Spot: <b>{fmt(meta.spot)}</b> {meta.currency || ""}</> : null}
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Rows */}
+      {status === "ready" && (
+        <>
+          {meta?.expiry && (
+            <div className="meta-top">
+              Expiry: <b>{meta.expiry}</b>{meta?.spot ? <> • Spot: <b>{fmt(meta.spot)}</b> {meta.currency || ""}</> : null}
+            </div>
+          )}
+          <div className="body">
+            {visible.map((r) => (
+              <div className="grid row" role="row" key={r.strike}>
+                {/* Calls (left) */}
+                <div className="c cell val">{fmt(r?.call?.price)}</div>
+                <div className="c cell val">{fmt(r?.call?.ask)}</div>
+                <div className="c cell val">{fmt(r?.call?.bid)}</div>
+
+                {/* Center */}
+                <div className="mid cell val">{fmt(r.strike)}</div>
+                <div className="mid cell val">{fmt(r.ivPct, 2)}</div>
+
+                {/* Puts (right) */}
+                <div className="p cell val">{fmt(r?.put?.bid)}</div>
+                <div className="p cell val">{fmt(r?.put?.ask)}</div>
+                <div className="p cell val">{fmt(r?.put?.price)}</div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       <style jsx>{`
@@ -151,6 +202,7 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         }
         .h-mid{ flex:1; }
 
+        /* 8 columns: 3 (calls) + 2 (center) + 3 (puts)  */
         .grid{
           display:grid;
           grid-template-columns:
@@ -168,17 +220,10 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
           color: var(--text, #2b3442);
         }
         .cell{ height:26px; display:flex; align-items:center; }
-        .c{ justify-content:flex-start; }
-        .p{ justify-content:flex-end; }
+        .c{ justify-content:flex-start; }  /* Calls side */
+        .p{ justify-content:flex-end; }    /* Puts side */
         .mid{ justify-content:center; text-align:center; }
         .arrow{ margin-right:6px; font-weight:900; color: var(--accent, #3b82f6); }
-
-        .rows .row{
-          padding: 8px 0;
-          border-bottom: 1px solid color-mix(in srgb, var(--border, #E6E9EF) 60%, transparent);
-          font-size: 14px;
-          color: var(--text, #0f172a);
-        }
 
         .card{
           border:1px solid var(--border, #E6E9EF);
@@ -190,11 +235,23 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         }
         .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
         .sub{ opacity:.75; font-size:13px; }
+        .meta{ margin-top:6px; font-size:12.5px; opacity:.85; }
+
+        .body .row{
+          padding: 8px 0;
+          border-bottom:1px solid var(--border, #E6E9EF);
+        }
+        .body .row:last-child{ border-bottom:0; }
+
+        .val{
+          font-weight:700; font-size:13.5px; color: var(--text, #0f172a);
+        }
 
         @media (max-width: 980px){
           .h-left, .h-right{ font-size:20px; }
           .head-row{ font-size:13px; }
           .cell{ height:24px; }
+          .val{ font-size:13px; }
         }
       `}</style>
     </div>
