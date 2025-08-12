@@ -4,18 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import ChainSettings from "./ChainSettings";
 
 /**
- * Toolbar for the Options tab.
- * This version only adds a reliable open/close behavior for the settings popover.
- * Everything else stays the same.
+ * Only change: make the settings button reliably open/close the popover.
+ * We always render <ChainSettings/> and pass open={open}. Visibility is via CSS.
  */
 export default function OptionsToolbar({
-  provider = "api",                          // 'api' | 'upload'
-  onProvider, onProviderChange,              // support either prop name
-  groupBy = "expiry",                        // 'expiry' | 'strike'
-  onGroupBy, onGroupByChange,                // support either prop name
+  provider = "api",
+  onProvider, onProviderChange,
+  groupBy = "expiry",
+  onGroupBy, onGroupByChange,
 }) {
-  // ---- SETTINGS POPOVER TOGGLE (the only new logic you asked for) ----
   const [open, setOpen] = useState(false);
+
   const btnRef = useRef(null);
   const popRef = useRef(null);
   const wrapRef = useRef(null);
@@ -24,13 +23,11 @@ export default function OptionsToolbar({
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e) => {
-      const b = btnRef.current;
-      const p = popRef.current;
-      if (b && b.contains(e.target)) return;
-      if (p && p.contains(e.target)) return;
+      if (btnRef.current?.contains(e.target)) return;
+      if (popRef.current?.contains(e.target)) return;
       setOpen(false);
     };
-    const onKey = (e) => e.key === "Escape" && setOpen(false);
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
 
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
@@ -40,15 +37,9 @@ export default function OptionsToolbar({
     };
   }, [open]);
 
-  // Helpers to keep existing parent APIs working (don’t change anything else)
-  const fireProvider = (val) => {
-    onProvider?.(val);
-    onProviderChange?.(val);
-  };
-  const fireGroupBy = (val) => {
-    onGroupBy?.(val);
-    onGroupByChange?.(val);
-  };
+  // Keep existing parent callbacks intact
+  const fireProvider = (val) => { onProvider?.(val); onProviderChange?.(val); };
+  const fireGroupBy  = (val) => { onGroupBy?.(val);  onGroupByChange?.(val);  };
 
   return (
     <div className="toolbar" ref={wrapRef}>
@@ -106,19 +97,21 @@ export default function OptionsToolbar({
           </svg>
         </button>
 
-        {/* Popover anchored to the gear; opens/closes with the button */}
-        {open && (
-          <div className="popover" ref={popRef} role="dialog" aria-label="Chain settings">
-            <ChainSettings onClose={() => setOpen(false)} />
-          </div>
-        )}
+        {/* Always render; visibility controlled by CSS and open prop */}
+        <div
+          ref={popRef}
+          className={`popover ${open ? "is-open" : ""}`}
+          role="dialog"
+          aria-label="Chain settings"
+        >
+          <ChainSettings open={open} onClose={() => setOpen(false)} />
+        </div>
       </div>
 
       <style jsx>{`
         .toolbar{
           display:flex; align-items:center; justify-content:space-between;
-          gap:16px; margin: 6px 0 10px;
-          position:relative; /* anchor for popover */
+          gap:16px; margin: 6px 0 10px; position:relative;
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
 
@@ -142,13 +135,14 @@ export default function OptionsToolbar({
           color:#0f172a;
         }
 
-        /* Popover sits directly under the gear, aligned to the right edge */
         .popover{
           position:absolute; right:0; top:44px;
           background:#fff; border:1px solid var(--border,#E6E9EF); border-radius:14px;
           box-shadow:0 10px 30px rgba(0,0,0,.08);
           z-index:30;
+          display:none;
         }
+        .popover.is-open{ display:block; }
       `}</style>
     </div>
   );
