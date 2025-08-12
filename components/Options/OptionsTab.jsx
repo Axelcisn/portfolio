@@ -22,10 +22,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Keep popover aligned to the gear
   useEffect(() => {
     if (!settingsOpen || !gearRef.current) return;
-    const update = () => {
-      const r = gearRef.current.getBoundingClientRect();
-      setAnchorRect(r);
-    };
+    const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
@@ -45,7 +42,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       setSettingsOpen(false);
     };
     const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
-
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -56,33 +52,100 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
   }, [settingsOpen]);
 
-  // Lightweight, static sample expiries just for structure/visuals
-  const expiries = useMemo(
+  /* -------------------- STEP 3: expiries from API -------------------- */
+
+  // Fallback (keeps your exact visual while API loads/absent)
+  const fallbackGroups = useMemo(
     () => [
-      { m: "Aug", days: [15, 22, 29] },
-      { m: "Sep", days: [5, 12, 19, 26] },
-      { m: "Oct", days: [17] },
-      { m: "Nov", days: [21] },
-      { m: "Dec", days: [19] },
-      { m: "Jan ’26", days: [16] },
-      { m: "Feb", days: [20] },
-      { m: "Mar", days: [20] },
-      { m: "May", days: [15] },
-      { m: "Jun", days: [18] },
-      { m: "Aug", days: [21] },
-      { m: "Sep", days: [18] },
-      { m: "Dec", days: [18] },
-      { m: "Jan ’27", days: [15] },
-      { m: "Jun", days: [17] },
-      { m: "Dec", days: [17] },
+      { m: "Aug", days: [15, 22, 29], k: "f-1" },
+      { m: "Sep", days: [5, 12, 19, 26], k: "f-2" },
+      { m: "Oct", days: [17], k: "f-3" },
+      { m: "Nov", days: [21], k: "f-4" },
+      { m: "Dec", days: [19], k: "f-5" },
+      { m: "Jan ’26", days: [16], k: "f-6" },
+      { m: "Feb", days: [20], k: "f-7" },
+      { m: "Mar", days: [20], k: "f-8" },
+      { m: "May", days: [15], k: "f-9" },
+      { m: "Jun", days: [18], k: "f-10" },
+      { m: "Aug", days: [21], k: "f-11" },
+      { m: "Sep", days: [18], k: "f-12" },
+      { m: "Dec", days: [18], k: "f-13" },
+      { m: "Jan ’27", days: [15], k: "f-14" },
+      { m: "Jun", days: [17], k: "f-15" },
+      { m: "Dec", days: [17], k: "f-16" },
     ],
     []
   );
 
+  // Live expiries from /api/expiries
+  const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
+  const [loadingExp, setLoadingExp] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!symbol) { setApiExpiries(null); return; }
+      try {
+        setLoadingExp(true);
+        const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+        const j = await res.json().catch(() => ({}));
+        if (!cancelled) setApiExpiries(Array.isArray(j?.expiries) ? j.expiries : []);
+      } catch {
+        if (!cancelled) setApiExpiries([]);
+      } finally {
+        if (!cancelled) setLoadingExp(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [symbol]);
+
+  // Convert YYYY-MM-DD list -> [{ m, days[], k }]
+  const groups = useMemo(() => {
+    if (!apiExpiries || apiExpiries.length === 0) return fallbackGroups;
+
+    const parsed = apiExpiries
+      .map((s) => {
+        const d = new Date(s);
+        return Number.isFinite(d?.getTime()) ? d : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a - b);
+
+    const out = [];
+    for (const d of parsed) {
+      const y = d.getFullYear();
+      const mIdx = d.getMonth();
+      const labelMonth = d.toLocaleString(undefined, { month: "short" });
+      // Show year suffix only for January (matches your screenshots)
+      const label = mIdx === 0 ? `${labelMonth} ’${String(y).slice(-2)}` : labelMonth;
+      const key = `${y}-${mIdx}`; // unique even if label repeats (e.g., "Aug" in different years)
+
+      let g = out[out.length - 1];
+      if (!g || g.k !== key) {
+        g = { m: label, days: [], k: key };
+        out.push(g);
+      }
+      g.days.push(d.getDate());
+    }
+    // ensure day order + unique
+    for (const g of out) g.days = Array.from(new Set(g.days)).sort((a, b) => a - b);
+    return out;
+  }, [apiExpiries, fallbackGroups]);
+
   // Selected expiry (month label + day)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
 
-  // Render the settings popover in a portal (avoids overflow/clipping issues)
+  // If selection is invalid for current groups, pick the first available
+  useEffect(() => {
+    if (!groups?.length) return;
+    const exists = groups.some((g) => g.m === sel.m && g.days.includes(sel.d));
+    if (!exists) setSel({ m: groups[0].m, d: groups[0].days[0] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
+
+  /* ------------------------- Settings portal ------------------------ */
+
   const settingsPortal =
     mounted && settingsOpen && anchorRect
       ? createPortal(
@@ -92,7 +155,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             style={{
               position: "fixed",
               zIndex: 1000,
-              // align just under the gear, keep inside viewport
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
               left: Math.min(
                 Math.max(12, anchorRect.right - 360),
@@ -158,7 +220,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             aria-expanded={settingsOpen}
             onClick={() => setSettingsOpen((v) => !v)}
           >
-            {/* keep the existing gear to avoid behavior changes */}
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -171,16 +232,16 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
-        <div className="expiry">
-          {expiries.map((g) => (
-            <div className="group" key={g.m}>
+        <div className="expiry" aria-busy={loadingExp ? "true" : "false"}>
+          {groups.map((g) => (
+            <div className="group" key={g.k || g.m}>
               <div className="m">{g.m}</div>
               <div className="days">
                 {g.days.map((d) => {
                   const active = sel.m === g.m && sel.d === d;
                   return (
                     <button
-                      key={`${g.m}-${d}`}
+                      key={`${g.k}-${d}`}
                       className={`day ${active ? "is-active" : ""}`}
                       onClick={() => setSel({ m: g.m, d })}
                       aria-pressed={active}
@@ -255,6 +316,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           overflow-x:auto; overscroll-behavior-x: contain;
           -webkit-overflow-scrolling: touch; padding-bottom:6px;
         }
+        .expiry[aria-busy="true"] { opacity:.75; }
         .expiry::-webkit-scrollbar{ height:6px; }
         .expiry::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
 
