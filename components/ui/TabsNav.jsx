@@ -3,14 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/**
- * TabsNav
- * Props:
- *  - tabs: [{ key: "overview", label: "Overview" }, ...]
- *  - activeKey: string
- *  - onChange: (key) => void
- *  - className?: string
- */
+/** Lightweight tabs with a moving accent bar */
 export default function TabsNav({ tabs = [], activeKey, onChange, className = "" }) {
   const wrapRef = useRef(null);
   const btnRefs = useRef(Object.create(null));
@@ -33,62 +26,44 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
         left: br.left - hr.left + (host.scrollLeft || 0),
         width: br.width || 0,
       });
-    } catch {
-      /* no-op */
-    }
+    } catch { /* ignore */ }
   };
 
   useEffect(() => {
-    // Run after paint
     const raf = typeof window !== "undefined" && window.requestAnimationFrame
-      ? window.requestAnimationFrame
-      : (fn) => setTimeout(fn, 0);
+      ? window.requestAnimationFrame : (fn) => setTimeout(fn, 0);
     raf(updateBar);
 
-    // Guarded ResizeObserver (some environments don’t have it)
     const RO = typeof window !== "undefined" && "ResizeObserver" in window
-      ? window.ResizeObserver
-      : null;
+      ? window.ResizeObserver : null;
 
     let ro = null;
     if (RO && wrapRef.current) {
       ro = new RO(() => updateBar());
-      try { ro.observe(wrapRef.current); } catch { /* ignore */ }
+      try { ro.observe(wrapRef.current); } catch {}
     }
-
     const onResize = () => updateBar();
     if (typeof window !== "undefined") window.addEventListener("resize", onResize);
 
     return () => {
-      if (ro) try { ro.disconnect(); } catch { /* ignore */ }
+      if (ro) try { ro.disconnect(); } catch {}
       if (typeof window !== "undefined") window.removeEventListener("resize", onResize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeKey, tabs.length]);
 
-  const onKeyDown = (e, idx) => {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    e.preventDefault();
-    const dir = e.key === "ArrowRight" ? 1 : -1;
-    const next = (idx + dir + tabs.length) % tabs.length;
-    onChange?.(tabs[next].key);
-    btnRefs.current[tabs[next].key]?.el?.focus?.();
-  };
-
   return (
     <div className={`tabs-wrap ${className}`} role="tablist" aria-label="Sections" ref={wrapRef}>
-      {tabs.map((t, i) => {
+      {tabs.map((t) => {
         const active = t.key === activeKey;
         return (
           <button
             key={t.key}
             role="tab"
             aria-selected={active}
-            aria-controls={`panel-${t.key}`}
             id={`tab-${t.key}`}
             className={`tab-btn ${active ? "is-active" : ""}`}
             onClick={() => onChange?.(t.key)}
-            onKeyDown={(e) => onKeyDown(e, i)}
             ref={(el) => (btnRefs.current[t.key].el = el)}
             type="button"
           >
@@ -111,11 +86,11 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
           scrollbar-width: none;
           -ms-overflow-style: none;
           padding: 0 4px;
+          margin: 8px 0 12px 0;
         }
         .tabs-wrap::-webkit-scrollbar { display: none; }
 
         .tab-btn {
-          position: relative;
           flex: 0 0 auto;
           height: 40px;
           padding: 0 14px;
@@ -130,11 +105,6 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
         .tab-btn:hover { background: var(--card); opacity: 1; }
         .tab-btn.is-active { opacity: 1; }
 
-        .tab-btn:focus-visible {
-          outline: none;
-          box-shadow: 0 0 0 2px var(--accent, #3b82f6);
-        }
-
         .accent {
           position: absolute;
           height: 2px;
@@ -143,7 +113,6 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
           background: var(--accent, #3b82f6);
           border-radius: 2px;
           transition: transform 180ms ease, width 180ms ease;
-          will-change: transform, width;
         }
       `}</style>
     </div>
