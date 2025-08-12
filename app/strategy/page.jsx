@@ -7,6 +7,7 @@ import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
+import TabsNav from "../../components/ui/TabsNav";
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -161,9 +162,7 @@ export default function Strategy() {
         if (!Number.isFinite(last) && Number.isFinite(j?.data?.lastClose)) last = Number(j.data.lastClose);
 
         if (Number.isFinite(last) && last > 0) setFallbackSpot(last);
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     })();
 
     return () => { cancel = true; };
@@ -185,6 +184,16 @@ export default function Strategy() {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
+
+  /* ---- NEW: tabs state ---- */
+  const [tab, setTab] = useState("overview");
+  const TABS = [
+    { key: "overview",   label: "Overview" },
+    { key: "financials", label: "Financials" },
+    { key: "news",       label: "News" },
+    { key: "options",    label: "Options" },
+    { key: "bonds",      label: "Bonds" },
+  ];
 
   return (
     <div className="container">
@@ -246,36 +255,69 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* Row 1: Market (left) + Data (right). Same height; no sticky. */}
-      <div className="layout-2col">
-        <div className="g-item">
-          <MarketCard onRates={(r) => setMarket(r)} />
-        </div>
+      {/* ---- NEW: Tabs header (sits between Company and content) ---- */}
+      <TabsNav tabs={TABS} activeKey={tab} onChange={setTab} />
 
-        <div className="g-item">
-          {/* pass effective spot */}
-          <StatsRail
-            spot={spotEff}
-            currency={company?.currency || currency}
-            company={company}
-            iv={sigma}
-            market={market}
-          />
-        </div>
+      {/* ---- Tabbed content ---- */}
+      {tab === "overview" && (
+        <div className="layout-2col">
+          <div className="g-item">
+            <MarketCard onRates={(r) => setMarket(r)} />
+          </div>
 
-        {/* Row 2: Strategy gallery spans full width */}
-        <div className="g-span">
-          <StrategyGallery
-            spot={spotEff}
-            currency={currency}
-            sigma={sigma}
-            T={T}
-            riskFree={market.riskFree ?? 0}
-            mcStats={mcStats}
-            onApply={handleApply}
-          />
+          <div className="g-item">
+            {/* pass effective spot */}
+            <StatsRail
+              spot={spotEff}
+              currency={company?.currency || currency}
+              company={company}
+              iv={sigma}
+              market={market}
+            />
+          </div>
+
+          {/* Row 2: Strategy gallery spans full width */}
+          <div className="g-span">
+            <StrategyGallery
+              spot={spotEff}
+              currency={currency}
+              sigma={sigma}
+              T={T}
+              riskFree={market.riskFree ?? 0}
+              mcStats={mcStats}
+              onApply={handleApply}
+            />
+          </div>
         </div>
-      </div>
+      )}
+
+      {tab === "financials" && (
+        <section className="card" id="panel-financials">
+          <div className="section-title">Financials</div>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "news" && (
+        <section className="card" id="panel-news">
+          <div className="section-title">News</div>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "options" && (
+        <section className="card" id="panel-options">
+          <div className="section-title">Options</div>
+          <p className="muted">Options chain UI will render here in the next step.</p>
+        </section>
+      )}
+
+      {tab === "bonds" && (
+        <section className="card" id="panel-bonds">
+          <div className="section-title">Bonds</div>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
 
       <style jsx>{`
         /* Hero */
@@ -309,6 +351,11 @@ export default function Strategy() {
         .g-item{ min-width:0; }
         .g-span{ grid-column: 1 / -1; min-width:0; }
         .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
+
+        .card{ padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
+
+        .section-title{ font-weight:800; margin-bottom:8px; }
+        .muted{ opacity:.7; }
 
         @media (max-width:1100px){
           .layout-2col{ grid-template-columns: 1fr; }
