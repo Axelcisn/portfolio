@@ -1,132 +1,320 @@
 // components/Options/OptionsTab.jsx
 "use client";
 
-import React, { useMemo, useState } from "react";
-import OptionsToolbar from "./OptionsToolbar";
+import { useEffect, useMemo, useRef, useState } from "react";
+
 import ChainTable from "./ChainTable";
+import ChainSettings from "./ChainSettings";
+import ExpiryStrip from "./ExpiryStrip";
 
+/**
+ * OptionsTab
+ * - Provider selector (API / Upload)
+ * - Grouping selector (By expiration / By strike) + Settings button
+ * - Horizontal Expiry strip (single row, scrollable)
+ * - Calls / Puts header row + ChainTable placeholder
+ *
+ * Data wiring (API / OCR) comes next — this file focuses on layout & UX.
+ */
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  // --- local demo state (no fetching yet) ---
-  const [provider, setProvider] = useState("api");       // "api" | "upload"
-  const [mode, setMode] = useState("expiry");            // "expiry" | "strike"
-  const [settings, setSettings] = useState({
-    rows: 20,
-    custom: 25,
-    sort: "asc",
-    columns: { bid: true, ask: true, price: true },
-  });
+  // --- top controls state ---
+  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
+
+  // currently selected expiry (YYYY-MM-DD)
+  const [expiry, setExpiry] = useState(null);
+
+  // settings popover
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsBtnRef = useRef(null);
+  const [settingsPos, setSettingsPos] = useState({ top: 0, left: 0 });
 
-  // Fake expiries just for structure (you’ll wire real data later)
-  const months = useMemo(() => ([
-    { m: "Aug", days: [15,22,29] },
-    { m: "Sep", days: [5,12,19,26] },
-    { m: "Oct", days: [17] },
-    { m: "Nov", days: [21] },
-    { m: "Dec", days: [19] },
-    { m: "Jan ’26", days: [16] },
-    { m: "Feb", days: [20] },
-    { m: "Mar", days: [20] },
-    { m: "May", days: [15] },
-    { m: "Jun", days: [18] },
-    { m: "Aug", days: [21] },
-    { m: "Sep", days: [18] },
-    { m: "Dec", days: [18] },
-    { m: "Jan ’27", days: [15] },
-    { m: "Jun", days: [17] },
-    { m: "Dec", days: [17] },
-  ]), []);
+  // Chain/table settings (values are placeholders; ChainSettings controls visuals)
+  const [tableSettings, setTableSettings] = useState({
+    showBy: "20", // '10' | '20' | 'all' | 'custom'
+    customRows: 25,
+    sort: "asc", // 'asc' | 'desc'
+    columns: {
+      bid: true,
+      ask: true,
+      price: true,
+      delta: false,
+      gamma: false,
+      theta: false,
+      vega: false,
+      rho: false,
+      timeValue: false,
+      intrValue: false,
+      askIvPct: false,
+      bidIvPct: false,
+    },
+  });
 
-  const [active, setActive] = useState({ m: months[1]?.m, d: months[1]?.days?.[1] });
+  // place the settings panel right under the button
+  useEffect(() => {
+    if (!settingsOpen || !settingsBtnRef.current) return;
+    const r = settingsBtnRef.current.getBoundingClientRect();
+    setSettingsPos({
+      top: r.bottom + window.scrollY + 8,
+      left: r.left + window.scrollX,
+    });
+  }, [settingsOpen]);
+
+  // demo: we keep the “No options loaded” table until we wire data sources
+  const providerLabel = useMemo(
+    () => (provider === "api" ? "API" : "Upload"),
+    [provider]
+  );
 
   return (
-    <section className="options-root">
-      {/* Toolbar (provider, grouping, settings) */}
-      <OptionsToolbar
-        provider={provider}
-        onProviderChange={setProvider}
-        mode={mode}
-        onModeChange={setMode}
-        settings={settings}
-        onSettingsChange={setSettings}
-        settingsOpen={settingsOpen}
-        onSettingsOpenChange={setSettingsOpen}
-      />
+    <div className="options-tab">
+      {/* Top toolbar (provider on the left, grouping + settings on the right) */}
+      <div className="toolbar">
+        <div className="left">
+          <button
+            type="button"
+            className={`pill ${provider === "api" ? "is-active" : ""}`}
+            onClick={() => setProvider("api")}
+          >
+            API
+          </button>
+          <button
+            type="button"
+            className={`pill ${provider === "upload" ? "is-active" : ""}`}
+            onClick={() => setProvider("upload")}
+          >
+            Upload
+          </button>
+        </div>
 
-      {/* Expiry scroller */}
-      <div className="grid">
-        {months.map((block, i) => (
-          <div key={`${block.m}-${i}`} className="col">
-            <div className="mon">{block.m}</div>
-            <div className="days">
-              {block.days.map((d) => {
-                const on = active.m === block.m && active.d === d;
-                return (
-                  <button
-                    key={`${block.m}-${d}`}
-                    type="button"
-                    className={`chip ${on ? "on" : ""}`}
-                    onClick={() => setActive({ m: block.m, d })}
-                  >
-                    {d}
-                  </button>
-                );
-              })}
-            </div>
+        <div className="right">
+          <div className="group">
+            <button
+              type="button"
+              className={`pill ${groupBy === "expiry" ? "is-active" : ""}`}
+              onClick={() => setGroupBy("expiry")}
+            >
+              By expiration
+            </button>
+            <button
+              type="button"
+              className={`pill ${groupBy === "strike" ? "is-active" : ""}`}
+              onClick={() => setGroupBy("strike")}
+            >
+              By strike
+            </button>
           </div>
-        ))}
+
+          <button
+            type="button"
+            ref={settingsBtnRef}
+            className="icon-btn"
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((v) => !v)}
+            title="Chain table settings"
+          >
+            <span aria-hidden>⚙︎</span>
+            <span className="sr-only">Open chain settings</span>
+          </button>
+        </div>
       </div>
 
-      {/* Dual table header */}
-      <div className="split-head">
-        <h3 className="sub">Calls</h3>
-        <h3 className="sub right">Puts</h3>
+      {/* Expiry strip — single horizontal row (shows fallback demo until wired) */}
+      <div className="expiry-wrap">
+        <ExpiryStrip
+          expiries={[]} // pass real expiries when available
+          value={expiry}
+          onChange={setExpiry}
+        />
       </div>
 
-      {/* Chain table shell */}
-      <ChainTable
-        provider={provider}
-        mode={mode}
-        settings={settings}
-        currency={currency}
-        symbol={symbol}
-      />
+      {/* Columns header line */}
+      <div className="cols-head">
+        <div className="side">
+          <h3 className="side-title">Calls</h3>
+          <div className="cols">
+            <div className="c">Price</div>
+            <div className="c">Ask</div>
+            <div className="c">Bid</div>
+          </div>
+        </div>
+
+        <div className="mid">
+          <div className="c">
+            <span className="arrow">↑</span> Strike
+          </div>
+          <div className="c">IV, %</div>
+        </div>
+
+        <div className="side">
+          <h3 className="side-title align-right">Puts</h3>
+          <div className="cols align-right">
+            <div className="c">Bid</div>
+            <div className="c">Ask</div>
+            <div className="c">Price</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Chain table (placeholder until provider is wired) */}
+      <div className="table-wrap">
+        <ChainTable
+          provider={provider}
+          groupBy={groupBy}
+          expiry={expiry}
+          settings={tableSettings}
+          symbol={symbol}
+          currency={currency}
+        />
+      </div>
+
+      {/* Settings popover (aligned with button) */}
+      {settingsOpen && (
+        <div
+          className="settings-pop"
+          style={{ top: settingsPos.top, left: settingsPos.left }}
+          role="dialog"
+          aria-label="Chain table settings"
+        >
+          <ChainSettings
+            values={tableSettings}
+            onChange={setTableSettings}
+            onClose={() => setSettingsOpen(false)}
+          />
+        </div>
+      )}
 
       <style jsx>{`
-        .options-root{ margin-top:6px; }
-
-        /* Months row */
-        .grid{
-          display:grid;
-          grid-template-columns: repeat(8, minmax(0,1fr));
-          gap:18px 22px; margin: 8px 0 14px;
-        }
-        @media (max-width:1200px){ .grid{ grid-template-columns: repeat(6, minmax(0,1fr)); } }
-        @media (max-width:900px){ .grid{ grid-template-columns: repeat(4, minmax(0,1fr)); } }
-
-        .col{ display:flex; flex-direction:column; gap:10px; }
-        .mon{
-          font-size:14px; font-weight:800; letter-spacing:-.1px; opacity:.9;
-        }
-        .days{ display:flex; gap:10px; flex-wrap:wrap; }
-        .chip{
-          min-width:46px; height:36px; border-radius:12px;
-          border:1px solid var(--border); background:var(--bg-soft,#f7f8fa);
-          font-weight:800; font-size:15px; letter-spacing:-.2px;
-          color:var(--text); opacity:.95; padding:0 12px;
-        }
-        .chip.on{
-          background:var(--text); color:var(--bg,#fff);
+        .options-tab {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
         }
 
-        /* Section heads above table */
-        .split-head{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; align-items:end; margin: 12px 0 6px; }
-        .sub{
-          font-size:20px; line-height:1.1; font-weight:800; letter-spacing:-.2px; margin:0;
+        /* --- Toolbar ------------------------------------------------------ */
+        .toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 4px;
         }
-        .right{ text-align:right; }
+        .left,
+        .group {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .pill {
+          height: 40px;
+          padding: 0 14px;
+          border-radius: 14px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          color: var(--text);
+          font-size: 14px; /* compact & consistent */
+          font-weight: 800;
+          line-height: 1;
+        }
+        .pill.is-active {
+          background: #eef4ff;
+          border-color: #c7d7fe;
+          color: #1e3a8a;
+        }
+        .icon-btn {
+          width: 40px;
+          height: 40px;
+          border-radius: 12px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          margin-left: 8px;
+        }
+        .icon-btn:hover {
+          background: rgba(0, 0, 0, 0.04);
+        }
 
+        /* --- Expiry strip container -------------------------------------- */
+        .expiry-wrap {
+          margin-top: 6px;
+          margin-bottom: 10px;
+        }
+
+        /* --- Column headers ------------------------------------------------ */
+        .cols-head {
+          display: grid;
+          grid-template-columns: 1fr 320px 1fr; /* calls | center | puts */
+          align-items: end;
+          gap: 16px;
+          padding: 4px 0 10px;
+          border-bottom: 1px solid var(--border);
+        }
+        .side-title {
+          margin: 0 0 8px 0;
+          font-size: 18px; /* smaller, site-typography */
+          font-weight: 800;
+          letter-spacing: -0.2px;
+        }
+        .align-right {
+          text-align: right;
+        }
+        .cols {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          font-size: 13px;
+          font-weight: 700;
+          opacity: 0.85;
+        }
+        .cols.align-right .c {
+          text-align: right;
+        }
+        .mid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          font-size: 13px;
+          font-weight: 700;
+          opacity: 0.85;
+          text-align: center;
+        }
+        .arrow {
+          margin-right: 6px;
+        }
+
+        /* --- Table area --------------------------------------------------- */
+        .table-wrap {
+          margin-top: 8px;
+        }
+
+        /* --- Settings popover -------------------------------------------- */
+        .settings-pop {
+          position: absolute;
+          z-index: 40;
+        }
+
+        /* --- A11y --------------------------------------------------------- */
+        .sr-only {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          border: 0;
+        }
+
+        @media (max-width: 1100px) {
+          .cols-head {
+            grid-template-columns: 1fr 240px 1fr;
+          }
+        }
       `}</style>
-    </section>
+    </div>
   );
 }
