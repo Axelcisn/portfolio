@@ -3,100 +3,139 @@
 
 import { useEffect, useRef } from "react";
 
-export default function ChainSettings({
-  open = false,
-  onClose = () => {},
+/**
+ * Props
+ * - value: { rows: 10|20|number|'all', sort:'asc'|'desc', columns:{...} }
+ * - onChange(next)
+ * - onClose()
+ * - anchorRef: ref to the settings button (for outside-click)
+ */
+export default function ChainSettings({ value, onChange, onClose, anchorRef }) {
+  const ref = useRef(null);
 
-  rowsMode = "10",                 // '10' | '20' | 'all' | 'custom'
-  customRows = 25,
-  onRowsModeChange = () => {},
-  onCustomRowsChange = () => {},
-
-  sort = "asc",                    // 'asc' | 'desc'
-  onSortChange = () => {},
-
-  columns = {},                    // { bid, ask, price, delta, ... }
-  onColumnsChange = () => {},
-
-  style = {},
-}) {
-  const boxRef = useRef(null);
-
+  // close when clicking outside
   useEffect(() => {
-    if (!open) return;
-    const handle = (e) => {
-      if (!boxRef.current) return;
-      if (!boxRef.current.contains(e.target)) onClose?.();
+    const onDoc = (e) => {
+      if (!ref.current) return;
+      const hitPanel = ref.current.contains(e.target);
+      const hitAnchor = anchorRef?.current?.contains?.(e.target);
+      if (!hitPanel && !hitAnchor) onClose?.();
     };
-    const esc = (e) => { if (e.key === "Escape") onClose?.(); };
-    document.addEventListener("mousedown", handle);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", handle);
-      document.removeEventListener("keydown", esc);
-    };
-  }, [open, onClose]);
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [onClose, anchorRef]);
 
-  const toggleCol = (k) => onColumnsChange({ ...columns, [k]: !columns[k] });
+  const v = value || { rows: 20, sort: "asc", columns: { bid: true, ask: true, price: true } };
+  const set = (patch) => onChange?.({ ...v, ...patch });
 
-  if (!open) return null;
+  // ---- rows (10 / 20 / all / custom) ----
+  const rowsKind =
+    v.rows === "all"
+      ? "all"
+      : typeof v.rows === "number"
+      ? v.rows === 10
+        ? "10"
+        : v.rows === 20
+        ? "20"
+        : "custom"
+      : "20";
+  const customVal =
+    typeof v.rows === "number" && ![10, 20].includes(v.rows) ? v.rows : 25;
+
+  const setRows = (kind, val) => {
+    if (kind === "all") return set({ rows: "all" });
+    if (kind === "custom") return set({ rows: Math.max(1, Number(val) || 25) });
+    return set({ rows: Number(kind) });
+  };
+
+  // ---- columns helpers ----
+  const col = (k) => !!v.columns?.[k];
+  const flip = (k) => set({ columns: { ...v.columns, [k]: !col(k) } });
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="popover"
-      ref={boxRef}
-      style={style}
-    >
-      <div className="section">
-        <div className="title">SHOW BY</div>
-        <label className={`row ${rowsMode === "10" ? "is-active" : ""}`}>
-          <input type="radio" name="rows" checked={rowsMode === "10"} onChange={() => onRowsModeChange("10")} />
-          <span>10 rows</span>
+    <div className="menu" role="dialog" aria-label="Chain table settings" ref={ref}>
+      {/* SHOW BY */}
+      <div className="sec">
+        <div className="sec-h">SHOW BY</div>
+        <label className="r">
+          <input
+            type="radio"
+            name="rows"
+            checked={rowsKind === "10"}
+            onChange={() => setRows("10")}
+          />
+          10 rows
         </label>
-        <label className={`row ${rowsMode === "20" ? "is-active" : ""}`}>
-          <input type="radio" name="rows" checked={rowsMode === "20"} onChange={() => onRowsModeChange("20")} />
-          <span>20 rows</span>
+        <label className="r">
+          <input
+            type="radio"
+            name="rows"
+            checked={rowsKind === "20"}
+            onChange={() => setRows("20")}
+          />
+          20 rows
         </label>
-        <label className={`row ${rowsMode === "all" ? "is-active" : ""}`}>
-          <input type="radio" name="rows" checked={rowsMode === "all"} onChange={() => onRowsModeChange("all")} />
-          <span>All rows</span>
+        <label className="r">
+          <input
+            type="radio"
+            name="rows"
+            checked={rowsKind === "all"}
+            onChange={() => setRows("all")}
+          />
+          All rows
         </label>
-        <div className={`custom ${rowsMode === "custom" ? "is-active" : ""}`}>
-          <label className="row">
-            <input type="radio" name="rows" checked={rowsMode === "custom"} onChange={() => onRowsModeChange("custom")} />
-            <span>Custom</span>
+
+        <div className="r-flex">
+          <label className="r">
+            <input
+              type="radio"
+              name="rows"
+              checked={rowsKind === "custom"}
+              onChange={() => setRows("custom", customVal)}
+            />
+            Custom
           </label>
           <input
-            type="number"
             className="num"
-            min={1}
-            value={customRows}
-            onChange={(e) => onCustomRowsChange(Math.max(1, Number(e.target.value) || 1))}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={customVal}
+            onChange={(e) => setRows("custom", e.target.value)}
+            aria-label="Custom rows"
           />
         </div>
       </div>
 
-      <div className="divider" />
+      <div className="sep" />
 
-      <div className="section">
-        <div className="title">STRIKE SORT</div>
-        <label className={`row ${sort === "asc" ? "is-active" : ""}`}>
-          <input type="radio" name="sort" checked={sort === "asc"} onChange={() => onSortChange("asc")} />
-          <span>Ascending</span>
+      {/* STRIKE SORT */}
+      <div className="sec">
+        <div className="sec-h">STRIKE SORT</div>
+        <label className="r">
+          <input
+            type="radio"
+            name="sort"
+            checked={v.sort === "asc"}
+            onChange={() => set({ sort: "asc" })}
+          />
+          Ascending
         </label>
-        <label className={`row ${sort === "desc" ? "is-active" : ""}`}>
-          <input type="radio" name="sort" checked={sort === "desc"} onChange={() => onSortChange("desc")} />
-          <span>Descending</span>
+        <label className="r">
+          <input
+            type="radio"
+            name="sort"
+            checked={v.sort === "desc"}
+            onChange={() => set({ sort: "desc" })}
+          />
+          Descending
         </label>
       </div>
 
-      <div className="divider" />
+      <div className="sep" />
 
-      <div className="section">
-        <div className="title">CUSTOMIZE COLUMNS</div>
-
+      {/* COLUMNS */}
+      <div className="sec">
+        <div className="sec-h">CUSTOMIZE COLUMNS</div>
         {[
           ["bid", "Bid"],
           ["ask", "Ask"],
@@ -106,51 +145,75 @@ export default function ChainSettings({
           ["theta", "Theta"],
           ["vega", "Vega"],
           ["rho", "Rho"],
-          ["timeValue", "Time value"],
-          ["intrinsicValue", "Intr. value"],
+          ["time", "Time value"],
+          ["intrinsic", "Intr. value"],
           ["askIv", "Ask IV, %"],
           ["bidIv", "Bid IV, %"],
         ].map(([k, label]) => (
-          <label key={k} className="row chk">
-            <input type="checkbox" checked={!!columns[k]} onChange={() => toggleCol(k)} />
-            <span>{label}</span>
+          <label key={k} className="c">
+            <input type="checkbox" checked={col(k)} onChange={() => flip(k)} />
+            {label}
           </label>
         ))}
       </div>
 
       <style jsx>{`
-        .popover{
-          position:absolute;
-          top: 48px;                 /* sits below toolbar */
-          right: 8px;
-          width: 300px;
-          max-height: 70vh;
-          overflow:auto;
-          padding: 12px;
-          border-radius: 12px;
-          background: var(--card, #101010);
-          color: var(--text, #eaeaea);
-          border: 1px solid var(--border, rgba(255,255,255,.12));
-          box-shadow: 0 16px 40px rgba(0,0,0,.45);
-          z-index: 30;
+        .menu{
+          position:absolute; top:100%; right:0; margin-top:8px;
+          width:280px; max-height:70vh; overflow:auto;
+          background:var(--card,#0e0e10); color:var(--text,#eaeaea);
+          border:1px solid var(--border,#2a2a2a); border-radius:14px;
+          box-shadow:0 16px 36px rgba(0,0,0,.55);
+          padding:12px;
+          font-size:12.5px; line-height:1.25;
         }
-        .title{ font-size:12px; letter-spacing:.2px; opacity:.8; margin-bottom:8px; }
-        .row{
+        .sec{ padding:6px 2px; }
+        .sec-h{
+          font-size:11px; letter-spacing:.08em; opacity:.7;
+          margin:2px 0 8px; font-weight:800;
+        }
+        .sep{ height:1px; margin:6px 0; background:var(--border,#2a2a2a); opacity:.9; }
+
+        .r, .c{
           display:flex; align-items:center; gap:10px;
-          height:34px; border-radius:8px; padding:0 8px;
-          cursor:pointer; user-select:none;
+          padding:6px 4px; border-radius:8px;
         }
-        .row input{ pointer-events:auto; }
-        .row.is-active{ background: rgba(255,255,255,.05); }
-        .chk{ height:30px; }
-        .custom{ display:flex; align-items:center; gap:8px; padding-left:6px; }
+        .r:hover, .c:hover{ background:rgba(255,255,255,.04); }
+
+        input[type="radio"]{
+          appearance:none; width:16px; height:16px; margin:0;
+          border:1.6px solid var(--border,#3a3a3a);
+          border-radius:50%; display:inline-grid; place-items:center;
+          background:transparent; flex:0 0 auto;
+        }
+        input[type="radio"]::before{
+          content:""; width:8px; height:8px; border-radius:50%;
+          transform:scale(0); transition:120ms transform ease-in-out;
+          background:var(--accent,#3b82f6);
+        }
+        input[type="radio"]:checked{ border-color:var(--accent,#3b82f6); }
+        input[type="radio"]:checked::before{ transform:scale(1); }
+
+        .c input[type="checkbox"]{
+          appearance:none; width:16px; height:16px; margin:0;
+          border:1.6px solid var(--border,#3a3a3a); border-radius:4px;
+          display:inline-grid; place-items:center; background:transparent;
+        }
+        .c input[type="checkbox"]::before{
+          content:""; width:10px; height:10px; transform:scale(0);
+          transition:120ms transform ease-in-out;
+          background:var(--accent,#3b82f6);
+        }
+        .c input[type="checkbox"]:checked{ border-color:var(--accent,#3b82f6); }
+        .c input[type="checkbox"]:checked::before{ transform:scale(1); }
+
+        .r-flex{ display:flex; align-items:center; gap:8px; padding:6px 4px; }
         .num{
-          width:84px; height:30px; border-radius:8px; padding:0 8px;
-          border:1px solid var(--border); background:var(--bg,#0b0b0b); color:var(--text);
-          font-weight:700;
+          width:64px; height:28px; border-radius:8px;
+          border:1px solid var(--border,#3a3a3a);
+          background:var(--bg,#0b0b0b); color:var(--text,#eaeaea);
+          font-size:12.5px; font-weight:700; text-align:center; padding:0 8px;
         }
-        .section + .section{ margin-top:8px; }
-        .divider{ height:1px; background: var(--border, rgba(255,255,255,.12)); margin:10px 0; }
       `}</style>
     </div>
   );
