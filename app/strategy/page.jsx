@@ -1,13 +1,15 @@
 // app/strategy/page.jsx
 "use client";
 
+/* =========================
+   00 — Imports
+   ========================= */
 import { useEffect, useMemo, useState } from "react";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
-import OptionsTab from "../../components/Options/OptionsTab";
 import OptionsTab from "../../components/Options/OptionsTab";
 
 import useDebounce from "../../hooks/useDebounce";
@@ -21,7 +23,13 @@ const EX_NAMES = {
 };
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
+/* =========================
+   01 — Page
+   ========================= */
 export default function Strategy() {
+  /* -------------------------
+     A) Top-level state
+     ------------------------- */
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
@@ -42,18 +50,22 @@ export default function Strategy() {
   // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
-  // -------- derived inputs --------
+  /* -------------------------
+     B) Derived inputs
+     ------------------------- */
   const rawSpot = Number(company?.spot);
   const sigma = ivValue ?? null;
   const T = horizon > 0 ? horizon / 365 : null;
 
-  // Choose effective spot (company spot if valid, else fallback)
+  // Effective spot: company spot if valid, else fallback from /api/chart
   const spotEff = useMemo(
     () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
     [rawSpot, fallbackSpot]
   );
 
-  // -------- helpers --------
+  /* -------------------------
+     C) Helpers
+     ------------------------- */
   const num = (v) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : NaN;
@@ -72,6 +84,9 @@ export default function Strategy() {
     return { lc, sc, lp, sp };
   }, [legsUi]);
 
+  /* -------------------------
+     D) Monte Carlo payload
+     ------------------------- */
   const mcInput = useMemo(() => {
     if (!(spotEff > 0) || !(T > 0) || !(sigma >= 0)) return null;
     return {
@@ -89,6 +104,10 @@ export default function Strategy() {
 
   const debouncedPayload = useDebounce(mcInput ? JSON.stringify(mcInput) : "", 250);
 
+  /* -------------------------
+     E) Effects
+     ------------------------- */
+  // 1) Run Monte Carlo
   useEffect(() => {
     let aborted = false;
     async function run() {
@@ -123,13 +142,15 @@ export default function Strategy() {
         setProbProfit(Number.isFinite(src.pWin) ? src.pWin : null);
         setExpectancy(Number.isFinite(src.evAbs) ? src.evAbs : null);
         setExpReturn(Number.isFinite(src.evPct) ? src.evPct : null);
-      } catch { if (!aborted) { setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null); } }
+      } catch {
+        if (!aborted) { setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null); }
+      }
     }
     run();
     return () => { aborted = true; };
   }, [debouncedPayload]);
 
-  // When spot is 0, fetch a last close from /api/chart as fallback
+  // 2) Fallback spot when API company spot is 0
   useEffect(() => {
     let cancel = false;
     setFallbackSpot(null);
@@ -145,10 +166,7 @@ export default function Strategy() {
 
         let last = null;
         const arrs = [
-          j?.closes,
-          j?.close,
-          j?.data?.closes,
-          j?.data?.close,
+          j?.closes, j?.close, j?.data?.closes, j?.data?.close,
           Array.isArray(j?.prices) ? j.prices.map((p) => p?.close ?? p?.c) : null,
           Array.isArray(j?.series) ? j.series.map((p) => p?.close ?? p?.c) : null,
         ].filter(Boolean);
@@ -157,7 +175,6 @@ export default function Strategy() {
         }
         if (!Number.isFinite(last) && Number.isFinite(j?.lastClose)) last = Number(j.lastClose);
         if (!Number.isFinite(last) && Number.isFinite(j?.data?.lastClose)) last = Number(j.data.lastClose);
-
         if (Number.isFinite(last) && last > 0) setFallbackSpot(last);
       } catch { /* ignore */ }
     })();
@@ -165,13 +182,12 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol, rawSpot]);
 
+  /* -------------------------
+     F) View helpers
+     ------------------------- */
   const exLabel = useMemo(() => {
     const raw =
-      company?.exchange ||
-      company?.exchangeName ||
-      company?.ex ||
-      company?.exch ||
-      "";
+      company?.exchange || company?.exchangeName || company?.ex || company?.exch || "";
     return prettyEx(raw);
   }, [company]);
 
@@ -182,7 +198,7 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
-  /* ---- Tabs state (pure CSS underline; no external components) ---- */
+  // Tabs (pure CSS underline; no external deps)
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -192,15 +208,20 @@ export default function Strategy() {
     { key: "bonds",      label: "Bonds" },
   ];
 
-  /* ---- Dynamic title shown between tabs and cards ---- */
+  // Title under the tabs
   const tabTitle = useMemo(() => {
     const base = TABS.find(t => t.key === tab)?.label || "Overview";
     return company?.symbol ? `${company.symbol} ${base.toLowerCase()}` : base;
   }, [tab, company?.symbol]);
 
+  /* =========================
+     02 — Render
+     ========================= */
   return (
     <div className="container">
-      {/* Hero */}
+      {/* =========================
+          HERO
+          ========================= */}
       {company?.symbol ? (
         <section className="hero">
           <div className="hero-id">
@@ -248,7 +269,9 @@ export default function Strategy() {
         </header>
       )}
 
-      {/* Company (full width) */}
+      {/* =========================
+          COMPANY CARD (Full width)
+          ========================= */}
       <CompanyCard
         value={company}
         market={market}
@@ -258,7 +281,9 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* ---- Tabs header (between Company and content) ---- */}
+      {/* =========================
+          TABS
+          ========================= */}
       <nav className="tabs" role="tablist" aria-label="Sections">
         {TABS.map(t => (
           <button
@@ -274,76 +299,108 @@ export default function Strategy() {
         ))}
       </nav>
 
-      {/* ---- Title between tabs and cards (more breathing room) ---- */}
+      {/* Title below tabs */}
       <h2 className="tab-title">{tabTitle}</h2>
 
-      {/* ---- Tabbed content ---- */}
+      {/* =========================
+          OVERVIEW (collapsible)
+          ========================= */}
       {tab === "overview" && (
-        <div className="layout-2col">
-          <div className="g-item">
-            <MarketCard onRates={(r) => setMarket(r)} />
-          </div>
+        <details className="block" open>
+          <summary>01 — Overview (Market • Key stats • Strategy)</summary>
 
-          <div className="g-item">
-            <StatsRail
-              spot={spotEff}
-              currency={company?.currency || currency}
-              company={company}
-              iv={sigma}
-              market={market}
-            />
-          </div>
+          <div className="layout-2col">
+            <div className="g-item">
+              <MarketCard onRates={(r) => setMarket(r)} />
+            </div>
 
-          <div className="g-span">
-            <StrategyGallery
-              spot={spotEff}
-              currency={currency}
-              sigma={sigma}
-              T={T}
-              riskFree={market.riskFree ?? 0}
-              mcStats={mcStats}
-              onApply={handleApply}
-            />
+            <div className="g-item">
+              <StatsRail
+                spot={spotEff}
+                currency={company?.currency || currency}
+                company={company}
+                iv={sigma}
+                market={market}
+              />
+            </div>
+
+            <div className="g-span">
+              <StrategyGallery
+                spot={spotEff}
+                currency={currency}
+                sigma={sigma}
+                T={T}
+                riskFree={market.riskFree ?? 0}
+                mcStats={mcStats}
+                onApply={handleApply}
+              />
+            </div>
           </div>
-        </div>
+        </details>
       )}
 
+      {/* =========================
+          FINANCIALS (collapsible)
+          ========================= */}
       {tab === "financials" && (
-        <section>
-          <h3 className="section-title">Financials</h3>
-          <p className="muted">Coming soon.</p>
-        </section>
+        <details className="block" open>
+          <summary>02 — Financials</summary>
+          <section>
+            <h3 className="section-title">Financials</h3>
+            <p className="muted">Coming soon.</p>
+          </section>
+        </details>
       )}
 
+      {/* =========================
+          NEWS (collapsible)
+          ========================= */}
       {tab === "news" && (
-        <section>
-          <h3 className="section-title">News</h3>
-          <p className="muted">Coming soon.</p>
-        </section>
+        <details className="block" open>
+          <summary>03 — News</summary>
+          <section>
+            <h3 className="section-title">News</h3>
+            <p className="muted">Coming soon.</p>
+          </section>
+        </details>
       )}
 
+      {/* =========================
+          OPTIONS (collapsible)
+          ========================= */}
       {tab === "options" && (
-        <section>
-          <h3 className="section-title">Options</h3>
-          <OptionsTab
-            symbol={company?.symbol || ""}
-            currency={company?.currency || currency}
-          />
-        </section>
+        <details className="block" open>
+          <summary>04 — Options (Chain, filters, selection)</summary>
+          <section>
+            <OptionsTab
+              symbol={company?.symbol || ""}
+              currency={company?.currency || currency}
+            />
+          </section>
+        </details>
       )}
 
+      {/* =========================
+          BONDS (collapsible)
+          ========================= */}
       {tab === "bonds" && (
-        <section>
-          <h3 className="section-title">Bonds</h3>
-          <p className="muted">Coming soon.</p>
-        </section>
+        <details className="block" open>
+          <summary>05 — Bonds</summary>
+          <section>
+            <h3 className="section-title">Bonds</h3>
+            <p className="muted">Coming soon.</p>
+          </section>
+        </details>
       )}
 
+      {/* =========================
+          Styles
+          ========================= */}
       <style jsx>{`
         /* Tabs */
         .tabs{
           display:flex; gap:6px;
-          margin:12px 0 16px;           /* more top/bottom space */
+          margin:12px 0 16px;
           border-bottom:1px solid var(--border);
         }
         .tab{
@@ -356,11 +413,31 @@ export default function Strategy() {
 
         /* Title between tabs and cards */
         .tab-title{
-          margin: 2px 0 18px;           /* space below title before cards */
-          font-size: 22px;
-          line-height: 1.2;
-          font-weight: 800;
-          letter-spacing: -.2px;
+          margin: 2px 0 18px;
+          font-size: 22px; line-height: 1.2; font-weight: 800; letter-spacing: -.2px;
+        }
+
+        /* Collapsible (big sections) */
+        details.block{
+          border:1px solid var(--border);
+          border-radius:12px;
+          background:var(--bg);
+          margin-bottom:14px;
+          overflow:hidden;
+        }
+        details.block > summary{
+          cursor:pointer;
+          padding:10px 12px;
+          font-weight:800;
+          list-style:none;
+          border-bottom:1px solid var(--border);
+          user-select:none;
+        }
+        details.block[open] > summary{
+          background:var(--card);
+        }
+        details.block > *:not(summary){
+          padding:12px;
         }
 
         /* Hero */
