@@ -1,17 +1,17 @@
 // app/api/yahoo/session/route.js
 import {
-  resetYahooSession,
   getYahooSessionInfo,
+  resetYahooSession,
 } from "../../../../lib/providers/yahooSession";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// GET /api/yahoo/session  -> quick status probe
+/** GET /api/yahoo/session  -> session status (no network calls) */
 export async function GET() {
   try {
     const info = getYahooSessionInfo();
-    return Response.json({ ok: info.ok, info });
+    return Response.json({ ok: true, data: info });
   } catch (e) {
     return Response.json(
       { ok: false, error: e?.message || "status failed" },
@@ -20,14 +20,14 @@ export async function GET() {
   }
 }
 
-// POST /api/yahoo/session -> force refresh cookie/crumb (Repair button)
+/** POST /api/yahoo/session  -> force refresh cookie+crumb */
 export async function POST() {
   try {
-    const refreshed = await resetYahooSession();
-    return Response.json({ ok: true, refreshed });
+    const res = await resetYahooSession();
+    return Response.json({ ok: true, data: res });
   } catch (e) {
     return Response.json(
-      { ok: false, error: e?.message || "refresh failed" },
+      { ok: false, error: e?.message || "reset failed" },
       { status: 500 }
     );
   }
