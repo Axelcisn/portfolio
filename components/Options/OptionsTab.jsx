@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
+import { getYahooStatus } from "@/lib/client/yahooAdmin";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping (UI only for now)
@@ -13,12 +14,35 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
   // Settings popover
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const gearRef = useRef(null);
+  const gearRef = useRef(null);            // <-- anchors to the NEW gear near the table
   const [anchorRect, setAnchorRect] = useState(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // Keep popover aligned to the gear
+  // --- Yahoo health (drives red state)
+  const [yahooHealthy, setYahooHealthy] = useState(true);
+  const [yahooErr, setYahooErr] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const check = async () => {
+      try {
+        const s = await getYahooStatus(); // { ok, hasCookie, ... }
+        if (!live) return;
+        const ok = !!(s?.ok && s?.hasCookie);
+        setYahooHealthy(ok);
+        setYahooErr(s?.lastError || null);
+      } catch (e) {
+        if (!live) return;
+        setYahooHealthy(false);
+        setYahooErr(e?.message || "Status check failed");
+      }
+    };
+    check();
+    const id = setInterval(check, 60_000);
+    return () => { live = false; clearInterval(id); };
+  }, []);
+
+  // Keep popover aligned to the NEW gear
   useEffect(() => {
     if (!settingsOpen || !gearRef.current) return;
     const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
@@ -223,14 +247,16 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             By strike
           </button>
 
-        <button
-            ref={gearRef}
+          {/* (Old) toolbar gear still opens the same popover, anchored to the new gear */}
+          <button
             type="button"
             className="gear"
             aria-label="Chain table settings"
-            aria-haspopup="dialog"
-            aria-expanded={settingsOpen}
-            onClick={() => setSettingsOpen((v) => !v)}
+            onClick={() => {
+              setSettingsOpen(true);
+              // scroll new gear into view so the popover appears nearby
+              setTimeout(() => gearRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+            }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -268,13 +294,32 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         </div>
       </div>
 
+      {/* Chain actions row (right-aligned) — NEW settings gear by the table */}
+      <div className="table-actions">
+        <button
+          ref={gearRef}
+          type="button"
+          aria-label="Chain table settings"
+          className={`gear2 ${settingsOpen ? "is-active" : ""} ${yahooHealthy ? "" : "is-bad"}`}
+          title={yahooHealthy ? "Settings" : (yahooErr ? `Not working: ${yahooErr}` : "Not working")}
+          onClick={() => setSettingsOpen((v) => !v)}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+            />
+          </svg>
+        </button>
+      </div>
+
       {/* Table */}
       <ChainTable
         symbol={symbol}
         currency={currency}
         provider={provider}
         groupBy={groupBy}
-        expiry={sel}        // now includes sel.iso when available
+        expiry={sel}
       />
 
       {/* Settings portal */}
@@ -317,9 +362,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           color:var(--text);
         }
 
-        /* ---- Expiry strip (theme-aware) ---- */
+        /* ---- Expiry strip ---- */
         .expiry-wrap{
-          margin: 14px 0 18px;
+          margin: 14px 0 10px;
           padding: 2px 0 10px;
           border-bottom: 2px solid var(--border);
         }
@@ -337,8 +382,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           font-weight:800; font-size:17px; letter-spacing:.2px; color:var(--text);
           padding:0 0 6px 0;
           border-bottom:1px solid var(--border);
-          margin-bottom:8px;
-          opacity:.95;
+          margin-bottom:8px; opacity:.95;
         }
         .days{ display:flex; gap:10px; }
 
@@ -357,6 +401,44 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           background:var(--text); color:var(--bg);
           border-color:var(--text);
         }
+
+        /* ---- New chain actions row & gear by table ---- */
+        .table-actions{
+          margin: 8px 0 8px;
+          display:flex; justify-content:flex-end;
+        }
+        .gear2{
+          position:relative;
+          height:38px; width:42px;
+          display:inline-flex; align-items:center; justify-content:center;
+          border-radius:14px;
+          border:2px solid var(--border);      /* outer border */
+          background:var(--card);
+          color:var(--text);
+          transition: border-color .15s ease, color .15s ease, box-shadow .15s ease;
+        }
+        .gear2::after{                          /* inner border */
+          content:"";
+          position:absolute; inset:4px;
+          border-radius:12px;
+          border:2px solid var(--border);
+          pointer-events:none;
+        }
+        /* Active -> blue */
+        .gear2.is-active{
+          border-color: var(--accent, #3b82f6);
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 35%, transparent);
+        }
+        .gear2.is-active::after{ border-color: var(--accent, #3b82f6); }
+        .gear2.is-active svg{ color: var(--accent, #3b82f6); }
+
+        /* Not working -> red */
+        .gear2.is-bad{
+          border-color: #ef4444;
+          box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 35%, transparent);
+        }
+        .gear2.is-bad::after{ border-color:#ef4444; }
+        .gear2.is-bad svg{ color:#ef4444; }
 
         @media (max-width: 840px){
           .seg{ height:36px; padding:0 14px; font-size:14px; }
