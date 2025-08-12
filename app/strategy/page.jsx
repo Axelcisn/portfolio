@@ -7,7 +7,6 @@ import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
-import TabsNav from "../../components/ui/TabsNav";
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -65,7 +64,7 @@ export default function Strategy() {
 
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
-    const sc = toLegAPI(legsUi?.sc || {});
+       const sc = toLegAPI(legsUi?.sc || {});
     const lp = toLegAPI(legsUi?.lp || {});
     const sp = toLegAPI(legsUi?.sp || {});
     return { lc, sc, lp, sp };
@@ -185,7 +184,7 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
-  /* ---- NEW: tabs state ---- */
+  /* ---- NEW: tabs state (pure CSS underline; no extra imports) ---- */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -255,8 +254,21 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* ---- NEW: Tabs header (sits between Company and content) ---- */}
-      <TabsNav tabs={TABS} activeKey={tab} onChange={setTab} />
+      {/* ---- NEW: Tabs header (between Company and content) ---- */}
+      <nav className="tabs" role="tablist" aria-label="Sections">
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            className={`tab ${tab === t.key ? "is-active" : ""}`}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
       {/* ---- Tabbed content ---- */}
       {tab === "overview" && (
@@ -292,34 +304,47 @@ export default function Strategy() {
       )}
 
       {tab === "financials" && (
-        <section className="card" id="panel-financials">
-          <div className="section-title">Financials</div>
+        <section>
+          <h3 className="section-title">Financials</h3>
           <p className="muted">Coming soon.</p>
         </section>
       )}
 
       {tab === "news" && (
-        <section className="card" id="panel-news">
-          <div className="section-title">News</div>
+        <section>
+          <h3 className="section-title">News</h3>
           <p className="muted">Coming soon.</p>
         </section>
       )}
 
       {tab === "options" && (
-        <section className="card" id="panel-options">
-          <div className="section-title">Options</div>
+        <section>
+          <h3 className="section-title">Options</h3>
           <p className="muted">Options chain UI will render here in the next step.</p>
         </section>
       )}
 
       {tab === "bonds" && (
-        <section className="card" id="panel-bonds">
-          <div className="section-title">Bonds</div>
+        <section>
+          <h3 className="section-title">Bonds</h3>
           <p className="muted">Coming soon.</p>
         </section>
       )}
 
       <style jsx>{`
+        /* Tabs */
+        .tabs{
+          display:flex; gap:6px; margin:8px 0 12px 0;
+          border-bottom:1px solid var(--border);
+        }
+        .tab{
+          height:40px; padding:0 14px; border:0; background:transparent;
+          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
+          border-bottom:2px solid transparent; margin-bottom:-1px;
+        }
+        .tab:hover{ opacity:1; }
+        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+
         /* Hero */
         .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
         .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
@@ -352,9 +377,7 @@ export default function Strategy() {
         .g-span{ grid-column: 1 / -1; min-width:0; }
         .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
 
-        .card{ padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
-
-        .section-title{ font-weight:800; margin-bottom:8px; }
+        .section-title{ font-weight:800; margin:8px 0; }
         .muted{ opacity:.7; }
 
         @media (max-width:1100px){
