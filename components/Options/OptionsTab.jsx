@@ -1,5 +1,6 @@
 // components/Options/OptionsTab.jsx
 "use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
@@ -7,8 +8,8 @@ import ChainSettings from "./ChainSettings";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping (UI only for now)
-  const [provider, setProvider] = useState("api");       // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry");      // 'expiry' | 'strike'
+  const [provider, setProvider] = useState("api");    // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");   // 'expiry' | 'strike'
 
   // Settings popover
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -21,7 +22,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Keep popover aligned to the gear
   useEffect(() => {
     if (!settingsOpen || !gearRef.current) return;
-    const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
+    const update = () => {
+      const r = gearRef.current.getBoundingClientRect();
+      setAnchorRect(r);
+    };
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
@@ -41,6 +45,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       setSettingsOpen(false);
     };
     const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
+
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -74,10 +79,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     []
   );
 
-  // Selected expiry
+  // Selected expiry (month label + day)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
 
-  // Settings portal (avoids clipping)
+  // Render the settings popover in a portal (avoids overflow/clipping issues)
   const settingsPortal =
     mounted && settingsOpen && anchorRect
       ? createPortal(
@@ -87,8 +92,12 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             style={{
               position: "fixed",
               zIndex: 1000,
+              // align just under the gear, keep inside viewport
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
+              left: Math.min(
+                Math.max(12, anchorRect.right - 360),
+                window.innerWidth - 360 - 12
+              ),
               width: 360,
             }}
             role="dialog"
@@ -149,7 +158,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             aria-expanded={settingsOpen}
             onClick={() => setSettingsOpen((v) => !v)}
           >
-            {/* same icon, inherits color so it looks right in dark/light */}
+            {/* keep the existing gear to avoid behavior changes */}
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -199,61 +208,47 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       {settingsPortal}
 
       <style jsx>{`
-        /* Use site tokens so dark mode works (no extra toggle here) */
-        .opt { margin-top: 6px; color: var(--text, #0f172a); }
-
+        /* ---- Layout wrappers ---- */
+        .opt { margin-top: 6px; }
         .toolbar{
           display:flex; align-items:center; justify-content:space-between;
           gap:16px; margin: 6px 0 10px;
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
 
-        /* Buttons */
+        /* ---- Buttons (theme-aware) ---- */
         .pill{
           height:36px; padding:0 14px; border-radius:12px;
-          border:1px solid var(--border, #E6E9EF);
-          background: var(--card, #ffffff);
-          color: var(--text, #0f172a);
-          font-weight:700; font-size:14px; line-height:1;
+          border:1px solid var(--border); background:var(--card);
+          font-weight:700; font-size:14px; line-height:1; color:var(--text);
         }
         .pill.is-on{
-          border-color: var(--chip-on-border, #bcd3ff);
-          background: var(--chip-on-bg, #eef5ff);
+          background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--card));
+          border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
         .seg{
           height:38px; padding:0 16px; border-radius:14px;
-          border:1px solid var(--border, #E6E9EF);
-          background: var(--surface, #f5f7fa);
-          color: var(--text, #0f172a);
-          font-weight:800; font-size:15px; line-height:1;
+          border:1px solid var(--border);
+          background:var(--surface); font-weight:800; font-size:15px;
+          color:var(--text); line-height:1;
         }
         .seg.is-on{
-          background: var(--seg-on, #eaf2ff);
-          border-color: var(--seg-on-border, #cfe2ff);
+          background: color-mix(in srgb, var(--accent, #3b82f6) 14%, var(--surface));
+          border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
         .gear{
           height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px; border:1px solid var(--border, #E6E9EF);
-          background: var(--card, #ffffff);
-          color: var(--text, #0f172a);
+          border-radius:14px; border:1px solid var(--border); background:var(--card);
+          color:var(--text);
         }
 
-        /* Settings popover container */
-        .popover{
-          background: var(--card, #ffffff);
-          border:1px solid var(--border, #E6E9EF);
-          border-radius:14px;
-          box-shadow: 0 10px 30px rgba(0,0,0,.18);
-          color: var(--text, #0f172a);
-        }
-
-        /* Expiry strip */
+        /* ---- Expiry strip (theme-aware) ---- */
         .expiry-wrap{
           margin: 14px 0 18px;
           padding: 2px 0 10px;
-          border-bottom: 2px solid var(--border, #E9EDF3);
+          border-bottom: 2px solid var(--border);
         }
         .expiry{
           display:flex; align-items:flex-start; gap:28px;
@@ -261,29 +256,32 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           -webkit-overflow-scrolling: touch; padding-bottom:6px;
         }
         .expiry::-webkit-scrollbar{ height:6px; }
-        .expiry::-webkit-scrollbar-thumb{ background:var(--border, #e1e6ef); border-radius:999px; }
+        .expiry::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
 
         .group{ flex:0 0 auto; }
         .m{
-          font-weight:800; font-size:17px; letter-spacing:.2px;
-          color: var(--text, #0f172a);
+          font-weight:800; font-size:17px; letter-spacing:.2px; color:var(--text);
           padding:0 0 6px 0;
-          border-bottom:1px solid var(--border, #E6E9EF);
+          border-bottom:1px solid var(--border);
           margin-bottom:8px;
+          opacity:.95;
         }
         .days{ display:flex; gap:10px; }
 
         .day{
           min-width:46px; height:34px; padding:0 10px;
-          border-radius:12px; border:1px solid var(--border, #E6E9EF);
-          background: var(--surface, #f4f6f9);
-          color: var(--text, #0f172a);
-          font-weight:800; font-size:16px;
+          border-radius:12px; border:1px solid var(--border);
+          background:var(--surface); font-weight:800; font-size:16px; color:var(--text);
           display:inline-flex; align-items:center; justify-content:center;
+          transition: background .15s ease, transform .12s ease;
+        }
+        .day:hover{
+          background: color-mix(in srgb, var(--text) 6%, var(--surface));
+          transform: translateY(-1px);
         }
         .day.is-active{
-          background: var(--ink, #0f172a);   /* stays strong in dark */
-          color:#fff; border-color: var(--ink, #0f172a);
+          background:var(--text); color:var(--bg);
+          border-color:var(--text);
         }
 
         @media (max-width: 840px){
