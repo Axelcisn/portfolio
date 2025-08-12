@@ -1,97 +1,126 @@
-// components/Options/OptionsTab.jsx
 "use client";
-
 import { useMemo, useRef, useState } from "react";
-import ChainSettings from "./ChainSettings";
 import ChainTable from "./ChainTable";
-
-const DEFAULT_SETTINGS = {
-  showBy: "20",
-  customRows: 25,
-  sort: "asc",
-  cols: {
-    bid: true, ask: true, price: true,
-    delta: false, gamma: false, theta: false, vega: false, rho: false,
-    tval: false, ival: false, askIv: false, bidIv: false,
-  },
-};
+import ChainSettings from "./ChainSettings";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  const [provider, setProvider] = useState("api");
-  const [groupBy, setGroupBy] = useState("expiry");
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  // Provider + grouping (UI only for now)
+  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
-  // settings popover
-  const [openSettings, setOpenSettings] = useState(false);
-  const settingsBtnRef = useRef(null);
+  // Settings popover
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsAnchorRef = useRef(null);
 
-  // mock months/days (UI only for structure right now)
-  const months = useMemo(() => ([
-    { m: "Aug", d: [15, 22, 29] },
-    { m: "Sep", d: [5, 12, 19, 26] },
-    { m: "Oct", d: [17] },
-    { m: "Nov", d: [21] },
-    { m: "Dec", d: [19] },
-    { m: "Jan ’26", d: [16] },
-    { m: "Feb", d: [20] },
-    { m: "Mar", d: [20] },
-    { m: "May", d: [15] },
-    { m: "Jun", d: [18] },
-    { m: "Aug", d: [21] },
-    { m: "Sep", d: [18] },
-    { m: "Dec", d: [18] },
-    { m: "Jan ’27", d: [15] },
-    { m: "Jun", d: [17] },
-    { m: "Dec", d: [17] },
-  ]), []);
+  // Lightweight, static sample expiries just for structure/visuals
+  const expiries = useMemo(
+    () => [
+      { m: "Aug", days: [15, 22, 29] },
+      { m: "Sep", days: [5, 12, 19, 26] },
+      { m: "Oct", days: [17] },
+      { m: "Nov", days: [21] },
+      { m: "Dec", days: [19] },
+      { m: "Jan ’26", days: [16] },
+      { m: "Feb", days: [20] },
+      { m: "Mar", days: [20] },
+      { m: "May", days: [15] },
+      { m: "Jun", days: [18] },
+      { m: "Aug", days: [21] },
+      { m: "Sep", days: [18] },
+      { m: "Dec", days: [18] },
+      { m: "Jan ’27", days: [15] },
+      { m: "Jun", days: [17] },
+      { m: "Dec", days: [17] },
+    ],
+    []
+  );
 
-  const [activeMonth, setActiveMonth] = useState(5);
-  const [activeDay, setActiveDay]   = useState(0);
+  // Selected expiry (month label + day)
+  const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
 
   return (
-    <div className="opts">
+    <section className="opt">
       {/* Toolbar */}
       <div className="toolbar">
-        <div className="l">
-          <button className={`chip ${provider === "api" ? "is-active" : ""}`} onClick={() => setProvider("api")}>API</button>
-          <button className={`chip ${provider === "upload" ? "is-active" : ""}`} onClick={() => setProvider("upload")}>Upload</button>
+        <div className="left">
+          <button
+            type="button"
+            className={`pill ${provider === "api" ? "is-on" : ""}`}
+            onClick={() => setProvider("api")}
+            aria-pressed={provider === "api"}
+          >
+            API
+          </button>
+          <button
+            type="button"
+            className={`pill ${provider === "upload" ? "is-on" : ""}`}
+            onClick={() => setProvider("upload")}
+            aria-pressed={provider === "upload"}
+          >
+            Upload
+          </button>
         </div>
 
-        <div className="r">
-          <div className="seg">
-            <button className={`seg-btn ${groupBy === "expiry" ? "is-active" : ""}`} onClick={() => setGroupBy("expiry")}>By expiration</button>
-            <button className={`seg-btn ${groupBy === "strike" ? "is-active" : ""}`} onClick={() => setGroupBy("strike")}>By strike</button>
-          </div>
+        <div className="right">
           <button
-            ref={settingsBtnRef}
-            className="icon-btn"
-            aria-haspopup="dialog"
-            aria-expanded={openSettings}
-            onClick={() => setOpenSettings(v => !v)}
+            type="button"
+            className={`seg ${groupBy === "expiry" ? "is-on" : ""}`}
+            onClick={() => setGroupBy("expiry")}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="1.6"/>
-              <path d="M19 12a7 7 0 0 0-.06-.9l2.04-1.58-1.9-3.29-2.4.96a7 7 0 0 0-1.56-.9l-.36-2.55h-3.8l-.36 2.55c-.55.22-1.07.52-1.56.9l-2.4-.96-1.9 3.3L5.06 11.1a6.9 6.9 0 0 0 0 1.8l-2.04 1.58 1.9 3.29 2.4-.96c.48.38 1 .68 1.56.9l.36 2.55h3.8l.36-2.55c.55-.22 1.07-.52 1.56-.9l2.4.96 1.9-3.29L18.94 12.9c.04-.3.06-.6.06-.9Z" stroke="currentColor" strokeWidth="1.6"/>
+            By expiration
+          </button>
+          <button
+            type="button"
+            className={`seg ${groupBy === "strike" ? "is-on" : ""}`}
+            onClick={() => setGroupBy("strike")}
+          >
+            By strike
+          </button>
+
+          <button
+            ref={settingsAnchorRef}
+            type="button"
+            className="gear"
+            aria-label="Chain table settings"
+            onClick={() => setShowSettings((v) => !v)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+              />
             </svg>
           </button>
+
+          {showSettings && (
+            <>
+              <div
+                className="overlay"
+                onClick={() => setShowSettings(false)}
+              />
+              <div className="popover">
+                <ChainSettings onClose={() => setShowSettings(false)} />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Expiry strip (single horizontal line of months, dates in vertical columns) */}
+      {/* Expiry strip (single row, TradingView-style) */}
       <div className="expiry-wrap">
-        <div className="months">
-          {months.map((m, i) => (
-            <div className="month" key={`${m.m}-${i}`}>
-              <div className="m-title">{m.m}</div>
+        <div className="expiry">
+          {expiries.map((g) => (
+            <div className="group" key={g.m}>
+              <div className="m">{g.m}</div>
               <div className="days">
-                {m.d.map((d, j) => {
-                  const active = i === activeMonth && j === activeDay;
+                {g.days.map((d) => {
+                  const active = sel.m === g.m && sel.d === d;
                   return (
                     <button
-                      key={`${i}-${j}`}
-                      type="button"
+                      key={`${g.m}-${d}`}
                       className={`day ${active ? "is-active" : ""}`}
-                      onClick={() => { setActiveMonth(i); setActiveDay(j); }}
+                      onClick={() => setSel({ m: g.m, d })}
+                      aria-pressed={active}
                     >
                       {d}
                     </button>
@@ -101,128 +130,98 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             </div>
           ))}
         </div>
-        <div className="strip-underline" />
       </div>
 
-      {/* Head row for the table */}
-      <div className="table-head">
-        <div className="h-left">
-          <h3 className="h-title">Calls</h3>
-          <div className="cols">
-            <span>Price</span><span>Ask</span><span>Bid</span>
-            <span className="strike">↑&nbsp;Strike</span><span>IV, %</span>
-          </div>
-        </div>
-        <div className="h-right">
-          <h3 className="h-title">Puts</h3>
-          <div className="cols"><span>Bid</span><span>Ask</span><span>Price</span></div>
-        </div>
-      </div>
-
-      {/* Table area (empty state for now) */}
-      <div className="table-body">
-        <ChainTable
-          provider={provider}
-          groupBy={groupBy}
-          symbol={symbol}
-          currency={currency}
-          settings={settings}
-        />
-      </div>
-
-      {/* Settings popover */}
-      <ChainSettings
-        open={openSettings}
-        anchorEl={settingsBtnRef.current}
-        settings={settings}
-        onChange={setSettings}
-        onClose={() => setOpenSettings(false)}
+      {/* Table */}
+      <ChainTable
+        symbol={symbol}
+        currency={currency}
+        provider={provider}
+        groupBy={groupBy}
+        expiry={sel}
       />
 
       <style jsx>{`
-        .opts{
-          /* size tokens to keep consistency everywhere */
-          --chip-h: 40px;
-          --seg-h: 36px;
-          --icon-h: 44px;
-          --date-chip-h: 36px;
-          --date-chip-minw: 56px;
-          --date-font: 16px;       /* smaller dates per your request */
-          --month-font: 16px;
-        }
-
-        /* Toolbar */
+        /* ---- Layout wrappers ---- */
+        .opt { margin-top: 6px; }
         .toolbar{
-          display:flex; align-items:center; justify-content:space-between; gap:16px;
-          margin:4px 0 2px;
+          display:flex; align-items:center; justify-content:space-between;
+          gap:16px; margin: 6px 0 10px;
         }
-        .l{ display:flex; gap:10px; }
+        .left, .right{ display:flex; align-items:center; gap:10px; }
+        .right{ position:relative; }
 
-        .chip{
-          height:var(--chip-h); padding:0 16px; border-radius:12px;
-          border:1px solid var(--border); background:var(--card);
-          font-weight:700; font-size:14px; cursor:pointer;
+        /* ---- Buttons ---- */
+        .pill{
+          height:36px; padding:0 14px; border-radius:12px;
+          border:1px solid var(--border, #E6E9EF); background:#fff;
+          font-weight:700; font-size:14px; line-height:1; color:#0f172a;
         }
-        .chip.is-active{ outline:2px solid var(--accent,#3b82f6); }
+        .pill.is-on{ border-color:#bcd3ff; background:#eef5ff; }
 
-        .r{ display:flex; align-items:center; gap:10px; }
-        .seg{ display:flex; border:1px solid var(--border); background:var(--card); border-radius:14px; padding:3px; }
-        .seg-btn{
-          height:var(--seg-h); padding:0 14px; border:0; background:transparent;
-          border-radius:10px; font-weight:800; font-size:14px; opacity:.9; cursor:pointer;
+        .seg{
+          height:38px; padding:0 16px; border-radius:14px;
+          border:1px solid var(--border, #E6E9EF);
+          background:#f5f7fa; font-weight:800; font-size:15px;
+          color:#0f172a; line-height:1;
         }
-        .seg-btn.is-active{ background:var(--surface,#eef2f7); opacity:1; }
+        .seg.is-on{ background:#eaf2ff; border-color:#cfe2ff; }
 
-        .icon-btn{
-          height:var(--icon-h); width:var(--icon-h); border-radius:12px;
-          border:1px solid var(--border); background:var(--card);
-          display:flex; align-items:center; justify-content:center; cursor:pointer;
+        .gear{
+          height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
+          border-radius:14px; border:1px solid var(--border, #E6E9EF); background:#fff;
+          color:#0f172a;
         }
 
-        /* Expiry strip — single row of months; vertical date columns; scrolls horizontally */
-        .expiry-wrap{ margin:12px 0 18px; }
-        .months{
-          display:flex; gap:28px; overflow-x:auto; padding:2px 2px 8px;
-          scrollbar-width:none; -ms-overflow-style:none; white-space:nowrap;
+        /* ---- Settings popover ---- */
+        .overlay{
+          position:fixed; inset:0; background:transparent; z-index:20;
         }
-        .months::-webkit-scrollbar{ display:none; }
-        .month{
-          flex:0 0 auto; min-width:120px; display:flex; flex-direction:column;
-          gap:10px;
+        .popover{
+          position:absolute; z-index:25; right:0; top:44px;
+          background:#fff; border:1px solid var(--border,#E6E9EF); border-radius:14px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.08);
         }
-        .m-title{
-          font-size:var(--month-font); font-weight:800; line-height:1.1;
-          padding-bottom:6px; border-bottom:2px solid var(--border);
+
+        /* ---- Expiry strip ---- */
+        .expiry-wrap{
+          margin: 14px 0 18px;
+          padding: 2px 0 10px;
+          border-bottom: 2px solid #E9EDF3;
         }
-        .days{ display:flex; flex-direction:column; gap:10px; }
+        .expiry{
+          display:flex; align-items:flex-start; gap:28px;
+          overflow-x:auto; overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch; padding-bottom:6px;
+        }
+        .expiry::-webkit-scrollbar{ height:6px; }
+        .expiry::-webkit-scrollbar-thumb{ background:#e1e6ef; border-radius:999px; }
+
+        .group{ flex:0 0 auto; }
+        .m{
+          font-weight:800; font-size:17px; letter-spacing:.2px; color:#0f172a;
+          padding:0 0 6px 0;
+          border-bottom:1px solid #E6E9EF;
+          margin-bottom:8px;
+        }
+        .days{ display:flex; gap:10px; }
+
         .day{
-          height:var(--date-chip-h); min-width:var(--date-chip-minw);
-          padding:0 12px; border-radius:12px; border:1px solid var(--border);
-          background:var(--surface,#f5f7fa); font-weight:800; font-size:var(--date-font);
-          color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer;
+          min-width:46px; height:34px; padding:0 10px;
+          border-radius:12px; border:1px solid #E6E9EF;
+          background:#f4f6f9; font-weight:800; font-size:16px; color:#0f172a;
+          display:inline-flex; align-items:center; justify-content:center;
         }
-        .day.is-active{ background:#0f172a; color:#fff; border-color:#0f172a; box-shadow:0 2px 0 rgba(0,0,0,.1); }
-
-        .strip-underline{ height:6px; border-radius:999px; background:var(--border); margin-top:12px; }
-
-        /* Table header shells */
-        .table-head{
-          display:grid; grid-template-columns:1fr 1fr; gap:24px;
-          align-items:end; border-bottom:1px solid var(--border); padding-bottom:10px;
+        .day.is-active{
+          background:#0f172a; color:#fff; border-color:#0f172a;
         }
-        .h-title{ font-size:28px; font-weight:800; margin:0 0 8px; }
-        .cols{
-          display:grid; grid-template-columns: 1fr 1fr 1fr 1.2fr 1fr; column-gap:22px;
-          font-size:16px; font-weight:700; opacity:.9;
-        }
-        .h-right .cols{ grid-template-columns:1fr 1fr 1fr; }
-        .strike{ display:flex; align-items:center; gap:6px; }
 
-        .table-body{ margin-top:14px; }
-        @media (max-width:1100px){
-          .h-title{ font-size:24px; }
+        @media (max-width: 840px){
+          .seg{ height:36px; padding:0 14px; font-size:14px; }
+          .m{ font-size:16px; }
+          .day{ height:32px; min-width:42px; font-size:15px; }
         }
       `}</style>
-    </div>
+    </section>
   );
 }
