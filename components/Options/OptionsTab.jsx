@@ -1,16 +1,58 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping (UI only for now)
-  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
+  const [provider, setProvider] = useState("api");    // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");   // 'expiry' | 'strike'
 
   // Settings popover
-  const [showSettings, setShowSettings] = useState(false);
-  const settingsAnchorRef = useRef(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const gearRef = useRef(null);
+  const [anchorRect, setAnchorRect] = useState(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
+
+  // Keep popover aligned to the gear
+  useEffect(() => {
+    if (!settingsOpen || !gearRef.current) return;
+    const update = () => {
+      const r = gearRef.current.getBoundingClientRect();
+      setAnchorRect(r);
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [settingsOpen]);
+
+  // Close on outside click / ESC
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onDocDown = (e) => {
+      const pop = document.getElementById("chain-settings-popover");
+      if (pop?.contains(e.target)) return;
+      if (gearRef.current?.contains(e.target)) return;
+      setSettingsOpen(false);
+    };
+    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
+
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("touchstart", onDocDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("touchstart", onDocDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [settingsOpen]);
 
   // Lightweight, static sample expiries just for structure/visuals
   const expiries = useMemo(
@@ -37,6 +79,37 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
   // Selected expiry (month label + day)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
+
+  // Render the settings popover in a portal (avoids overflow/clipping issues)
+  const settingsPortal =
+    mounted && settingsOpen && anchorRect
+      ? createPortal(
+          <div
+            id="chain-settings-popover"
+            className="popover"
+            style={{
+              position: "fixed",
+              zIndex: 1000,
+              // align just under the gear, keep inside viewport
+              top: Math.min(
+                anchorRect.bottom + 8,
+                window.innerHeight - 16
+              ),
+              left: Math.min(
+                Math.max(12, anchorRect.right - 360),
+                window.innerWidth - 360 - 12
+              ),
+              width: 360,
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Chain table settings"
+          >
+            <ChainSettings onClose={() => setSettingsOpen(false)} />
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <section className="opt">
@@ -78,11 +151,13 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           </button>
 
           <button
-            ref={settingsAnchorRef}
+            ref={gearRef}
             type="button"
             className="gear"
             aria-label="Chain table settings"
-            onClick={() => setShowSettings((v) => !v)}
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((v) => !v)}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -91,22 +166,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
               />
             </svg>
           </button>
-
-          {showSettings && (
-            <>
-              <div
-                className="overlay"
-                onClick={() => setShowSettings(false)}
-              />
-              <div className="popover">
-                <ChainSettings onClose={() => setShowSettings(false)} />
-              </div>
-            </>
-          )}
         </div>
       </div>
 
-      {/* Expiry strip (single row, TradingView-style) */}
+      {/* Expiry strip */}
       <div className="expiry-wrap">
         <div className="expiry">
           {expiries.map((g) => (
@@ -141,6 +204,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         expiry={sel}
       />
 
+      {/* Settings portal */}
+      {settingsPortal}
+
       <style jsx>{`
         /* ---- Layout wrappers ---- */
         .opt { margin-top: 6px; }
@@ -149,7 +215,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           gap:16px; margin: 6px 0 10px;
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
-        .right{ position:relative; }
 
         /* ---- Buttons ---- */
         .pill{
@@ -171,16 +236,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
           border-radius:14px; border:1px solid var(--border, #E6E9EF); background:#fff;
           color:#0f172a;
-        }
-
-        /* ---- Settings popover ---- */
-        .overlay{
-          position:fixed; inset:0; background:transparent; z-index:20;
-        }
-        .popover{
-          position:absolute; z-index:25; right:0; top:44px;
-          background:#fff; border:1px solid var(--border,#E6E9EF); border-radius:14px;
-          box-shadow: 0 10px 30px rgba(0,0,0,.08);
         }
 
         /* ---- Expiry strip ---- */
