@@ -145,11 +145,6 @@ function buildAreaPaths(xs, ys, xScale, yScale){
 const GREEK_LABEL = { vega:"Vega", delta:"Delta", gamma:"Gamma", theta:"Theta", rho:"Rho" };
 const GREEK_COLOR = { vega:"#f59e0b", delta:"#60a5fa", gamma:"#a78bfa", theta:"#f97316", rho:"#10b981" };
 
-// Monte-Carlo overlay colors
-const CI_COLOR   = "#a855f7"; // purple
-const MEAN_COLOR = "#ec4899"; // pink
-const SPOT_COLOR = "#7dd3fc"; // light blue
-
 export default function Chart({
   spot=null,
   currency="USD",
@@ -221,19 +216,18 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // --- Lognormal PDF & CDF (same model as before) ---
+  // lognormal pdf + cumulative for tooltip probabilities
   const avgDays = useMemo(()=> {
     const opt = rowsEff.filter(r=>!TYPE_INFO[r.type]?.stock && Number.isFinite(r.days));
     if(!opt.length) return Math.round(T*365)||30;
     return Math.round(opt.reduce((s,r)=>s+Number(r.days||0),0)/opt.length);
   }, [rowsEff,T]);
   const mu=riskFree, sVol=sigma;
-  const Tyrs = avgDays/365;
-  const m = Math.log(Math.max(1e-9, Number(spot||1))) + (mu-0.5*sVol*sVol)*Tyrs;
-  const sLn = sVol*Math.sqrt(Tyrs);
+  const m = Math.log(Math.max(1e-9, Number(spot||1))) + (mu-0.5*sVol*sVol)*(avgDays/365);
+  const sLn = sVol*Math.sqrt(avgDays/365);
   const lognormPdf = (x)=>x>0?(1/(x*sLn*Math.sqrt(2*Math.PI)))*Math.exp(-Math.pow(Math.log(x)-m,2)/(2*sLn*sLn)):0;
 
-  const pdf = useMemo(()=>xs.map(lognormPdf),[xs, m, sLn]);
+  const pdf = useMemo(()=>xs.map(lognormPdf),[xs, m, sLn]); // depends on m,sLn via closure
   const cdf = useMemo(()=>{
     const cum=new Array(xs.length).fill(0);
     let acc=0;
@@ -246,18 +240,8 @@ export default function Chart({
     return cum.map(v=>v/total);
   }, [xs, pdf]);
 
-  // --- Monte-Carlo overlays via analytic GBM quantiles (precise, no sampling) ---
-  const z95 = 1.959963984540054; // Phi^{-1}(0.975)
-  const S0 = Number(spot||ks[0]||xDomain[0]||1);
-  const drift = (mu - 0.5*sVol*sVol) * Tyrs;
-  const volT  = sVol * Math.sqrt(Tyrs);
-  const ciLow  = S0 * Math.exp(drift - volT * z95);
-  const ciHigh = S0 * Math.exp(drift + volT * z95);
-  const meanPrice = S0 * Math.exp(mu * Tyrs);
-
   const lotSize = useMemo(()=>rowsEff.reduce((s,r)=>s+Math.abs(Number(r.qty||0)),0)||1,[rowsEff]);
 
-  const greekWhich=(greekProp||"vega").toLowerCase();
   const greekColor = GREEK_COLOR[greekWhich] || "#f59e0b";
 
   // --- Tooltip state ---
@@ -316,27 +300,8 @@ export default function Chart({
         <line x1={pad.l} x2={pad.l+innerW} y1={yScale(0)} y2={yScale(0)} stroke="var(--text)" strokeOpacity="0.8" />
         {yTicks.map((t,i)=>(<g key={`yl-${i}`}><line x1={pad.l-4} x2={pad.l} y1={yScale(t)} y2={yScale(t)} stroke="var(--text)" /><text x={pad.l-8} y={yScale(t)} dy="0.32em" textAnchor="end" className="tick">{fmtNum(t)}</text></g>))}
         {xTicks.map((t,i)=>(<g key={`xl-${i}`}><line x1={xScale(t)} x2={xScale(t)} y1={pad.t+innerH} y2={pad.t+innerH+4} stroke="var(--text)" /><text x={xScale(t)} y={pad.t+innerH+16} textAnchor="middle" className="tick">{fmtNum(t,0)}</text></g>))}
-
-        {/* Underlying, Strike, and MC overlays */}
-        {Number.isFinite(spot) && (
-          <line x1={xScale(Number(spot))} x2={xScale(Number(spot))} y1={pad.t} y2={pad.t+innerH}
-                stroke={SPOT_COLOR} strokeDasharray="4 6" strokeOpacity="0.9" />
-        )}
-        {Number.isFinite(centerStrike) && (
-          <line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t+innerH}
-                stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.45" />
-        )}
-        {/* 95% CI */}
-        {Number.isFinite(ciLow)  && ciLow  >= xDomain[0] && ciLow  <= xDomain[1] && (
-          <line x1={xScale(ciLow)}  x2={xScale(ciLow)}  y1={pad.t} y2={pad.t+innerH} stroke={CI_COLOR} strokeWidth="2" />
-        )}
-        {Number.isFinite(ciHigh) && ciHigh >= xDomain[0] && ciHigh <= xDomain[1] && (
-          <line x1={xScale(ciHigh)} x2={xScale(ciHigh)} y1={pad.t} y2={pad.t+innerH} stroke={CI_COLOR} strokeWidth="2" />
-        )}
-        {/* Mean line */}
-        {Number.isFinite(meanPrice) && meanPrice >= xDomain[0] && meanPrice <= xDomain[1] && (
-          <line x1={xScale(meanPrice)} x2={xScale(meanPrice)} y1={pad.t} y2={pad.t+innerH} stroke={MEAN_COLOR} strokeWidth="2" />
-        )}
+        {Number.isFinite(spot) && (<line x1={xScale(spot)} x2={xScale(spot)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeDasharray="4 6" strokeOpacity="0.6" />)}
+        {Number.isFinite(centerStrike) && (<line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />)}
 
         {/* RIGHT GREEK AXIS */}
         <line x1={pad.l+innerW} x2={pad.l+innerW} y1={pad.t} y2={pad.t+innerH} stroke={greekColor} strokeOpacity="0.25" />
@@ -360,7 +325,7 @@ export default function Chart({
           {GREEK_LABEL[greekWhich]||"Greek"}
         </text>
 
-        {/* series (solid only) */}
+        {/* series */}
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${yScale(yNow[i])}`).join(" ")} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${yScale(yExp[i])}`).join(" ")} fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${gScale(gVals[i])}`).join(" ")} fill="none" stroke={greekColor} strokeWidth="2" />
@@ -379,7 +344,7 @@ export default function Chart({
         {be.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
       </svg>
 
-      {/* floating tooltip (solid background + smaller text + centered labels) */}
+      {/* floating tooltip */}
       {hover && (() => {
         const i = hover.i;
         const leftProb  = (cdf[i] ?? 0);
@@ -403,13 +368,13 @@ export default function Chart({
               <span className="val">{fmtCur(yExp[i], currency)}</span>
             </div>
             <div className="row">
-              <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
+              <span className="dot" style={{ background: greekColor }} />
               <span>{GREEK_LABEL[greekWhich]}</span>
               <span className="val">{fmtNum(gVals[i], 2)}</span>
             </div>
 
             <div className="price">{fmtCur(xs[i], currency)}</div>
-            <div className="sub center">Underlying price</div>
+            <div className="sub">Underlying price</div>
 
             <div className="rule" />
             <div className="prob">
@@ -419,7 +384,7 @@ export default function Chart({
               <span>{(rightProb*100).toFixed(1)}%</span>
               <span className="arrow">→</span>
             </div>
-            <div className="sub center">Probability</div>
+            <div className="sub">Probability</div>
           </div>
         );
       })()}
@@ -454,31 +419,28 @@ export default function Chart({
         .m .k{ font-size:12px; opacity:.7; } .m .v{ font-weight:700; }
         @media (max-width:920px){ .metrics{ grid-template-columns: repeat(3, minmax(0,1fr)); } }
 
-        /* Tooltip: solid bg, slightly smaller type, centered labels */
         .tip{
           position:absolute;
           min-width:220px;
           max-width:260px;
           padding:12px 14px;
-          background: #1e1e1e;
-          color: #eaeaea;
+          background: rgba(20,20,20,.96);
+          color: #eee;
           border-radius: 10px;
           box-shadow: 0 8px 24px rgba(0,0,0,.35);
-          border: 1px solid rgba(255,255,255,.10);
+          border: 1px solid rgba(255,255,255,.08);
           pointer-events: none;
-          font-size: 13px;
         }
         .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:600; }
         .row + .row{ margin-top:6px; }
         .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:8px; }
         .val{ margin-left:auto; margin-right:0; }
-        .price{ margin-top:10px; font-weight:800; text-align:center; }
-        .sub{ font-size:12px; opacity:.75; margin-top:2px; }
-        .sub.center{ text-align:center; }
-        .rule{ height:1px; background: rgba(255,255,255,.14); margin:10px 0; }
+        .price{ margin-top:10px; font-weight:800; }
+        .sub{ font-size:12px; opacity:.7; margin-top:2px; }
+        .rule{ height:1px; background: rgba(255,255,255,.12); margin:10px 0; }
         .prob{ display:flex; align-items:center; justify-content:center; gap:10px; font-weight:700; }
-        .prob .arrow{ opacity:.85; }
-        .prob .mid{ opacity:.75; }
+        .prob .arrow{ opacity:.8; }
+        .prob .mid{ opacity:.7; }
       `}</style>
     </Wrapper>
   );
