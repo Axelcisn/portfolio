@@ -1,94 +1,68 @@
+// components/Options/OptionsTab.jsx
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import OptionsToolbar from "./OptionsToolbar";
-import ChainSettings from "./ChainSettings"; // existing settings popover (smaller fonts)
+import ChainSettings from "./ChainSettings";
 
-function buildMockExpiries() {
-  // Matches your screenshot order/labels
-  const months = [
-    ["Aug", [15, 22, 29]],
-    ["Sep", [5, 12, 19, 26]],
-    ["Oct", [17]],
-    ["Nov", [21]],
-    ["Dec", [19]],
-    ["Jan '26", [16]],
-    ["Feb", [20]],
-    ["Mar", [20]],
-    ["May", [15]],
-    ["Jun", [18]],
-    ["Aug", [21]],
-    ["Sep", [18]],
-    ["Dec", [18]],
-    ["Jan '27", [15]],
-    ["Jun", [17]],
-    ["Dec", [17]],
-  ];
-  return months.map(([m, ds]) => ({ month: m, days: ds }));
-}
-
-export default function OptionsTab({
-  symbol = "",
-  currency = "USD",
-}) {
-  // Top controls
+export default function OptionsTab({ symbol = "", currency = "USD" }) {
+  // UI state only (no fetching yet)
   const [provider, setProvider] = useState("api");       // "api" | "upload"
-  const [mode, setMode] = useState("expiry");            // "expiry" | "strike"
+  const [groupBy, setGroupBy] = useState("expiry");      // "expiry" | "strike"
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Settings state (used later by the table)
-  const [settings, setSettings] = useState({
-    showRows: 20,             // 10 | 20 | Infinity | custom number
-    sortDir: "asc",           // "asc" | "desc"
-    cols: { bid: true, ask: true, price: true, delta: false, gamma: false, theta: false, vega: false, rho: false, tval: false, ival: false, askIv: false, bidIv: false },
-  });
+  // ——— mock months/days strip (visual only) ———
+  const months = useMemo(() => ([
+    { m: "Aug", d: [15,22,29] },
+    { m: "Sep", d: [5,12,19,26] },
+    { m: "Oct", d: [17] },
+    { m: "Nov", d: [21] },
+    { m: "Dec", d: [19] },
+    { m: "Jan ’26", d: [16] },
+    { m: "Feb", d: [20] },
+    { m: "Mar", d: [20] },
+    { m: "May", d: [15] },
+    { m: "Jun", d: [18] },
+    { m: "Aug", d: [21] },
+    { m: "Sep", d: [18] },
+    { m: "Dec", d: [18] },
+    { m: "Jan ’27", d: [15] },
+    { m: "Jun", d: [17] },
+    { m: "Dec", d: [17] },
+  ]), []);
 
-  // Expiry strip (UI only for now)
-  const expiries = useMemo(buildMockExpiries, []);
-  const [sel, setSel] = useState({ month: "Sep", day: 12 });
-
-  const cardRef = useRef(null);
+  const [sel, setSel] = useState({ mIdx: 1, day: 12 }); // default: Sep 12
 
   return (
-    <section className="options">
-      <h3 className="title">Options</h3>
+    <section className="opt-wrap">
+      <h2 className="title">Options</h2>
 
+      {/* Top toolbar */}
       <OptionsToolbar
         provider={provider}
         onProviderChange={setProvider}
-        mode={mode}
-        onModeChange={setMode}
-        settingsOpen={settingsOpen}
-        onOpenSettings={(open) => setSettingsOpen(open)}
+        groupBy={groupBy}
+        onGroupByChange={setGroupBy}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      {/* Settings popover (anchored under the right side of toolbar) */}
-      {settingsOpen && (
-        <div className="settings-pop" role="dialog" aria-label="Chain table settings">
-          <ChainSettings
-            value={settings}
-            onChange={(next) => setSettings((s) => ({ ...s, ...next }))}
-            onClose={() => setSettingsOpen(false)}
-          />
-        </div>
-      )}
-
-      {/* Expiry strip */}
-      <div className="expiry-strip" ref={cardRef}>
-        {expiries.map(({ month, days }) => (
-          <div className="m" key={month}>
-            <div className="m-name">{month}</div>
-            <div className="m-days">
-              {days.map((d) => {
-                const active = sel.month === month && sel.day === d;
+      {/* Months / days strip */}
+      <div className="months" aria-label="Expiration months">
+        {months.map((mm, idx) => (
+          <div className="block" key={`${mm.m}-${idx}`}>
+            <div className="mh">{mm.m}</div>
+            <div className="days">
+              {mm.d.map((dd) => {
+                const active = sel.mIdx === idx && sel.day === dd;
                 return (
                   <button
-                    key={`${month}-${d}`}
+                    key={`${mm.m}-${dd}`}
                     type="button"
-                    className={`chip ${active ? "active" : ""}`}
-                    onClick={() => setSel({ month, day: d })}
+                    aria-pressed={active}
+                    className={`day ${active ? "is-active" : ""}`}
+                    onClick={() => setSel({ mIdx: idx, day: dd })}
                   >
-                    {d}
+                    {dd}
                   </button>
                 );
               })}
@@ -97,23 +71,32 @@ export default function OptionsTab({
         ))}
       </div>
 
-      {/* Table header skeleton (visual only, real data next step) */}
-      <div className="thead">
-        <div className="label calls">Calls</div>
-        <div className="th">Price</div>
-        <div className="th">Ask</div>
-        <div className="th">Bid</div>
+      {/* Section divider */}
+      <div className="divider" />
 
-        <div className="th center">↑ Strike</div>
-        <div className="th center">IV, %</div>
-
-        <div className="label puts">Puts</div>
-        <div className="th right">Bid</div>
-        <div className="th right">Ask</div>
-        <div className="th right">Price</div>
+      {/* Two symmetric headings */}
+      <div className="hp">
+        <h3 className="hp-title">Calls</h3>
+        <h3 className="hp-title right">Puts</h3>
       </div>
 
-      {/* Empty state card for now */}
+      {/* Table header row */}
+      <div className="thead">
+        <div className="th l">Price</div>
+        <div className="th l">Ask</div>
+        <div className="th l">Bid</div>
+
+        <div className="th c">
+          <span className="u">↑</span> Strike
+        </div>
+        <div className="th c">IV, %</div>
+
+        <div className="th r">Bid</div>
+        <div className="th r">Ask</div>
+        <div className="th r">Price</div>
+      </div>
+
+      {/* Empty state panel (unchanged logic) */}
       <div className="empty">
         <div className="empty-title">No options loaded</div>
         <div className="empty-sub">
@@ -121,51 +104,100 @@ export default function OptionsTab({
         </div>
       </div>
 
+      {/* Settings popover */}
+      {settingsOpen && (
+        <div className="settings-pop">
+          <ChainSettings
+            onClose={() => setSettingsOpen(false)}
+            // passthrough placeholders — wiring will come later
+            showCount="20"
+            sortDir="asc"
+            columns={{ bid:true, ask:true, price:true }}
+            onChange={() => {}}
+          />
+        </div>
+      )}
+
       <style jsx>{`
-        .title{ font-size:28px; font-weight:900; letter-spacing:-.3px; margin:10px 0 6px; }
-
-        /* Expiry strip */
-        .expiry-strip{
-          display:flex; flex-wrap:wrap; column-gap:26px; row-gap:16px;
-          padding:8px 0 14px; margin-bottom:10px; border-bottom:1px solid var(--border,#eceff3);
+        .opt-wrap{ margin-top:4px; }
+        .title{
+          font-size:36px; line-height:1.05; font-weight:900; letter-spacing:-.6px;
+          margin:4px 0 14px;
         }
-        .m{ display:flex; flex-direction:column; gap:8px; }
-        .m-name{ font-weight:700; color:#6b7280; font-size:16px; }
-        .m-days{ display:flex; gap:8px; }
-        .chip{
-          min-width:44px; height:36px; padding:0 10px; border-radius:10px;
-          border:1px solid #e5e7eb; background:#f7f7f9; font-weight:800; color:#111827;
-        }
-        .chip.active{ background:#111827; color:#fff; border-color:#111827; }
 
-        /* Table header skeleton */
+        /* Months strip */
+        .months{
+          display:flex; flex-wrap:wrap; gap:28px 24px; align-items:flex-start;
+          padding:4px 0 6px;
+        }
+        .block{ min-width:160px; }
+        .mh{
+          font-weight:800; font-size:18px; letter-spacing:-.2px; opacity:.9; margin-bottom:10px;
+        }
+        .days{ display:flex; gap:10px; flex-wrap:wrap; }
+        .day{
+          height:44px; min-width:58px; padding:0 14px;
+          border-radius:12px; border:1px solid var(--border, #e5e7eb);
+          background: var(--card, #f6f7f8);
+          font-weight:800; font-size:20px; letter-spacing:-.2px;
+          color: var(--text, #0f172a);
+        }
+        .day.is-active{
+          background: var(--text, #0f172a); color: var(--bg, #fff);
+          border-color: var(--text, #0f172a);
+        }
+
+        .divider{ height:1px; background:var(--border,#e5e7eb); margin:14px 0 10px; }
+
+        .hp{
+          display:grid; grid-template-columns: 1fr 1fr; align-items:center;
+          margin: 2px 0 6px;
+        }
+        .hp-title{
+          font-size:28px; font-weight:900; letter-spacing:-.4px; margin:0;
+        }
+        .hp-title.right{ text-align:right; }
+
+        /* Table header — symmetric 8 columns */
         .thead{
           display:grid;
-          grid-template-columns: repeat(3, 1fr) repeat(2, 1fr) repeat(4, 1fr);
-          align-items:center; column-gap:8px;
-          padding:14px 10px 12px;
-          border-bottom:1px solid var(--border,#eceff3);
+          grid-template-columns: repeat(3, 1fr) repeat(2, 1.1fr) repeat(3, 1fr);
+          gap: 8px;
+          align-items:center;
+          padding: 8px 0 12px;
+          position:sticky; top:0; /* harmless on long lists later */
+          background: var(--bg, #fff);
+          z-index:1;
         }
-        .label{ grid-column: span 3; font-weight:900; font-size:24px; letter-spacing:-.3px; }
-        .label.puts{ grid-column: 7 / span 4; }
-        .th{ font-size:16px; font-weight:700; color:#6b7280; }
-        .center{ text-align:center; }
-        .right{ text-align:right; }
+        .th{ font-weight:800; font-size:18px; letter-spacing:-.2px; opacity:.85; }
+        .th.l{ text-align:left; }
+        .th.c{ text-align:center; }
+        .th.r{ text-align:right; }
+        .u{ opacity:.6; margin-right:6px; }
 
         .empty{
-          margin-top:10px; border:1px solid var(--border,#eceff3); border-radius:14px;
-          background:#f8fafc; padding:22px; color:#374151;
-          box-shadow: 0 1px 0 rgba(0,0,0,.02);
+          margin-top:10px;
+          border:1px solid var(--border,#e5e7eb);
+          background: var(--card,#f7f8fa);
+          border-radius:14px;
+          padding:22px 20px;
         }
-        .empty-title{ font-weight:800; margin-bottom:6px; }
-        .empty-sub{ opacity:.8; }
+        .empty-title{ font-weight:900; margin-bottom:6px; }
+        .empty-sub{ opacity:.75; }
 
-        /* Settings popover placement (right aligned under toolbar) */
+        /* Settings popover anchored to the right */
         .settings-pop{
           position: absolute;
-          right: 0; /* relies on parent stacking context; page container usually relative */
-          z-index: 50;
-          margin-top: 6px;
+          right: 6px;
+          margin-top: -48px; /* visually anchored to the gear */
+          z-index: 10;
+        }
+
+        @media (max-width: 900px){
+          .title{ font-size:28px; }
+          .day{ height:40px; min-width:52px; font-size:18px; }
+          .mh{ font-size:16px; }
+          .th{ font-size:16px; }
         }
       `}</style>
     </section>
