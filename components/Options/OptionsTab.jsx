@@ -16,7 +16,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
   const [mounted, setMounted] = useState(false);
-
   useEffect(() => setMounted(true), []);
 
   // Keep popover aligned to the gear
@@ -52,32 +51,32 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
   }, [settingsOpen]);
 
-  /* -------------------- Expiries (filtered) -------------------- */
+  /* -------------------- Expiries from API -------------------- */
 
   // Fallback (keeps your exact visual while API loads/absent)
   const fallbackGroups = useMemo(
     () => [
-      { m: "Aug", days: [15, 22, 29], k: "f-1" },
-      { m: "Sep", days: [5, 12, 19, 26], k: "f-2" },
-      { m: "Oct", days: [17], k: "f-3" },
-      { m: "Nov", days: [21], k: "f-4" },
-      { m: "Dec", days: [19], k: "f-5" },
-      { m: "Jan ’26", days: [16], k: "f-6" },
-      { m: "Feb", days: [20], k: "f-7" },
-      { m: "Mar", days: [20], k: "f-8" },
-      { m: "May", days: [15], k: "f-9" },
-      { m: "Jun", days: [18], k: "f-10" },
-      { m: "Aug", days: [21], k: "f-11" },
-      { m: "Sep", days: [18], k: "f-12" },
-      { m: "Dec", days: [18], k: "f-13" },
-      { m: "Jan ’27", days: [15], k: "f-14" },
-      { m: "Jun", days: [17], k: "f-15" },
-      { m: "Dec", days: [17], k: "f-16" },
+      { m: "Aug", items: [15, 22, 29].map((d) => ({ day: d, iso: null })), k: "f-1" },
+      { m: "Sep", items: [5, 12, 19, 26].map((d) => ({ day: d, iso: null })), k: "f-2" },
+      { m: "Oct", items: [17].map((d) => ({ day: d, iso: null })), k: "f-3" },
+      { m: "Nov", items: [21].map((d) => ({ day: d, iso: null })), k: "f-4" },
+      { m: "Dec", items: [19].map((d) => ({ day: d, iso: null })), k: "f-5" },
+      { m: "Jan ’26", items: [16].map((d) => ({ day: d, iso: null })), k: "f-6" },
+      { m: "Feb", items: [20].map((d) => ({ day: d, iso: null })), k: "f-7" },
+      { m: "Mar", items: [20].map((d) => ({ day: d, iso: null })), k: "f-8" },
+      { m: "May", items: [15].map((d) => ({ day: d, iso: null })), k: "f-9" },
+      { m: "Jun", items: [18].map((d) => ({ day: d, iso: null })), k: "f-10" },
+      { m: "Aug", items: [21].map((d) => ({ day: d, iso: null })), k: "f-11" },
+      { m: "Sep", items: [18].map((d) => ({ day: d, iso: null })), k: "f-12" },
+      { m: "Dec", items: [18].map((d) => ({ day: d, iso: null })), k: "f-13" },
+      { m: "Jan ’27", items: [15].map((d) => ({ day: d, iso: null })), k: "f-14" },
+      { m: "Jun", items: [17].map((d) => ({ day: d, iso: null })), k: "f-15" },
+      { m: "Dec", items: [17].map((d) => ({ day: d, iso: null })), k: "f-16" },
     ],
     []
   );
 
-  // Live expiries from filtered API
+  // Live expiries from /api/expiries
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
 
@@ -87,12 +86,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (!symbol) { setApiExpiries(null); return; }
       try {
         setLoadingExp(true);
-        // 👇 only change: call filtered endpoint (minVol=1, useOI=1)
-        const url = `/api/expiries/filtered?symbol=${encodeURIComponent(symbol)}&minVol=1&useOI=1`;
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
         const j = await res.json().catch(() => ({}));
-        const list = Array.isArray(j?.data?.dates) ? j.data.dates : [];
-        if (!cancelled) setApiExpiries(list);
+        if (!cancelled) setApiExpiries(Array.isArray(j?.expiries) ? j.expiries : []);
       } catch {
         if (!cancelled) setApiExpiries([]);
       } finally {
@@ -103,46 +99,60 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     return () => { cancelled = true; };
   }, [symbol]);
 
-  // Convert YYYY-MM-DD list -> [{ m, days[], k }]
+  // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
   const groups = useMemo(() => {
     if (!apiExpiries || apiExpiries.length === 0) return fallbackGroups;
 
     const parsed = apiExpiries
-      .map((s) => {
-        const d = new Date(s);
-        return Number.isFinite(d?.getTime()) ? d : null;
+      .map((iso) => {
+        const d = new Date(iso);
+        return Number.isFinite(d?.getTime()) ? { d, iso } : null;
       })
       .filter(Boolean)
-      .sort((a, b) => a - b);
+      .sort((a, b) => a.d - b.d);
 
     const out = [];
-    for (const d of parsed) {
+    for (const { d, iso } of parsed) {
       const y = d.getFullYear();
       const mIdx = d.getMonth();
       const labelMonth = d.toLocaleString(undefined, { month: "short" });
-      // Show year suffix only for January (matches your screenshots)
       const label = mIdx === 0 ? `${labelMonth} ’${String(y).slice(-2)}` : labelMonth;
-      const key = `${y}-${mIdx}`; // unique per year-month
+      const key = `${y}-${mIdx}`;
 
       let g = out[out.length - 1];
       if (!g || g.k !== key) {
-        g = { m: label, days: [], k: key };
+        g = { m: label, items: [], k: key };
         out.push(g);
       }
-      g.days.push(d.getDate());
+      g.items.push({ day: d.getDate(), iso });
     }
-    for (const g of out) g.days = Array.from(new Set(g.days)).sort((a, b) => a - b);
+    // unique + sort days inside month
+    for (const g of out) {
+      const seen = new Set();
+      g.items = g.items
+        .filter(({ day }) => (seen.has(day) ? false : (seen.add(day), true)))
+        .sort((a, b) => a.day - b.day);
+    }
     return out;
   }, [apiExpiries, fallbackGroups]);
 
-  // Selected expiry (month label + day)
-  const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
+  // Selected expiry (month label + day + iso)
+  const [sel, setSel] = useState({ m: "Jan ’26", d: 16, iso: null });
 
   // If selection is invalid for current groups, pick the first available
   useEffect(() => {
     if (!groups?.length) return;
-    const exists = groups.some((g) => g.m === sel.m && g.days.includes(sel.d));
-    if (!exists) setSel({ m: groups[0].m, d: groups[0].days[0] });
+    const exists = groups.some((g) => g.m === sel.m && g.items.some((it) => it.day === sel.d));
+    if (!exists) {
+      const g0 = groups[0];
+      const it0 = g0.items[0];
+      setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
+    } else if (!sel.iso) {
+      // enrich current selection with iso if we now have it
+      const g = groups.find((g) => g.m === sel.m);
+      const it = g?.items.find((it) => it.day === sel.d);
+      if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups]);
 
@@ -213,7 +223,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             By strike
           </button>
 
-          <button
+        <button
             ref={gearRef}
             type="button"
             className="gear"
@@ -239,16 +249,16 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             <div className="group" key={g.k || g.m}>
               <div className="m">{g.m}</div>
               <div className="days">
-                {g.days.map((d) => {
-                  const active = sel.m === g.m && sel.d === d;
+                {g.items.map((it) => {
+                  const active = sel.m === g.m && sel.d === it.day;
                   return (
                     <button
-                      key={`${g.k}-${d}`}
+                      key={`${g.k}-${it.day}-${it.iso || "x"}`}
                       className={`day ${active ? "is-active" : ""}`}
-                      onClick={() => setSel({ m: g.m, d })}
+                      onClick={() => setSel({ m: g.m, d: it.day, iso: it.iso ?? null })}
                       aria-pressed={active}
                     >
-                      {d}
+                      {it.day}
                     </button>
                   );
                 })}
@@ -264,7 +274,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         currency={currency}
         provider={provider}
         groupBy={groupBy}
-        expiry={sel}
+        expiry={sel}        // now includes sel.iso when available
       />
 
       {/* Settings portal */}
