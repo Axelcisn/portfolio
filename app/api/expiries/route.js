@@ -1,14 +1,43 @@
 // app/api/expiries/route.js
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 import { yahooJson } from "../../../lib/providers/yahooSession";
+
+// ---- 30s micro-cache (module scoped) ----
+const TTL_MS = 30 * 1000;
+const CACHE = new Map(); // key: SYMBOL -> { ts, expiries: string[] }
+
+function getCached(symbol) {
+  const key = String(symbol || "").toUpperCase();
+  const hit = CACHE.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > TTL_MS) {
+    CACHE.delete(key);
+    return null;
+  }
+  return hit.expiries;
+}
+function setCached(symbol, expiries) {
+  const key = String(symbol || "").toUpperCase();
+  CACHE.set(key, { ts: Date.now(), expiries: Array.isArray(expiries) ? expiries : [] });
+}
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const symbol = (searchParams.get("symbol") || "").trim();
+  const noCache = searchParams.get("nocache") === "1";
 
   if (!symbol) {
     return Response.json({ ok: false, error: "symbol required" }, { status: 400 });
+  }
+
+  // serve from cache unless bypassed
+  if (!noCache) {
+    const cached = getCached(symbol);
+    if (cached) {
+      return Response.json({ ok: true, expiries: cached });
+    }
   }
 
   try {
@@ -22,8 +51,12 @@ export async function GET(req) {
       .filter((d) => Number.isFinite(d?.getTime()))
       .map((d) => d.toISOString().slice(0, 10));
 
+    // cache successful result
+    setCached(symbol, expiries);
+
     return Response.json({ ok: true, expiries });
   } catch (err) {
+    // don't cache errors
     return Response.json(
       { ok: false, error: err?.message || "fetch failed" },
       { status: 502 }
