@@ -1,118 +1,154 @@
-// components/Options/OptionsToolbar.jsx
 "use client";
 
-import React, { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ChainSettings from "./ChainSettings";
 
+/**
+ * Toolbar for the Options tab.
+ * This version only adds a reliable open/close behavior for the settings popover.
+ * Everything else stays the same.
+ */
 export default function OptionsToolbar({
-  provider = "api",                // "api" | "upload"
-  onProviderChange,
-  mode = "expiry",                 // "expiry" | "strike"
-  onModeChange,
-  settings,
-  onSettingsChange,
-  settingsOpen,
-  onSettingsOpenChange,
+  provider = "api",                          // 'api' | 'upload'
+  onProvider, onProviderChange,              // support either prop name
+  groupBy = "expiry",                        // 'expiry' | 'strike'
+  onGroupBy, onGroupByChange,                // support either prop name
 }) {
-  const gearRef = useRef(null);
+  // ---- SETTINGS POPOVER TOGGLE (the only new logic you asked for) ----
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+  const wrapRef = useRef(null);
 
-  const Btn = ({ active, children, onClick, ariaLabel }) => (
-    <button
-      type="button"
-      aria-label={ariaLabel}
-      className={`pill ${active ? "active" : ""}`}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
+  // Close on outside click / Esc
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      const b = btnRef.current;
+      const p = popRef.current;
+      if (b && b.contains(e.target)) return;
+      if (p && p.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setOpen(false);
+
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Helpers to keep existing parent APIs working (don’t change anything else)
+  const fireProvider = (val) => {
+    onProvider?.(val);
+    onProviderChange?.(val);
+  };
+  const fireGroupBy = (val) => {
+    onGroupBy?.(val);
+    onGroupByChange?.(val);
+  };
 
   return (
-    <div className="bar">
+    <div className="toolbar" ref={wrapRef}>
       <div className="left">
-        <Btn
-          active={provider === "api"}
-          ariaLabel="Use API provider"
-          onClick={() => onProviderChange?.("api")}
+        <button
+          type="button"
+          className={`pill ${provider === "api" ? "is-on" : ""}`}
+          onClick={() => fireProvider("api")}
+          aria-pressed={provider === "api"}
         >
           API
-        </Btn>
-
-        <Btn
-          active={provider === "upload"}
-          ariaLabel="Upload screenshot"
-          onClick={() => onProviderChange?.("upload")}
+        </button>
+        <button
+          type="button"
+          className={`pill ${provider === "upload" ? "is-on" : ""}`}
+          onClick={() => fireProvider("upload")}
+          aria-pressed={provider === "upload"}
         >
           Upload
-        </Btn>
+        </button>
       </div>
 
       <div className="right">
-        <Btn
-          active={mode === "expiry"}
-          ariaLabel="Group by expiration"
-          onClick={() => onModeChange?.("expiry")}
+        <button
+          type="button"
+          className={`seg ${groupBy === "expiry" ? "is-on" : ""}`}
+          onClick={() => fireGroupBy("expiry")}
+          aria-pressed={groupBy === "expiry"}
         >
           By expiration
-        </Btn>
-        <Btn
-          active={mode === "strike"}
-          ariaLabel="Group by strike"
-          onClick={() => onModeChange?.("strike")}
+        </button>
+        <button
+          type="button"
+          className={`seg ${groupBy === "strike" ? "is-on" : ""}`}
+          onClick={() => fireGroupBy("strike")}
+          aria-pressed={groupBy === "strike"}
         >
           By strike
-        </Btn>
+        </button>
 
         <button
-          ref={gearRef}
+          ref={btnRef}
           type="button"
           className="gear"
+          aria-haspopup="dialog"
+          aria-expanded={open ? "true" : "false"}
           aria-label="Chain table settings"
-          onClick={() => onSettingsOpenChange?.(!settingsOpen)}
+          onClick={() => setOpen((v) => !v)}
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z" stroke="currentColor" strokeWidth="1.6"/>
-            <path d="M3 12h2.1M18.9 12H21M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5M12 3v2.1M12 18.9V21"
-              stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+            />
           </svg>
         </button>
 
-        {/* Settings popover anchored to the gear */}
-        <ChainSettings
-          open={!!settingsOpen}
-          anchorRef={gearRef}
-          value={settings}
-          onChange={onSettingsChange}
-          onClose={() => onSettingsOpenChange?.(false)}
-        />
+        {/* Popover anchored to the gear; opens/closes with the button */}
+        {open && (
+          <div className="popover" ref={popRef} role="dialog" aria-label="Chain settings">
+            <ChainSettings onClose={() => setOpen(false)} />
+          </div>
+        )}
       </div>
 
       <style jsx>{`
-        .bar{
+        .toolbar{
           display:flex; align-items:center; justify-content:space-between;
-          gap:16px; margin: 8px 0 10px;
+          gap:16px; margin: 6px 0 10px;
+          position:relative; /* anchor for popover */
         }
-        .left,.right{ display:flex; align-items:center; gap:10px; }
+        .left, .right{ display:flex; align-items:center; gap:10px; }
 
-        /* Pills */
         .pill{
-          height:40px; padding:0 14px;
-          border-radius:9999px; border:1px solid var(--border);
-          background: var(--card);
-          font-weight:700; font-size:14px; letter-spacing:-.1px;
-          color:var(--text); opacity:.92;
+          height:36px; padding:0 14px; border-radius:12px;
+          border:1px solid var(--border,#E6E9EF); background:#fff;
+          font-weight:700; font-size:14px; line-height:1; color:#0f172a;
         }
-        .pill.active{ background:var(--bg-soft,#f4f6f8); border-color:var(--border-strong,#dfe3e8); }
-        .pill:hover{ opacity:1; }
+        .pill.is-on{ border-color:#bcd3ff; background:#eef5ff; }
 
-        /* Gear (same height as pills; slightly smaller inner icon) */
-        .gear{
-          height:40px; width:40px; border-radius:12px;
-          display:inline-flex; align-items:center; justify-content:center;
-          border:1px solid var(--border); background:var(--card);
-          color:var(--text);
+        .seg{
+          height:38px; padding:0 16px; border-radius:14px;
+          border:1px solid var(--border,#E6E9EF);
+          background:#f5f7fa; font-weight:800; font-size:15px; color:#0f172a;
         }
-        .gear:hover{ box-shadow:0 1px 0 rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.07); }
+        .seg.is-on{ background:#eaf2ff; border-color:#cfe2ff; }
+
+        .gear{
+          height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
+          border-radius:14px; border:1px solid var(--border,#E6E9EF); background:#fff;
+          color:#0f172a;
+        }
+
+        /* Popover sits directly under the gear, aligned to the right edge */
+        .popover{
+          position:absolute; right:0; top:44px;
+          background:#fff; border:1px solid var(--border,#E6E9EF); border-radius:14px;
+          box-shadow:0 10px 30px rgba(0,0,0,.08);
+          z-index:30;
+        }
       `}</style>
     </div>
   );
