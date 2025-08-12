@@ -6,7 +6,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
 const erf = (x) => {
-  const s = x < 0 ? -1 : 1; x = Math.abs(x);
+  const s = x < 0 ? -1 : 1;
+  x = Math.abs(x);
   const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
   const t = 1/(1+p*x);
   return s*(1-(((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x));
@@ -144,6 +145,9 @@ function buildAreaPaths(xs, ys, xScale, yScale){
 /* ---------- component ---------- */
 const GREEK_LABEL = { vega:"Vega", delta:"Delta", gamma:"Gamma", theta:"Theta", rho:"Rho" };
 const GREEK_COLOR = { vega:"#f59e0b", delta:"#60a5fa", gamma:"#a78bfa", theta:"#f97316", rho:"#10b981" };
+const SPOT_COLOR = "#8ab4f8";
+const MEAN_COLOR = "#ff5ea8";
+const CI_COLOR = "#a855f7";
 
 export default function Chart({
   spot=null,
@@ -163,7 +167,7 @@ export default function Chart({
     return rowsFromLegs(legs, days);
   }, [rows, legs, T]);
 
-  // --- Base domain from spot/strikes ---
+  // strikes and base domain
   const ks = useMemo(() => rowsEff.filter(r=>Number.isFinite(r?.K)).map(r=>+r.K).sort((a,b)=>a-b), [rowsEff]);
   const baseDomain = useMemo(() => {
     const s = Number(spot) || (ks[0] ?? 100);
@@ -172,33 +176,32 @@ export default function Chart({
     return [lo, hi];
   }, [spot, ks]);
 
-  // --- Zoomable view (no pan) ---
-  const [view, setView] = useState(baseDomain);
-  useEffect(() => { setView(baseDomain); }, [baseDomain[0], baseDomain[1]]);
-  const clampView = (mn, mx) => {
-    const baseSpan = baseDomain[1] - baseDomain[0];
-    const minSpan = Math.max(baseSpan * 0.05, 4);
-    const maxSpan = baseSpan * 6;
-    let span = Math.max(minSpan, Math.min(mx - mn, maxSpan));
-    const center = (mn + mx) / 2;
-    return [center - span / 2, center + span / 2];
-  };
-  const zoom = (factor) => {
-    setView(d => {
-      const c = (d[0] + d[1]) / 2;
-      const span = (d[1] - d[0]) * factor;
-      return clampView(c - span / 2, c + span / 2);
+  // zoomable domain
+  const [xDomain, setXDomain] = useState(baseDomain);
+  useEffect(()=>setXDomain(baseDomain), [baseDomain[0], baseDomain[1]]);
+  const zoomAt = (cx, factor) => {
+    setXDomain(([lo,hi])=>{
+      const span = hi - lo;
+      const newSpan = Math.max(span * factor, Math.max(1e-6, span*0.05));
+      const alpha = (cx - lo) / span;
+      let newLo = cx - alpha*newSpan;
+      let newHi = newLo + newSpan;
+      const baseSpan = baseDomain[1]-baseDomain[0];
+      const maxSpan = baseSpan * 6;
+      if (newSpan > maxSpan) { newLo = cx - maxSpan/2; newHi = cx + maxSpan/2; }
+      return [newLo, newHi];
     });
   };
-  const resetZoom = () => setView(baseDomain);
+  const zoomIn  = () => zoomAt((xDomain[0]+xDomain[1])/2, 0.9);
+  const zoomOut = () => zoomAt((xDomain[0]+xDomain[1])/2, 1.1);
+  const resetZoom = () => setXDomain(baseDomain);
 
-  // x grid on current view
   const N=401;
   const xs = useMemo(() => {
-    const [lo,hi]=view, step=(hi-lo)/(N-1); const arr=new Array(N);
+    const [lo,hi]=xDomain, step=(hi-lo)/(N-1); const arr=new Array(N);
     for(let i=0;i<N;i++) arr[i]=lo+i*step;
     return arr;
-  }, [view]);
+  }, [xDomain]);
   const stepX = useMemo(()=>xs.length>1?xs[1]-xs[0]:1,[xs]);
 
   const env = useMemo(()=>({r:riskFree, sigma}), [riskFree, sigma]);
@@ -222,16 +225,16 @@ export default function Chart({
 
   const yRange = useMemo(()=>{ const lo=Math.min(0,...yExp,...yNow), hi=Math.max(0,...yExp,...yNow); return [lo, hi===lo?lo+1:hi]; }, [yExp,yNow]);
 
-  const xScale = useMemo(()=>lin(view,[pad.l,pad.l+innerW]),[view,innerW]);
+  const xScale = useMemo(()=>lin(xDomain,[pad.l,pad.l+innerW]),[xDomain,innerW]);
   const yScale = useMemo(()=>lin([yRange[0],yRange[1]],[pad.t+innerH,pad.t]),[yRange,innerH]);
 
   const gMin=Math.min(...gVals), gMax=Math.max(...gVals), gPad=(gMax-gMin)*0.1||1;
   const gScale = useMemo(()=>lin([gMin-gPad,gMax+gPad],[pad.t+innerH,pad.t]),[gMin,gMax,gPad,innerH]);
 
-  const xTicks = ticks(view[0], view[1], 7);
+  const xTicks = ticks(xDomain[0], xDomain[1], 7);
   const yTicks = ticks(yRange[0], yRange[1], 6);
   const gTicks = ticks(gMin-gPad, gMax+gPad, 6);
-  const centerStrike = ks.length ? (ks[0]+ks[ks.length-1])/2 : (Number(spot)||view[0]);
+  const centerStrike = ks.length ? (ks[0]+ks[ks.length-1])/2 : (Number(spot)||xDomain[0]);
 
   // shaded PL areas
   const { pos:posPaths, neg:negPaths } = useMemo(
@@ -247,12 +250,10 @@ export default function Chart({
   }, [rowsEff,T]);
   const mu=riskFree, sVol=sigma;
   const Tyrs = avgDays/365;
-  const S0 = Number(spot) || (ks[0] ?? view[0]);
-  const m = Math.log(Math.max(1e-9, S0)) + (mu-0.5*sVol*sVol)*Tyrs;
+  const m = Math.log(Math.max(1e-9, Number(spot||1))) + (mu-0.5*sVol*sVol)*Tyrs;
   const sLn = sVol*Math.sqrt(Tyrs);
-  const meanPrice = S0 * Math.exp(mu * Tyrs); // analytic mean of GBM
-
   const lognormPdf = (x)=>x>0?(1/(x*sLn*Math.sqrt(2*Math.PI)))*Math.exp(-Math.pow(Math.log(x)-m,2)/(2*sLn*sLn)):0;
+
   const pdf = useMemo(()=>xs.map(lognormPdf),[xs, m, sLn]);
   const cdf = useMemo(()=>{
     const cum=new Array(xs.length).fill(0);
@@ -266,6 +267,15 @@ export default function Chart({
     return cum.map(v=>v/total);
   }, [xs, pdf]);
 
+  // Monte-Carlo overlays via GBM quantiles (no sampling)
+  const z95 = 1.959963984540054; // Φ^-1(0.975)
+  const S0 = Number.isFinite(Number(spot)) ? Number(spot) : (ks[0] ?? xDomain[0]);
+  const drift = (mu - 0.5*sVol*sVol) * Tyrs;
+  const volT  = sVol * Math.sqrt(Tyrs);
+  const ciLow = S0 * Math.exp(drift - volT * z95);
+  const ciHigh= S0 * Math.exp(drift + volT * z95);
+  const meanPrice = S0 * Math.exp(mu * Tyrs);
+
   const lotSize = useMemo(()=>rowsEff.reduce((s,r)=>s+Math.abs(Number(r.qty||0)),0)||1,[rowsEff]);
 
   const greekColor = GREEK_COLOR[greekWhich] || "#f59e0b";
@@ -276,7 +286,7 @@ export default function Chart({
     const svg = evt.currentTarget;
     const rect = svg.getBoundingClientRect();
     const px = evt.clientX - rect.left;
-    const S = Math.min(view[1], Math.max(view[0], xScale.invert(px)));
+    const S = Math.min(xDomain[1], Math.max(xDomain[0], xScale.invert(px)));
     let i = Math.round((S - xs[0]) / (stepX || 1));
     i = Math.max(0, Math.min(xs.length - 1, i));
     setHover({ i, sx: xScale(xs[i]), syNow: yScale(yNow[i]), syExp: yScale(yExp[i]), gy: gScale(gVals[i]) });
@@ -290,9 +300,13 @@ export default function Chart({
       {/* header */}
       <div className="chart-header">
         <div className="legend">
-          <div className="leg"><span className="sw" style={{ borderColor: "var(--accent)" }} />Current P&amp;L</div>
-          <div className="leg"><span className="sw" style={{ borderColor: "var(--text-muted,#8a8a8a)" }} />Expiration P&amp;L</div>
-          <div className="leg"><span className="sw" style={{ borderColor: greekColor }} />{GREEK_LABEL[greekWhich]||"Greek"}</div>
+          {/* dots legend (compact) */}
+          <div className="leg"><span className="dot" style={{ background: "var(--accent)" }} />Current P&amp;L</div>
+          <div className="leg"><span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />Expiration P&amp;L</div>
+          <div className="leg"><span className="dot" style={{ background: greekColor }} />{GREEK_LABEL[greekWhich]||"Greek"}</div>
+          <div className="leg"><span className="dot" style={{ background: SPOT_COLOR }} />Spot</div>
+          <div className="leg"><span className="dot" style={{ background: MEAN_COLOR }} />Mean</div>
+          <div className="leg"><span className="dot" style={{ background: CI_COLOR }} />95% CI</div>
         </div>
         <div className="header-tools">
           <div className="greek-ctl">
@@ -301,10 +315,9 @@ export default function Chart({
               <option value="vega">Vega</option><option value="delta">Delta</option><option value="gamma">Gamma</option><option value="theta">Theta</option><option value="rho">Rho</option>
             </select>
           </div>
-          {/* zoom controls */}
           <div className="zoom">
-            <button aria-label="Zoom out" onClick={()=>zoom(1.10)}>−</button>
-            <button aria-label="Zoom in"  onClick={()=>zoom(0.90)}>+</button>
+            <button aria-label="Zoom out" onClick={zoomOut}>−</button>
+            <button aria-label="Zoom in" onClick={zoomIn}>+</button>
             <button aria-label="Reset zoom" onClick={resetZoom}>⟲</button>
           </div>
         </div>
@@ -332,17 +345,7 @@ export default function Chart({
         <line x1={pad.l} x2={pad.l+innerW} y1={yScale(0)} y2={yScale(0)} stroke="var(--text)" strokeOpacity="0.8" />
         {yTicks.map((t,i)=>(<g key={`yl-${i}`}><line x1={pad.l-4} x2={pad.l} y1={yScale(t)} y2={yScale(t)} stroke="var(--text)" /><text x={pad.l-8} y={yScale(t)} dy="0.32em" textAnchor="end" className="tick">{fmtNum(t)}</text></g>))}
         {xTicks.map((t,i)=>(<g key={`xl-${i}`}><line x1={xScale(t)} x2={xScale(t)} y1={pad.t+innerH} y2={pad.t+innerH+4} stroke="var(--text)" /><text x={xScale(t)} y={pad.t+innerH+16} textAnchor="middle" className="tick">{fmtNum(t,0)}</text></g>))}
-
-        {/* solid guide lines */}
-        {Number.isFinite(spot) && spot>=view[0] && spot<=view[1] && (
-          <line x1={xScale(Number(spot))} x2={xScale(Number(spot))} y1={pad.t} y2={pad.t+innerH} stroke="#93c5fd" strokeWidth="1.5" />
-        )}
-        {Number.isFinite(meanPrice) && meanPrice>=view[0] && meanPrice<=view[1] && (
-          <line x1={xScale(meanPrice)} x2={xScale(meanPrice)} y1={pad.t} y2={pad.t+innerH} stroke="#ec4899" strokeWidth="1.5" />
-        )}
-        {Number.isFinite(centerStrike) && centerStrike>=view[0] && centerStrike<=view[1] && (
-          <line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />
-        )}
+        {Number.isFinite(centerStrike) && (<line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />)}
 
         {/* RIGHT GREEK AXIS */}
         <line x1={pad.l+innerW} x2={pad.l+innerW} y1={pad.t} y2={pad.t+innerH} stroke={greekColor} strokeOpacity="0.25" />
@@ -371,10 +374,24 @@ export default function Chart({
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${yScale(yExp[i])}`).join(" ")} fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${gScale(gVals[i])}`).join(" ")} fill="none" stroke={greekColor} strokeWidth="2" />
 
+        {/* overlays: spot / mean / CI (solid lines) */}
+        {Number.isFinite(spot) && spot>=xDomain[0] && spot<=xDomain[1] && (
+          <line x1={xScale(Number(spot))} x2={xScale(Number(spot))} y1={pad.t} y2={pad.t+innerH} stroke={SPOT_COLOR} strokeWidth="2" />
+        )}
+        {Number.isFinite(meanPrice) && meanPrice>=xDomain[0] && meanPrice<=xDomain[1] && (
+          <line x1={xScale(meanPrice)} x2={xScale(meanPrice)} y1={pad.t} y2={pad.t+innerH} stroke={MEAN_COLOR} strokeWidth="2" />
+        )}
+        {Number.isFinite(ciLow) && ciLow>=xDomain[0] && ciLow<=xDomain[1] && (
+          <line x1={xScale(ciLow)} x2={xScale(ciLow)} y1={pad.t} y2={pad.t+innerH} stroke={CI_COLOR} strokeWidth="2" />
+        )}
+        {Number.isFinite(ciHigh) && ciHigh>=xDomain[0] && ciHigh<=xDomain[1] && (
+          <line x1={xScale(ciHigh)} x2={xScale(ciHigh)} y1={pad.t} y2={pad.t+innerH} stroke={CI_COLOR} strokeWidth="2" />
+        )}
+
         {/* hover markers */}
         {hover && (
           <>
-            <line x1={hover.sx} x2={hover.sx} y1={pad.t} y2={pad.t+innerH} stroke="rgba(255,255,255,.28)" />
+            <line x1={hover.sx} x2={hover.sx} y1={pad.t} y2={pad.t+innerH} stroke="rgba(255,255,255,.25)" />
             <circle cx={hover.sx} cy={hover.syNow} r="4" fill="var(--accent)" />
             <circle cx={hover.sx} cy={hover.syExp} r="4" fill="var(--text-muted,#8a8a8a)" />
             <circle cx={hover.sx} cy={hover.gy} r="3.2" fill={greekColor} />
@@ -385,7 +402,7 @@ export default function Chart({
         {be.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
       </svg>
 
-      {/* floating tooltip */}
+      {/* floating tooltip (smaller text) */}
       {hover && (() => {
         const i = hover.i;
         const leftProb  = (cdf[i] ?? 0);
@@ -414,8 +431,8 @@ export default function Chart({
               <span className="val">{fmtNum(gVals[i], 2)}</span>
             </div>
 
-            <div className="price" style={{ textAlign: "center" }}>{fmtCur(xs[i], currency)}</div>
-            <div className="sub" style={{ textAlign: "center" }}>Underlying price</div>
+            <div className="price">{fmtCur(xs[i], currency)}</div>
+            <div className="sub">Underlying price</div>
 
             <div className="rule" />
             <div className="prob">
@@ -425,7 +442,7 @@ export default function Chart({
               <span>{(rightProb*100).toFixed(1)}%</span>
               <span className="arrow">→</span>
             </div>
-            <div className="sub" style={{ textAlign: "center" }}>Probability</div>
+            <div className="sub">Probability</div>
           </div>
         );
       })()}
@@ -447,12 +464,12 @@ export default function Chart({
         .chart-wrap{ display:block; }
         .chart-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 6px 2px; }
         .legend{ display:flex; gap:14px; flex-wrap:wrap; }
-        .leg{ display:inline-flex; align-items:center; gap:8px; font-size:12.5px; opacity:.9; }
-        .sw{ width:18px; height:0; border-top:2px solid; border-radius:2px; }
+        .leg{ display:inline-flex; align-items:center; gap:6px; font-size:12.5px; opacity:.95; white-space:nowrap; }
+        .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; }
         .header-tools{ display:flex; align-items:center; gap:10px; }
         .greek-ctl{ display:flex; align-items:center; gap:8px; }
         .greek-ctl select{ height:28px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:0 8px; }
-        .zoom{ display:flex; align-items:center; gap:6px; margin-left:8px; }
+        .zoom{ display:flex; align-items:center; gap:6px; margin-left:6px; }
         .zoom button{
           width:28px; height:28px; border-radius:8px;
           border:1px solid var(--border); background:var(--bg); color:var(--text);
@@ -471,21 +488,21 @@ export default function Chart({
           position:absolute;
           min-width:220px;
           max-width:260px;
-          padding:12px 14px;
-          background: rgba(20,20,20,.96);
+          padding:11px 12px;
+          background: rgba(20,20,20,1);
           color: #eee;
           border-radius: 10px;
           box-shadow: 0 8px 24px rgba(0,0,0,.35);
           border: 1px solid rgba(255,255,255,.08);
           pointer-events: none;
+          font-size: 11.5px; /* smaller */
         }
-        .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:600; }
+        .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:650; }
         .row + .row{ margin-top:6px; }
-        .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:8px; }
         .val{ margin-left:auto; margin-right:0; }
-        .price{ margin-top:10px; font-weight:800; text-align:center; }
-        .sub{ font-size:12px; opacity:.7; margin-top:2px; text-align:center; }
-        .rule{ height:1px; background: rgba(255,255,255,.12); margin:10px 0; }
+        .price{ margin-top:10px; font-weight:800; font-size:12.5px; text-align:center; }
+        .sub{ font-size:11px; opacity:.75; margin-top:2px; text-align:center; }
+        .rule{ height:1px; background: rgba(255,255,255,.12); margin:9px 0; }
         .prob{ display:flex; align-items:center; justify-content:center; gap:10px; font-weight:700; }
         .prob .arrow{ opacity:.8; }
         .prob .mid{ opacity:.7; }
