@@ -7,6 +7,7 @@ import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
+import OptionsTab from "../../components/Options/OptionsTab";
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -321,10 +322,10 @@ export default function Strategy() {
       )}
 
       {tab === "options" && (
-        <section>
-          <h3 className="section-title">Options</h3>
-          <p className="muted">Options chain UI will render here in the next step.</p>
-        </section>
+        <OptionsTab
+          symbol={company?.symbol || ""}
+          currency={company?.currency || currency}
+        />
       )}
 
       {tab === "bonds" && (
