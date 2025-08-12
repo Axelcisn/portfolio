@@ -1,60 +1,30 @@
+// components/Options/OptionsTab.jsx
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+
+import { useMemo, useRef, useState } from "react";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  // Provider + grouping (UI only for now)
-  const [provider, setProvider] = useState("api");    // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry");   // 'expiry' | 'strike'
+  // Provider + grouping
+  const [provider, setProvider] = useState("api");     // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");    // 'expiry' | 'strike'
 
   // Settings popover
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const gearRef = useRef(null);
-  const [anchorRect, setAnchorRect] = useState(null);
-  const [mounted, setMounted] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsAnchorRef = useRef(null);
+  const [settings, setSettings] = useState({
+    showBy: "10",            // '10' | '20' | 'all' | 'custom'
+    customRows: 25,
+    sort: "asc",             // 'asc' | 'desc'
+    cols: {
+      bid: true, ask: true, price: true,
+      delta: true, gamma: true, theta: true, vega: true, rho: true,
+      tval: false, ival: false, askIv: false, bidIv: false,
+    },
+  });
 
-  useEffect(() => setMounted(true), []);
-
-  // Keep popover aligned to the gear
-  useEffect(() => {
-    if (!settingsOpen || !gearRef.current) return;
-    const update = () => {
-      const r = gearRef.current.getBoundingClientRect();
-      setAnchorRect(r);
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
-    };
-  }, [settingsOpen]);
-
-  // Close on outside click / ESC
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onDocDown = (e) => {
-      const pop = document.getElementById("chain-settings-popover");
-      if (pop?.contains(e.target)) return;
-      if (gearRef.current?.contains(e.target)) return;
-      setSettingsOpen(false);
-    };
-    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
-
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("touchstart", onDocDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("touchstart", onDocDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [settingsOpen]);
-
-  // Lightweight, static sample expiries just for structure/visuals
+  // Simple static expiries (visual scaffolding)
   const expiries = useMemo(
     () => [
       { m: "Aug", days: [15, 22, 29] },
@@ -77,39 +47,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     []
   );
 
-  // Selected expiry (month label + day)
+  // Selected expiry
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
-
-  // Render the settings popover in a portal (avoids overflow/clipping issues)
-  const settingsPortal =
-    mounted && settingsOpen && anchorRect
-      ? createPortal(
-          <div
-            id="chain-settings-popover"
-            className="popover"
-            style={{
-              position: "fixed",
-              zIndex: 1000,
-              // align just under the gear, keep inside viewport
-              top: Math.min(
-                anchorRect.bottom + 8,
-                window.innerHeight - 16
-              ),
-              left: Math.min(
-                Math.max(12, anchorRect.right - 360),
-                window.innerWidth - 360 - 12
-              ),
-              width: 360,
-            }}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Chain table settings"
-          >
-            <ChainSettings onClose={() => setSettingsOpen(false)} />
-          </div>,
-          document.body
-        )
-      : null;
 
   return (
     <section className="opt">
@@ -151,21 +90,32 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           </button>
 
           <button
-            ref={gearRef}
+            ref={settingsAnchorRef}
             type="button"
             className="gear"
             aria-label="Chain table settings"
-            aria-haspopup="dialog"
-            aria-expanded={settingsOpen}
-            onClick={() => setSettingsOpen((v) => !v)}
+            aria-expanded={showSettings}
+            onClick={() => setShowSettings(v => !v)}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
-              />
+            {/* Refined outline gear icon */}
+            <svg
+              width="18" height="18" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" strokeWidth="1.75"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+            >
+              <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.54-.94 3.308.826 2.37 2.366a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.54-.826 3.308-2.366 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.54.94-3.308-.826-2.37-2.366a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.54.826-3.308 2.366-2.37.996.608 2.296.07 2.572-1.065Z" />
+              <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
             </svg>
           </button>
+
+          {/* Anchored settings popover */}
+          <ChainSettings
+            open={showSettings}
+            anchorEl={settingsAnchorRef.current}
+            settings={settings}
+            onChange={setSettings}
+            onClose={() => setShowSettings(false)}
+          />
         </div>
       </div>
 
@@ -195,17 +145,15 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Chain table */}
       <ChainTable
         symbol={symbol}
         currency={currency}
         provider={provider}
         groupBy={groupBy}
         expiry={sel}
+        settings={settings}
       />
-
-      {/* Settings portal */}
-      {settingsPortal}
 
       <style jsx>{`
         /* ---- Layout wrappers ---- */
@@ -215,6 +163,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           gap:16px; margin: 6px 0 10px;
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
+        .right{ position:relative; }
 
         /* ---- Buttons ---- */
         .pill{
