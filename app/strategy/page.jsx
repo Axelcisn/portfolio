@@ -7,6 +7,7 @@ import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
+import StrategyTabs from "../../components/ui/StrategyTabs";
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -186,6 +187,37 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
+  // === Overview content (what you used to render below) ===
+  const OverviewPane = (
+    <div className="layout-2col">
+      <div className="g-item">
+        <MarketCard onRates={(r) => setMarket(r)} />
+      </div>
+
+      <div className="g-item">
+        <StatsRail
+          spot={spotEff}
+          currency={company?.currency || currency}
+          company={company}
+          iv={sigma}
+          market={market}
+        />
+      </div>
+
+      <div className="g-span">
+        <StrategyGallery
+          spot={spotEff}
+          currency={currency}
+          sigma={sigma}
+          T={T}
+          riskFree={market.riskFree ?? 0}
+          mcStats={mcStats}
+          onApply={handleApply}
+        />
+      </div>
+    </div>
+  );
+
   return (
     <div className="container">
       {/* Hero */}
@@ -246,36 +278,15 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* Row 1: Market (left) + Data (right). Same height; no sticky. */}
-      <div className="layout-2col">
-        <div className="g-item">
-          <MarketCard onRates={(r) => setMarket(r)} />
-        </div>
-
-        <div className="g-item">
-          {/* pass effective spot */}
-          <StatsRail
-            spot={spotEff}
-            currency={company?.currency || currency}
-            company={company}
-            iv={sigma}
-            market={market}
-          />
-        </div>
-
-        {/* Row 2: Strategy gallery spans full width */}
-        <div className="g-span">
-          <StrategyGallery
-            spot={spotEff}
-            currency={currency}
-            sigma={sigma}
-            T={T}
-            riskFree={market.riskFree ?? 0}
-            mcStats={mcStats}
-            onApply={handleApply}
-          />
-        </div>
-      </div>
+      {/* TABS live here (between Company card and the rest). */}
+      <StrategyTabs
+        overview={OverviewPane}
+        financials={<div />}
+        news={<div />}
+        options={<div />}  // will host provider selector / chain later
+        bonds={<div />}
+        defaultActive="overview"
+      />
 
       <style jsx>{`
         /* Hero */
@@ -301,7 +312,7 @@ export default function Strategy() {
         .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
         .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
 
-        /* Grid below — stretch so both cards share the same height */
+        /* Grid inside Overview tab */
         .layout-2col{
           display:grid; grid-template-columns: 1fr 320px;
           gap: var(--row-gap); align-items: stretch;
