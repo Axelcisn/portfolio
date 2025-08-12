@@ -4,13 +4,10 @@
 import { useEffect, useState, useCallback } from "react";
 
 /**
- * A compact, Apple-style health button for the Yahoo session.
- * States:
- *  - checking / repairing → subtle spinner
- *  - ok → blue
- *  - bad/error → red
- *
- * Click = attempt repair (POST /api/yahoo/repair), then re-check status.
+ * Apple-style health button for Yahoo session.
+ * - Blue (ok), Red (bad), neutral while checking/repairing.
+ * - Click to repair when in "bad" state.
+ * - Inner ring now matches background (not tinted).
  */
 export default function YahooHealthButton() {
   const [state, setState] = useState("checking"); // checking | ok | bad | repairing
@@ -39,7 +36,6 @@ export default function YahooHealthButton() {
 
   useEffect(() => {
     check();
-    // re-check every 10 minutes, keeps it light
     const id = setInterval(check, 10 * 60 * 1000);
     return () => clearInterval(id);
   }, [check]);
@@ -73,7 +69,7 @@ export default function YahooHealthButton() {
         onClick={state === "ok" || state === "checking" ? undefined : repair}
         disabled={state === "checking" || state === "repairing"}
       >
-        {/* Minimal, premium-looking shield icon */}
+        {/* Minimal shield/check icon */}
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
           <path
             d="M12 2.2l7 3v6.1c0 5-3.8 9.2-7 10.9C8.8 20.5 5 16.3 5 11.3V5.2l7-3z"
@@ -97,7 +93,6 @@ export default function YahooHealthButton() {
       </button>
 
       <style jsx>{`
-        /* Base sizes mirror the gear for perfect harmony */
         .yhb {
           position: relative;
           height: 38px;
@@ -113,52 +108,43 @@ export default function YahooHealthButton() {
           outline: none;
         }
 
-        /* Inner ring (premium, subtle) */
+        /* Inner ring → match background (no tint) */
         .yhb::after {
           content: "";
           position: absolute;
           inset: 6px;
           border-radius: 10px;
-          border: 2px solid currentColor;
-          opacity: 0.18;
+          border: 2px solid var(--card); /* <- background color, not currentColor */
+          opacity: 1;                     /* fully blended with background */
           pointer-events: none;
           transition: opacity 0.18s ease;
         }
 
-        /* Hover affordance */
         .yhb:hover {
           box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
         }
 
-        /* OK = blue accent */
+        /* State colors affect only outer border + icon */
         .yhb.is-ok {
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 60%, var(--border));
           color: var(--accent, #3b82f6);
         }
-        .yhb.is-ok::after {
-          opacity: 0.26;
-        }
 
-        /* BAD = red (both outer & inner ring + icon) */
         .yhb.is-bad {
           border-color: color-mix(in srgb, #ef4444 70%, var(--border));
           color: #ef4444;
         }
-        .yhb.is-bad::after {
-          opacity: 0.32;
-        }
 
-        /* Checking / Repairing = neutral + spinner visible */
         .yhb.is-checking,
         .yhb.is-repairing {
           color: color-mix(in srgb, var(--text) 65%, var(--card));
         }
+
         .yhb.is-checking .spin,
         .yhb.is-repairing .spin {
           opacity: 1;
         }
 
-        /* Hidden by default */
         .spin {
           position: absolute;
           inset: 5px;
