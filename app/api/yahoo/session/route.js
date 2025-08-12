@@ -1,41 +1,34 @@
 // app/api/yahoo/session/route.js
 import {
-  getYahooSessionInfo,
   resetYahooSession,
-} from "@/lib/providers/yahooSession";
+  getYahooSessionInfo,
+} from "../../../../lib/providers/yahooSession";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// GET /api/yahoo/session  -> inspect current session health
+// GET /api/yahoo/session  -> quick status probe
 export async function GET() {
   try {
     const info = getYahooSessionInfo();
-    return new Response(
-      JSON.stringify({ ok: true, session: info }),
-      { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
-    );
+    return Response.json({ ok: info.ok, info });
   } catch (e) {
-    return new Response(
-      JSON.stringify({ ok: false, error: e?.message || "inspect failed" }),
-      { status: 500, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
+    return Response.json(
+      { ok: false, error: e?.message || "status failed" },
+      { status: 500 }
     );
   }
 }
 
-// POST /api/yahoo/session -> force refresh (repair)
+// POST /api/yahoo/session -> force refresh cookie/crumb (Repair button)
 export async function POST() {
   try {
-    const res = await resetYahooSession();
-    const info = getYahooSessionInfo();
-    return new Response(
-      JSON.stringify({ ok: !!res?.ok, session: info }),
-      { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
-    );
+    const refreshed = await resetYahooSession();
+    return Response.json({ ok: true, refreshed });
   } catch (e) {
-    return new Response(
-      JSON.stringify({ ok: false, error: e?.message || "reset failed" }),
-      { status: 500, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }
+    return Response.json(
+      { ok: false, error: e?.message || "refresh failed" },
+      { status: 500 }
     );
   }
 }
