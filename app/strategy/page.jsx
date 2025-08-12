@@ -7,7 +7,6 @@ import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
-import TabsNav from "../../components/ui/TabsNav"; // ⟵ tabs bar
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -20,19 +19,7 @@ const EX_NAMES = {
 };
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
-/* Tabs config */
-const TAB_DEF = [
-  { key: "overview",   label: "Overview" },
-  { key: "financials", label: "Financials" },
-  { key: "news",       label: "News" },
-  { key: "options",    label: "Options" },
-  { key: "bonds",      label: "Bonds" },
-];
-const labelFor = (k) => TAB_DEF.find(t => t.key === k)?.label || "Overview";
-
 export default function Strategy() {
-  const [activeTab, setActiveTab] = useState("overview");
-
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
@@ -77,7 +64,7 @@ export default function Strategy() {
 
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
-    const sc = toLegAPI(legsUi?.sc || {});
+       const sc = toLegAPI(legsUi?.sc || {});
     const lp = toLegAPI(legsUi?.lp || {});
     const sp = toLegAPI(legsUi?.sp || {});
     return { lc, sc, lp, sp };
@@ -174,9 +161,7 @@ export default function Strategy() {
         if (!Number.isFinite(last) && Number.isFinite(j?.data?.lastClose)) last = Number(j.data.lastClose);
 
         if (Number.isFinite(last) && last > 0) setFallbackSpot(last);
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
     })();
 
     return () => { cancel = true; };
@@ -199,13 +184,15 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
-  /* Dynamic title under the tabs, TradingView-style */
-  const contentTitle = useMemo(() => {
-    const base = labelFor(activeTab);
-    if (!company?.symbol) return base;
-    // “AAPL overview / fundamentals / news / options / bonds”
-    return `${company.symbol} ${base.toLowerCase()}`;
-  }, [activeTab, company?.symbol]);
+  /* ---- NEW: tabs state (pure CSS underline; no extra imports) ---- */
+  const [tab, setTab] = useState("overview");
+  const TABS = [
+    { key: "overview",   label: "Overview" },
+    { key: "financials", label: "Financials" },
+    { key: "news",       label: "News" },
+    { key: "options",    label: "Options" },
+    { key: "bonds",      label: "Bonds" },
+  ];
 
   return (
     <div className="container">
@@ -267,46 +254,97 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* Tabs */}
-      <div className="tabs-block">
-        <TabsNav tabs={TAB_DEF} value={activeTab} onChange={setActiveTab} />
-      </div>
+      {/* ---- NEW: Tabs header (between Company and content) ---- */}
+      <nav className="tabs" role="tablist" aria-label="Sections">
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            className={`tab ${tab === t.key ? "is-active" : ""}`}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
-      {/* Section title under the tabs */}
-      <h2 className="tab-title">{contentTitle}</h2>
+      {/* ---- Tabbed content ---- */}
+      {tab === "overview" && (
+        <div className="layout-2col">
+          <div className="g-item">
+            <MarketCard onRates={(r) => setMarket(r)} />
+          </div>
 
-      {/* Row 1: Market (left) + Data (right). Same height; no sticky. */}
-      <div className="layout-2col">
-        <div className="g-item">
-          <MarketCard onRates={(r) => setMarket(r)} />
+          <div className="g-item">
+            {/* pass effective spot */}
+            <StatsRail
+              spot={spotEff}
+              currency={company?.currency || currency}
+              company={company}
+              iv={sigma}
+              market={market}
+            />
+          </div>
+
+          {/* Row 2: Strategy gallery spans full width */}
+          <div className="g-span">
+            <StrategyGallery
+              spot={spotEff}
+              currency={currency}
+              sigma={sigma}
+              T={T}
+              riskFree={market.riskFree ?? 0}
+              mcStats={mcStats}
+              onApply={handleApply}
+            />
+          </div>
         </div>
+      )}
 
-        <div className="g-item">
-          {/* pass effective spot */}
-          <StatsRail
-            spot={spotEff}
-            currency={company?.currency || currency}
-            company={company}
-            iv={sigma}
-            market={market}
-          />
-        </div>
+      {tab === "financials" && (
+        <section>
+          <h3 className="section-title">Financials</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
 
-        {/* Row 2: Strategy gallery spans full width */}
-        <div className="g-span">
-          <StrategyGallery
-            spot={spotEff}
-            currency={currency}
-            sigma={sigma}
-            T={T}
-            riskFree={market.riskFree ?? 0}
-            mcStats={mcStats}
-            onApply={handleApply}
-          />
-        </div>
-      </div>
+      {tab === "news" && (
+        <section>
+          <h3 className="section-title">News</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "options" && (
+        <section>
+          <h3 className="section-title">Options</h3>
+          <p className="muted">Options chain UI will render here in the next step.</p>
+        </section>
+      )}
+
+      {tab === "bonds" && (
+        <section>
+          <h3 className="section-title">Bonds</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
 
       <style jsx>{`
+        /* Tabs */
+        .tabs{
+          display:flex; gap:6px; margin:8px 0 12px 0;
+          border-bottom:1px solid var(--border);
+        }
+        .tab{
+          height:40px; padding:0 14px; border:0; background:transparent;
+          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
+          border-bottom:2px solid transparent; margin-bottom:-1px;
+        }
+        .tab:hover{ opacity:1; }
+        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+
         /* Hero */
         .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
         .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
@@ -330,19 +368,6 @@ export default function Strategy() {
         .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
         .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
 
-        /* Tabs spacing */
-        .tabs-block { margin-top: 8px; }
-        :global(.tabs-nav){ margin-bottom: 14px; } /* extra space under the tab bar */
-
-        /* Section title between tabs and cards */
-        .tab-title{
-          margin: 4px 0 16px;
-          font-size: 22px;
-          line-height: 1.2;
-          font-weight: 800;
-          letter-spacing: -.2px;
-        }
-
         /* Grid below — stretch so both cards share the same height */
         .layout-2col{
           display:grid; grid-template-columns: 1fr 320px;
@@ -352,13 +377,15 @@ export default function Strategy() {
         .g-span{ grid-column: 1 / -1; min-width:0; }
         .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
 
+        .section-title{ font-weight:800; margin:8px 0; }
+        .muted{ opacity:.7; }
+
         @media (max-width:1100px){
           .layout-2col{ grid-template-columns: 1fr; }
           .g-span{ grid-column: 1 / -1; }
           .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
           .hero-name{ font-size:32px; }
           .p-big{ font-size:40px; }
-          .tab-title{ font-size:20px; }
         }
       `}</style>
     </div>
