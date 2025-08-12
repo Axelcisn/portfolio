@@ -1,16 +1,13 @@
 // app/strategy/page.jsx
 "use client";
 
-/* =========================
-   00 — Imports
-   ========================= */
 import { useEffect, useMemo, useState } from "react";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
-import OptionsTab from "../../components/Options/OptionsTab";
+import OptionsTab from "../../components/Options/OptionsTab"; // NEW
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -23,13 +20,8 @@ const EX_NAMES = {
 };
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
-/* =========================
-   01 — Page
-   ========================= */
 export default function Strategy() {
-  /* -------------------------
-     A) Top-level state
-     ------------------------- */
+  /* ===== 00 — Local state ===== */
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
@@ -50,22 +42,18 @@ export default function Strategy() {
   // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
-  /* -------------------------
-     B) Derived inputs
-     ------------------------- */
+  /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
   const sigma = ivValue ?? null;
   const T = horizon > 0 ? horizon / 365 : null;
 
-  // Effective spot: company spot if valid, else fallback from /api/chart
+  // Choose effective spot (company spot if valid, else fallback)
   const spotEff = useMemo(
     () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
     [rawSpot, fallbackSpot]
   );
 
-  /* -------------------------
-     C) Helpers
-     ------------------------- */
+  /* ===== 02 — Helpers ===== */
   const num = (v) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : NaN;
@@ -73,7 +61,8 @@ export default function Strategy() {
   const toLegAPI = (leg) => ({
     enabled: !!leg?.enabled,
     K: num(leg?.strike ?? leg?.K),
-    qty: Number.isFinite(+leg?.qty) ? +leg?.qty : 0,
+    // IMPORTANT: don't use optional chaining again on the right side of +; it breaks on some bundlers
+    qty: Number.isFinite(+leg?.qty) ? +leg.qty : 0,
   });
 
   const legs = useMemo(() => {
@@ -84,9 +73,7 @@ export default function Strategy() {
     return { lc, sc, lp, sp };
   }, [legsUi]);
 
-  /* -------------------------
-     D) Monte Carlo payload
-     ------------------------- */
+  /* ===== 03 — Monte Carlo payload & call ===== */
   const mcInput = useMemo(() => {
     if (!(spotEff > 0) || !(T > 0) || !(sigma >= 0)) return null;
     return {
@@ -104,10 +91,6 @@ export default function Strategy() {
 
   const debouncedPayload = useDebounce(mcInput ? JSON.stringify(mcInput) : "", 250);
 
-  /* -------------------------
-     E) Effects
-     ------------------------- */
-  // 1) Run Monte Carlo
   useEffect(() => {
     let aborted = false;
     async function run() {
@@ -143,14 +126,16 @@ export default function Strategy() {
         setExpectancy(Number.isFinite(src.evAbs) ? src.evAbs : null);
         setExpReturn(Number.isFinite(src.evPct) ? src.evPct : null);
       } catch {
-        if (!aborted) { setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null); }
+        if (!aborted) {
+          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
+        }
       }
     }
     run();
     return () => { aborted = true; };
   }, [debouncedPayload]);
 
-  // 2) Fallback spot when API company spot is 0
+  /* ===== 04 — Fallback last close when company spot is 0 ===== */
   useEffect(() => {
     let cancel = false;
     setFallbackSpot(null);
@@ -166,7 +151,10 @@ export default function Strategy() {
 
         let last = null;
         const arrs = [
-          j?.closes, j?.close, j?.data?.closes, j?.data?.close,
+          j?.closes,
+          j?.close,
+          j?.data?.closes,
+          j?.data?.close,
           Array.isArray(j?.prices) ? j.prices.map((p) => p?.close ?? p?.c) : null,
           Array.isArray(j?.series) ? j.series.map((p) => p?.close ?? p?.c) : null,
         ].filter(Boolean);
@@ -175,6 +163,7 @@ export default function Strategy() {
         }
         if (!Number.isFinite(last) && Number.isFinite(j?.lastClose)) last = Number(j.lastClose);
         if (!Number.isFinite(last) && Number.isFinite(j?.data?.lastClose)) last = Number(j.data.lastClose);
+
         if (Number.isFinite(last) && last > 0) setFallbackSpot(last);
       } catch { /* ignore */ }
     })();
@@ -182,12 +171,14 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol, rawSpot]);
 
-  /* -------------------------
-     F) View helpers
-     ------------------------- */
+  /* ===== 05 — Hero helpers ===== */
   const exLabel = useMemo(() => {
     const raw =
-      company?.exchange || company?.exchangeName || company?.ex || company?.exch || "";
+      company?.exchange ||
+      company?.exchangeName ||
+      company?.ex ||
+      company?.exch ||
+      "";
     return prettyEx(raw);
   }, [company]);
 
@@ -198,7 +189,7 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
-  // Tabs (pure CSS underline; no external deps)
+  /* ===== 06 — Tabs state (pure CSS underline) ===== */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -208,20 +199,15 @@ export default function Strategy() {
     { key: "bonds",      label: "Bonds" },
   ];
 
-  // Title under the tabs
   const tabTitle = useMemo(() => {
     const base = TABS.find(t => t.key === tab)?.label || "Overview";
     return company?.symbol ? `${company.symbol} ${base.toLowerCase()}` : base;
   }, [tab, company?.symbol]);
 
-  /* =========================
-     02 — Render
-     ========================= */
+  /* ===== 07 — Render ===== */
   return (
     <div className="container">
-      {/* =========================
-          HERO
-          ========================= */}
+      {/* Hero */}
       {company?.symbol ? (
         <section className="hero">
           <div className="hero-id">
@@ -269,9 +255,7 @@ export default function Strategy() {
         </header>
       )}
 
-      {/* =========================
-          COMPANY CARD (Full width)
-          ========================= */}
+      {/* Company (full width) */}
       <CompanyCard
         value={company}
         market={market}
@@ -281,9 +265,7 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* =========================
-          TABS
-          ========================= */}
+      {/* Tabs header */}
       <nav className="tabs" role="tablist" aria-label="Sections">
         {TABS.map(t => (
           <button
@@ -299,103 +281,68 @@ export default function Strategy() {
         ))}
       </nav>
 
-      {/* Title below tabs */}
+      {/* Title between tabs and cards */}
       <h2 className="tab-title">{tabTitle}</h2>
 
-      {/* =========================
-          OVERVIEW (collapsible)
-          ========================= */}
+      {/* Tabbed content */}
       {tab === "overview" && (
-        <details className="block" open>
-          <summary>01 — Overview (Market • Key stats • Strategy)</summary>
-
-          <div className="layout-2col">
-            <div className="g-item">
-              <MarketCard onRates={(r) => setMarket(r)} />
-            </div>
-
-            <div className="g-item">
-              <StatsRail
-                spot={spotEff}
-                currency={company?.currency || currency}
-                company={company}
-                iv={sigma}
-                market={market}
-              />
-            </div>
-
-            <div className="g-span">
-              <StrategyGallery
-                spot={spotEff}
-                currency={currency}
-                sigma={sigma}
-                T={T}
-                riskFree={market.riskFree ?? 0}
-                mcStats={mcStats}
-                onApply={handleApply}
-              />
-            </div>
+        <div className="layout-2col">
+          <div className="g-item">
+            <MarketCard onRates={(r) => setMarket(r)} />
           </div>
-        </details>
-      )}
 
-      {/* =========================
-          FINANCIALS (collapsible)
-          ========================= */}
-      {tab === "financials" && (
-        <details className="block" open>
-          <summary>02 — Financials</summary>
-          <section>
-            <h3 className="section-title">Financials</h3>
-            <p className="muted">Coming soon.</p>
-          </section>
-        </details>
-      )}
-
-      {/* =========================
-          NEWS (collapsible)
-          ========================= */}
-      {tab === "news" && (
-        <details className="block" open>
-          <summary>03 — News</summary>
-          <section>
-            <h3 className="section-title">News</h3>
-            <p className="muted">Coming soon.</p>
-          </section>
-        </details>
-      )}
-
-      {/* =========================
-          OPTIONS (collapsible)
-          ========================= */}
-      {tab === "options" && (
-        <details className="block" open>
-          <summary>04 — Options (Chain, filters, selection)</summary>
-          <section>
-            <OptionsTab
-              symbol={company?.symbol || ""}
+          <div className="g-item">
+            <StatsRail
+              spot={spotEff}
               currency={company?.currency || currency}
+              company={company}
+              iv={sigma}
+              market={market}
             />
-          </section>
-        </details>
+          </div>
+
+          <div className="g-span">
+            <StrategyGallery
+              spot={spotEff}
+              currency={currency}
+              sigma={sigma}
+              T={T}
+              riskFree={market.riskFree ?? 0}
+              mcStats={mcStats}
+              onApply={handleApply}
+            />
+          </div>
+        </div>
       )}
 
-      {/* =========================
-          BONDS (collapsible)
-          ========================= */}
+      {tab === "financials" && (
+        <section>
+          <h3 className="section-title">Financials</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "news" && (
+        <section>
+          <h3 className="section-title">News</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "options" && (
+        <OptionsTab
+          symbol={company?.symbol || ""}
+          currency={company?.currency || currency}
+        />
+      )}
+
       {tab === "bonds" && (
-        <details className="block" open>
-          <summary>05 — Bonds</summary>
-          <section>
-            <h3 className="section-title">Bonds</h3>
-            <p className="muted">Coming soon.</p>
-          </section>
-        </details>
+        <section>
+          <h3 className="section-title">Bonds</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
       )}
 
-      {/* =========================
-          Styles
-          ========================= */}
       <style jsx>{`
         /* Tabs */
         .tabs{
@@ -414,30 +361,10 @@ export default function Strategy() {
         /* Title between tabs and cards */
         .tab-title{
           margin: 2px 0 18px;
-          font-size: 22px; line-height: 1.2; font-weight: 800; letter-spacing: -.2px;
-        }
-
-        /* Collapsible (big sections) */
-        details.block{
-          border:1px solid var(--border);
-          border-radius:12px;
-          background:var(--bg);
-          margin-bottom:14px;
-          overflow:hidden;
-        }
-        details.block > summary{
-          cursor:pointer;
-          padding:10px 12px;
-          font-weight:800;
-          list-style:none;
-          border-bottom:1px solid var(--border);
-          user-select:none;
-        }
-        details.block[open] > summary{
-          background:var(--card);
-        }
-        details.block > *:not(summary){
-          padding:12px;
+          font-size: 22px;
+          line-height: 1.2;
+          font-weight: 800;
+          letter-spacing: -.2px;
         }
 
         /* Hero */
