@@ -116,10 +116,11 @@ export default function ChainSettings({ settings, onChange, onClose }) {
 
       <style jsx>{`
         .panel{
-          background:#fff;
+          background: var(--card, #ffffff);
+          color: var(--text, #0f172a);
           border:1px solid var(--border, #E6E9EF);
           border-radius:16px;
-          box-shadow:0 12px 40px rgba(0,0,0,.14);
+          box-shadow: 0 12px 40px rgba(0,0,0,.14);
           width:100%;
           max-width:100%;
           padding:10px 14px 14px;
@@ -130,11 +131,17 @@ export default function ChainSettings({ settings, onChange, onClose }) {
           margin-bottom:6px;
         }
         .title{ font-weight:800; font-size:14px; letter-spacing:.02em; }
+
         .x{
-          width:28px; height:28px; border-radius:8px; border:1px solid var(--border,#E6E9EF);
-          background:#fff; font-size:18px; line-height:1; display:flex; align-items:center; justify-content:center;
+          width:28px; height:28px; border-radius:8px;
+          border:1px solid var(--border, #E6E9EF);
+          background: var(--card, #ffffff);
+          color: var(--text, #0f172a);
+          font-size:18px; line-height:1;
+          display:flex; align-items:center; justify-content:center;
           cursor:pointer;
         }
+        .x:hover{ background: var(--surface, #f7f9fc); }
 
         .sec{ padding:10px 6px; border-top:1px solid var(--border, #E6E9EF); }
         .sec:first-of-type{ border-top:0; padding-top:4px; }
@@ -144,13 +151,24 @@ export default function ChainSettings({ settings, onChange, onClose }) {
         }
 
         .rows{ display:flex; flex-direction:column; gap:8px; }
-        .row{ display:flex; align-items:center; gap:10px; font-weight:600; font-size:14px; }
-        .row input[type="radio"]{ width:16px; height:16px; }
+        .row{
+          display:flex; align-items:center; gap:10px;
+          font-weight:600; font-size:14px;
+        }
+
+        /* Theme-aware form controls */
+        .row input[type="radio"],
+        .col input[type="checkbox"]{
+          width:16px; height:16px;
+          accent-color: var(--accent, #3b82f6);
+        }
 
         .custom .num{
           margin-left:auto; width:74px; height:32px; border-radius:8px;
-          border:1px solid var(--border,#E6E9EF);
-          background:#f7f9fc; padding:0 8px; font-weight:700;
+          border:1px solid var(--border, #E6E9EF);
+          background: var(--surface, #f7f9fc);
+          color: var(--text, #0f172a);
+          padding:0 8px; font-weight:700;
         }
 
         .cols{
@@ -159,7 +177,15 @@ export default function ChainSettings({ settings, onChange, onClose }) {
           gap:10px 14px;
         }
         .col{ display:flex; align-items:center; gap:10px; font-size:14px; font-weight:600; }
-        .col input{ width:16px; height:16px; }
+
+        /* Focus visibility */
+        .x:focus,
+        .row input:focus,
+        .col input:focus,
+        .custom .num:focus{
+          outline: 2px solid var(--accent, #3b82f6);
+          outline-offset: 2px;
+        }
       `}</style>
     </div>
   );
