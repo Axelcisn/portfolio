@@ -1,222 +1,177 @@
 // components/Options/ChainSettings.jsx
 "use client";
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+/**
+ * Floating settings panel anchored to a button.
+ * - Opens/closes correctly
+ * - Positions beside the gear button
+ * - Click-away + ESC to close
+ */
 export default function ChainSettings({
-  open = false,
-  anchorRef,
-  value,
+  open,
+  anchorEl,
+  settings,
   onChange,
   onClose,
 }) {
   const panelRef = useRef(null);
-  const [pos, setPos] = useState({ top: 0, left: 0, minWidth: 320 });
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 340 });
 
-  // Align under the anchor
-  const place = () => {
-    const a = anchorRef?.current;
-    const p = panelRef.current;
-    if (!a || !p) return;
-    const r = a.getBoundingClientRect();
-    const w = Math.max(320, Math.min(420, window.innerWidth - 24));
-    let left = r.right - w;           // right align to gear
-    left = Math.max(12, Math.min(left, window.innerWidth - w - 12));
-    const top = r.bottom + 8;
-    setPos({ top, left, minWidth: w });
-  };
-
-  useLayoutEffect(() => { if (open) place(); }, [open]);
+  // Reposition the panel when opened / on scroll / resize
   useEffect(() => {
     if (!open) return;
-    const h = () => place();
-    window.addEventListener("resize", h);
-    window.addEventListener("scroll", h, true);
-    return () => { window.removeEventListener("resize", h); window.removeEventListener("scroll", h, true); };
-  }, [open]);
+    function place() {
+      if (!anchorEl || !panelRef.current) return;
+      const rect = anchorEl.getBoundingClientRect();
+      const gap = 8;
+      const width = 340;
+      let left = rect.right - width;
+      left = Math.max(16, Math.min(left, window.innerWidth - width - 16));
+      const top = rect.bottom + gap + window.scrollY;
+      setPos({ top, left, width });
+    }
+    place();
+    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
+    const onDocDown = (e) => {
+      if (!panelRef.current) return;
+      const insidePanel = panelRef.current.contains(e.target);
+      const insideAnchor = anchorEl?.contains?.(e.target);
+      if (!insidePanel && !insideAnchor) onClose?.();
+    };
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDocDown, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onDocDown, true);
+    };
+  }, [open, anchorEl, onClose]);
+
+  const colList = useMemo(() => ([
+    ["bid", "Bid"], ["ask", "Ask"], ["price", "Price"],
+    ["delta", "Delta"], ["gamma", "Gamma"], ["theta", "Theta"], ["vega", "Vega"], ["rho", "Rho"],
+    ["tval", "Time value"], ["ival", "Intr. value"], ["askIv", "Ask IV, %"], ["bidIv", "Bid IV, %"],
+  ]), []);
 
   if (!open) return null;
 
-  const v = value || {};
-  const set = (patch) => onChange?.({ ...v, ...patch });
-
-  const Row = ({ children, title }) => (
-    <div className="group">
-      <div className="title">{title}</div>
-      {children}
-    </div>
-  );
-
-  const Check = ({ k, label }) => (
-    <label className="chk">
-      <input
-        type="checkbox"
-        checked={!!v.columns?.[k]}
-        onChange={(e) => set({ columns: { ...(v.columns||{}), [k]: e.target.checked } })}
-      />
-      <span>{label}</span>
-    </label>
-  );
+  const s = settings || {};
+  const set = (patch) => onChange?.({ ...s, ...patch });
 
   return (
-    <>
-      {/* click-away */}
-      <div className="veil" onClick={onClose} />
-
-      <div
-        ref={panelRef}
-        className="panel"
-        style={{ top: pos.top, left: pos.left, minWidth: pos.minWidth }}
-        role="dialog"
-        aria-label="Chain table settings"
-      >
-        <Row title="Show by">
-          <label className="radio">
-            <input
-              type="radio"
-              name="rows"
-              checked={v.rows === 10}
-              onChange={() => set({ rows: 10 })}
-            />
-            <span>10 rows</span>
-          </label>
-          <label className="radio">
-            <input
-              type="radio"
-              name="rows"
-              checked={v.rows === 20}
-              onChange={() => set({ rows: 20 })}
-            />
-            <span>20 rows</span>
-          </label>
-          <label className="radio">
-            <input
-              type="radio"
-              name="rows"
-              checked={v.rows === "all"}
-              onChange={() => set({ rows: "all" })}
-            />
-            <span>All rows</span>
-          </label>
-
-          <div className="custom">
-            <label className="radio">
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label="Chain table settings"
+      className="panel"
+      style={{ top: pos.top, left: pos.left, width: pos.width }}
+    >
+      <div className="sec">
+        <div className="label">Show by</div>
+        <div className="rows">
+          {[
+            ["10", "10 rows"],
+            ["20", "20 rows"],
+            ["all", "All rows"],
+          ].map(([val, lab]) => (
+            <label key={val} className="row">
               <input
                 type="radio"
                 name="rows"
-                checked={typeof v.rows === "number" && v.rows !== 10 && v.rows !== 20}
-                onChange={() => set({ rows: Number(v.custom || 25) || 25 })}
+                checked={s.showBy === val}
+                onChange={() => set({ showBy: val })}
               />
-              <span>Custom</span>
+              <span>{lab}</span>
             </label>
+          ))}
+          <label className="row custom">
             <input
-              className="num"
-              inputMode="numeric"
-              value={v.custom ?? 25}
-              onChange={(e) => set({ custom: e.target.value })}
-              onBlur={(e) => {
-                const n = Math.max(1, Math.min(999, parseInt(e.target.value || "25", 10)));
-                set({ custom: n, rows: n });
-              }}
+              type="radio"
+              name="rows"
+              checked={s.showBy === "custom"}
+              onChange={() => set({ showBy: "custom" })}
             />
-          </div>
-        </Row>
+            <span>Custom</span>
+            <input
+              type="number"
+              min={1}
+              className="num"
+              value={s.customRows ?? 25}
+              onChange={(e) => set({ showBy: "custom", customRows: Math.max(1, +e.target.value || 1) })}
+            />
+          </label>
+        </div>
+      </div>
 
-        <div className="divider" />
-
-        <Row title="Strike sort">
-          <label className="radio">
+      <div className="sec">
+        <div className="label">Strike sort</div>
+        <div className="rows">
+          <label className="row">
             <input
               type="radio"
               name="sort"
-              checked={v.sort === "asc"}
+              checked={s.sort === "asc"}
               onChange={() => set({ sort: "asc" })}
             />
             <span>Ascending</span>
           </label>
-          <label className="radio">
+          <label className="row">
             <input
               type="radio"
               name="sort"
-              checked={v.sort === "desc"}
+              checked={s.sort === "desc"}
               onChange={() => set({ sort: "desc" })}
             />
             <span>Descending</span>
           </label>
-        </Row>
+        </div>
+      </div>
 
-        <div className="divider" />
-
-        <Row title="Customize columns">
-          <div className="cols">
-            <div className="col">
-              <Check k="bid" label="Bid" />
-              <Check k="price" label="Price" />
-              <Check k="gamma" label="Gamma" />
-              <Check k="vega" label="Vega" />
-              <Check k="askIv" label="Ask IV, %" />
-            </div>
-            <div className="col">
-              <Check k="ask" label="Ask" />
-              <Check k="delta" label="Delta" />
-              <Check k="theta" label="Theta" />
-              <Check k="rho" label="Rho" />
-              <Check k="bidIv" label="Bid IV, %" />
-            </div>
-          </div>
-        </Row>
+      <div className="sec">
+        <div className="label">Customize columns</div>
+        <div className="cols">
+          {colList.map(([k, lab]) => (
+            <label key={k} className="col">
+              <input
+                type="checkbox"
+                checked={!!s?.cols?.[k]}
+                onChange={(e) => set({ cols: { ...(s.cols || {}), [k]: e.target.checked } })}
+              />
+              <span>{lab}</span>
+            </label>
+          ))}
+        </div>
       </div>
 
       <style jsx>{`
-        .veil{
-          position:fixed; inset:0; background:transparent; z-index:999;
-        }
         .panel{
-          position:fixed; z-index:1000;
-          background:var(--card);
-          border:1px solid var(--border);
-          box-shadow:0 12px 40px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.06);
-          border-radius:14px; padding:12px 14px;
-          color:var(--text);
-          max-width: 420px;
+          position: absolute; z-index: 1000; border:1px solid var(--border);
+          background: var(--card); border-radius:16px; box-shadow: 0 12px 40px rgba(0,0,0,.18);
+          padding:14px 14px 10px;
         }
-
-        .group{ display:flex; flex-direction:column; gap:8px; padding:8px 2px; }
-        .title{
-          font-size:12.5px; font-weight:800; letter-spacing:.04em; text-transform:uppercase;
-          color:var(--text); opacity:.72;
+        .sec{ padding:10px 8px; border-top:1px solid var(--border); }
+        .sec:first-child{ border-top:0; padding-top:6px; }
+        .label{ font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; opacity:.7; margin-bottom:8px; }
+        .rows{ display:flex; flex-direction:column; gap:8px; }
+        .row{ display:flex; align-items:center; gap:10px; font-weight:600; font-size:14px; }
+        .row input[type="radio"]{ width:16px; height:16px; }
+        .custom .num{
+          margin-left:auto; width:72px; height:32px; border-radius:8px; border:1px solid var(--border);
+          background:var(--surface, #f7f9fc); padding:0 8px; font-weight:700;
         }
-        .radio, .chk{
-          display:flex; align-items:center; gap:8px; font-size:13px;
-          padding:4px 0;
+        .cols{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap:10px 14px;
         }
-        .radio input[type="radio"], .chk input[type="checkbox"]{
-          appearance:none; width:16px; height:16px; border-radius:999px;
-          border:1.5px solid var(--border-strong,#cfd5db); display:inline-block;
-          position:relative; background:#fff;
-        }
-        .radio input[type="radio"]:checked{
-          border-color: var(--accent,#2563eb);
-          box-shadow: inset 0 0 0 4px var(--accent,#2563eb);
-        }
-        .chk input[type="checkbox"]{ border-radius:5px; }
-        .chk input[type="checkbox"]:checked{
-          background: var(--accent,#2563eb);
-          border-color: var(--accent,#2563eb);
-        }
-
-        .custom{ display:flex; align-items:center; gap:10px; padding:2px 0; }
-        .num{
-          width:68px; height:32px; border-radius:10px; border:1px solid var(--border);
-          background:var(--bg); color:var(--text);
-          font-weight:700; font-size:13px; text-align:center;
-        }
-
-        .divider{ height:1px; background:var(--border); margin:8px 0; opacity:.6; }
-
-        .cols{ display:grid; grid-template-columns: 1fr 1fr; gap:8px 18px; }
-        .col{ display:flex; flex-direction:column; }
+        .col{ display:flex; align-items:center; gap:10px; font-size:14px; font-weight:600; }
+        .col input{ width:16px; height:16px; }
       `}</style>
-    </>
+    </div>
   );
 }
