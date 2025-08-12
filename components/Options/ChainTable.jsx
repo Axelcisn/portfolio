@@ -1,20 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchOptions } from "@/lib/client/options";
+import { fetchOptions } from "../../lib/client/options";
 
 export default function ChainTable({ symbol, currency, provider, groupBy, expiry }) {
   const [state, setState] = useState({ status: "idle", error: null, data: null });
 
-  // Try to extract a usable date (YYYY-MM-DD or unix seconds) if provided
   const dateParam = useMemo(() => {
     if (!expiry) return undefined;
-    // Prefer explicit fields if you later wire the real strip
-    if (expiry.iso) return expiry.iso;          // "YYYY-MM-DD"
-    if (expiry.date) return expiry.date;        // "YYYY-MM-DD"
-    if (typeof expiry.ts === "number") return String(expiry.ts); // unix seconds
-    // Fallback: OptionsTab’s demo { m, d } is not a real date → omit
+    if (expiry.iso) return expiry.iso;
+    if (expiry.date) return expiry.date;
+    if (typeof expiry.ts === "number") return String(expiry.ts);
     return undefined;
+    // NOTE: demo {m,d} doesn't produce a real date → omit so Yahoo picks nearest
   }, [expiry]);
 
   useEffect(() => {
@@ -42,7 +40,6 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
     };
   }, [symbol, dateParam]);
 
-  // Merge calls & puts by strike, sort ascending
   const rows = useMemo(() => {
     const d = state.data;
     if (!d) return [];
@@ -66,11 +63,9 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
     return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
   }, [state.data]);
 
-  // Basic formatting
   const fmt = (v, d = 2) => (v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(d));
   const fmtIv = (v) => (v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(1));
 
-  // Render helpers for states
   const renderCard = (title, sub) => (
     <div className="empty card">
       <div className="title">{title}</div>
@@ -89,7 +84,6 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         <div className="h-right">Puts</div>
       </div>
 
-      {/* Column headers use same grid as rows for perfect alignment */}
       <div className="grid head-row" role="row">
         <div className="c cell" role="columnheader">Price</div>
         <div className="c cell" role="columnheader">Ask</div>
@@ -105,7 +99,6 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         <div className="p cell" role="columnheader">Price</div>
       </div>
 
-      {/* State blocks (keep your original card style) */}
       {state.status === "loading" &&
         renderCard("Fetching option chain…", "Pulling data from Yahoo Finance.")}
 
@@ -120,7 +113,6 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
           }.`
         )}
 
-      {/* Data rows */}
       {state.status === "done" && rows.length > 0 && (
         <div className="rows">
           {rows.slice(0, 25).map((r) => {
@@ -130,16 +122,13 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
 
             return (
               <div className="grid row" key={r.strike}>
-                {/* Calls side */}
                 <div className="c cell">{fmt(c.price)}</div>
                 <div className="c cell">{fmt(c.ask)}</div>
                 <div className="c cell">{fmt(c.bid)}</div>
 
-                {/* Middle */}
                 <div className="mid cell">{fmt(r.strike, 0)}</div>
                 <div className="mid cell">{fmtIv(ivMid)}</div>
 
-                {/* Puts side */}
                 <div className="p cell">{fmt(p.bid)}</div>
                 <div className="p cell">{fmt(p.ask)}</div>
                 <div className="p cell">{fmt(p.price)}</div>
@@ -162,7 +151,6 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         }
         .h-mid{ flex:1; }
 
-        /* 8 columns: 3 (calls) + 2 (center) + 3 (puts)  */
         .grid{
           display:grid;
           grid-template-columns:
@@ -180,8 +168,8 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
           color: var(--text, #2b3442);
         }
         .cell{ height:26px; display:flex; align-items:center; }
-        .c{ justify-content:flex-start; }  /* Calls side */
-        .p{ justify-content:flex-end; }    /* Puts side */
+        .c{ justify-content:flex-start; }
+        .p{ justify-content:flex-end; }
         .mid{ justify-content:center; text-align:center; }
         .arrow{ margin-right:6px; font-weight:900; color: var(--accent, #3b82f6); }
 
