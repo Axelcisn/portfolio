@@ -1,4 +1,5 @@
 "use client";
+
 export default function ChainTable({ symbol, currency, provider, groupBy, expiry }) {
   // Empty state for now; structure + perfect symmetry
   return (
@@ -10,36 +11,39 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
       </div>
 
       {/* Column headers use same grid as rows for perfect alignment */}
-      <div className="grid head-row">
-        <div className="c cell">Price</div>
-        <div className="c cell">Ask</div>
-        <div className="c cell">Bid</div>
+      <div className="grid head-row" role="row">
+        <div className="c cell" role="columnheader">Price</div>
+        <div className="c cell" role="columnheader">Ask</div>
+        <div className="c cell" role="columnheader">Bid</div>
 
-        <div className="mid cell">
-          <span className="arrow">↑</span> Strike
+        <div className="mid cell" role="columnheader">
+          <span className="arrow" aria-hidden="true">↑</span> Strike
         </div>
-        <div className="mid cell">IV, %</div>
+        <div className="mid cell" role="columnheader">IV, %</div>
 
-        <div className="p cell">Bid</div>
-        <div className="p cell">Ask</div>
-        <div className="p cell">Price</div>
+        <div className="p cell" role="columnheader">Bid</div>
+        <div className="p cell" role="columnheader">Ask</div>
+        <div className="p cell" role="columnheader">Price</div>
       </div>
 
       <div className="empty card">
         <div className="title">No options loaded</div>
         <div className="sub">
-          Pick a provider or upload a screenshot, then choose an expiry.
+          Pick a provider or upload a screenshot, then choose an expiry
+          {expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""}.
         </div>
       </div>
 
       <style jsx>{`
         .wrap{ margin-top:10px; }
+
         .heads{
           display:flex; align-items:center; justify-content:space-between;
-          margin: 12px 0 8px;
+          margin: 10px 0 6px;
         }
         .h-left, .h-right{
-          font-weight:800; font-size:28px; letter-spacing:.2px; color:#0f172a;
+          font-weight:800; font-size:22px; letter-spacing:.2px;
+          color: var(--text, #0f172a);
         }
         .h-mid{ flex:1; }
 
@@ -55,26 +59,32 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
         }
         .head-row{
           padding: 8px 0 10px;
-          border-top:1px solid #E6E9EF;
-          border-bottom:1px solid #E6E9EF;
-          font-weight:700; font-size:15px; color:#2b3442;
+          border-top:1px solid var(--border, #E6E9EF);
+          border-bottom:1px solid var(--border, #E6E9EF);
+          font-weight:700; font-size:13.5px;
+          color: var(--text, #2b3442);
         }
-        .cell{ height:28px; display:flex; align-items:center; }
+        .cell{ height:26px; display:flex; align-items:center; }
         .c{ justify-content:flex-start; }  /* Calls side */
         .p{ justify-content:flex-end; }    /* Puts side */
         .mid{ justify-content:center; text-align:center; }
-        .arrow{ margin-right:6px; font-weight:900; }
+        .arrow{ margin-right:6px; font-weight:900; color: var(--accent, #3b82f6); }
 
         .card{
-          border:1px solid #E6E9EF; border-radius:14px; background:#fff;
-          padding:18px; margin-top:14px;
+          border:1px solid var(--border, #E6E9EF);
+          border-radius:14px;
+          background: var(--card, #fff);
+          color: var(--text, #0f172a);
+          padding:16px 18px;
+          margin-top:14px;
         }
-        .title{ font-weight:800; font-size:18px; margin-bottom:6px; }
-        .sub{ opacity:.75; }
+        .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
+        .sub{ opacity:.75; font-size:13px; }
 
         @media (max-width: 980px){
-          .h-left, .h-right{ font-size:22px; }
-          .head-row{ font-size:14px; }
+          .h-left, .h-right{ font-size:20px; }
+          .head-row{ font-size:13px; }
+          .cell{ height:24px; }
         }
       `}</style>
     </div>
