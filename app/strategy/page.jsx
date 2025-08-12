@@ -59,12 +59,12 @@ export default function Strategy() {
   const toLegAPI = (leg) => ({
     enabled: !!leg?.enabled,
     K: num(leg?.strike ?? leg?.K),
-    qty: Number.isFinite(+leg?.qty) ? +leg.qty : 0,
+    qty: Number.isFinite(+leg?.qty) ? +leg?.qty : 0,
   });
 
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
-       const sc = toLegAPI(legsUi?.sc || {});
+    const sc = toLegAPI(legsUi?.sc || {});
     const lp = toLegAPI(legsUi?.lp || {});
     const sp = toLegAPI(legsUi?.sp || {});
     return { lc, sc, lp, sp };
@@ -121,11 +121,7 @@ export default function Strategy() {
         setProbProfit(Number.isFinite(src.pWin) ? src.pWin : null);
         setExpectancy(Number.isFinite(src.evAbs) ? src.evAbs : null);
         setExpReturn(Number.isFinite(src.evPct) ? src.evPct : null);
-      } catch {
-        if (!aborted) {
-          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
-        }
-      }
+      } catch { if (!aborted) { setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null); } }
     }
     run();
     return () => { aborted = true; };
@@ -184,7 +180,7 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
-  /* ---- NEW: tabs state (pure CSS underline; no extra imports) ---- */
+  /* ---- Tabs state (pure CSS underline; no external components) ---- */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -193,6 +189,12 @@ export default function Strategy() {
     { key: "options",    label: "Options" },
     { key: "bonds",      label: "Bonds" },
   ];
+
+  /* ---- Dynamic title shown between tabs and cards ---- */
+  const tabTitle = useMemo(() => {
+    const base = TABS.find(t => t.key === tab)?.label || "Overview";
+    return company?.symbol ? `${company.symbol} ${base.toLowerCase()}` : base;
+  }, [tab, company?.symbol]);
 
   return (
     <div className="container">
@@ -254,7 +256,7 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* ---- NEW: Tabs header (between Company and content) ---- */}
+      {/* ---- Tabs header (between Company and content) ---- */}
       <nav className="tabs" role="tablist" aria-label="Sections">
         {TABS.map(t => (
           <button
@@ -270,6 +272,9 @@ export default function Strategy() {
         ))}
       </nav>
 
+      {/* ---- Title between tabs and cards (more breathing room) ---- */}
+      <h2 className="tab-title">{tabTitle}</h2>
+
       {/* ---- Tabbed content ---- */}
       {tab === "overview" && (
         <div className="layout-2col">
@@ -278,7 +283,6 @@ export default function Strategy() {
           </div>
 
           <div className="g-item">
-            {/* pass effective spot */}
             <StatsRail
               spot={spotEff}
               currency={company?.currency || currency}
@@ -288,7 +292,6 @@ export default function Strategy() {
             />
           </div>
 
-          {/* Row 2: Strategy gallery spans full width */}
           <div className="g-span">
             <StrategyGallery
               spot={spotEff}
@@ -334,16 +337,26 @@ export default function Strategy() {
       <style jsx>{`
         /* Tabs */
         .tabs{
-          display:flex; gap:6px; margin:8px 0 12px 0;
+          display:flex; gap:6px;
+          margin:12px 0 16px;           /* more top/bottom space */
           border-bottom:1px solid var(--border);
         }
         .tab{
-          height:40px; padding:0 14px; border:0; background:transparent;
+          height:42px; padding:0 14px; border:0; background:transparent;
           color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
           border-bottom:2px solid transparent; margin-bottom:-1px;
         }
         .tab:hover{ opacity:1; }
         .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+
+        /* Title between tabs and cards */
+        .tab-title{
+          margin: 2px 0 18px;           /* space below title before cards */
+          font-size: 22px;
+          line-height: 1.2;
+          font-weight: 800;
+          letter-spacing: -.2px;
+        }
 
         /* Hero */
         .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
@@ -355,7 +368,7 @@ export default function Strategy() {
           font-weight:700; font-size:36px;
         }
         .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
-        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .hero-pill{
           display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 14px;
           border-radius:9999px; border:1px solid var(--border); background:var(--card); font-weight:600;
@@ -369,10 +382,7 @@ export default function Strategy() {
         .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
 
         /* Grid below — stretch so both cards share the same height */
-        .layout-2col{
-          display:grid; grid-template-columns: 1fr 320px;
-          gap: var(--row-gap); align-items: stretch;
-        }
+        .layout-2col{ display:grid; grid-template-columns: 1fr 320px; gap: var(--row-gap); align-items: stretch; }
         .g-item{ min-width:0; }
         .g-span{ grid-column: 1 / -1; min-width:0; }
         .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
@@ -386,6 +396,7 @@ export default function Strategy() {
           .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
           .hero-name{ font-size:32px; }
           .p-big{ font-size:40px; }
+          .tab-title{ font-size:20px; }
         }
       `}</style>
     </div>
