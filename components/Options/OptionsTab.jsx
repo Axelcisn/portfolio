@@ -9,21 +9,32 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const [provider, setProvider] = useState("api");    // 'api' | 'upload'
   const [groupBy, setGroupBy] = useState("expiry");   // 'expiry' | 'strike'
 
+  // Night mode
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === "undefined") return "light";
+    return (
+      localStorage.getItem("theme") ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    );
+  });
+  useEffect(() => {
+    if (!mounted) return;
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme, mounted]);
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
   // Settings popover
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
 
   // Keep popover aligned to the gear
   useEffect(() => {
     if (!settingsOpen || !gearRef.current) return;
-    const update = () => {
-      const r = gearRef.current.getBoundingClientRect();
-      setAnchorRect(r);
-    };
+    const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
@@ -43,7 +54,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       setSettingsOpen(false);
     };
     const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
-
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -80,7 +90,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Selected expiry (month label + day)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
 
-  // Render the settings popover in a portal (avoids overflow/clipping issues)
+  // Settings popover (portal)
   const settingsPortal =
     mounted && settingsOpen && anchorRect
       ? createPortal(
@@ -90,15 +100,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             style={{
               position: "fixed",
               zIndex: 1000,
-              // align just under the gear, keep inside viewport
-              top: Math.min(
-                anchorRect.bottom + 8,
-                window.innerHeight - 16
-              ),
-              left: Math.min(
-                Math.max(12, anchorRect.right - 360),
-                window.innerWidth - 360 - 12
-              ),
+              top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
+              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
               width: 360,
             }}
             role="dialog"
@@ -150,10 +153,31 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             By strike
           </button>
 
+          {/* Theme toggle (small sun/moon) */}
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Toggle theme"
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? (
+              // Sun
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M6.76 4.84l-1.8-1.79L3.17 4.84l1.79 1.79l1.8-1.79M1 13h3v-2H1v2m10 10h2v-3h-2v3m7.24-18.16l1.79-1.79l-1.79-1.79l-1.79 1.79l1.79 1.79M20 13h3v-2h-3v2m-8-7a5 5 0 0 0 0 10a5 5 0 0 0 0-10m6.24 12.16l1.79 1.79l1.79-1.79l-1.79-1.79l-1.79 1.79M4.84 17.24l-1.79 1.79l1.79 1.79l1.79-1.79l-1.79-1.79Z"/>
+              </svg>
+            ) : (
+              // Moon
+              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M12.74 2a9 9 0 1 0 8.66 11.23a.6.6 0 0 0-.93-.65A7.5 7.5 0 1 1 13.39 3a.6.6 0 0 0-.65-.93Z"/>
+              </svg>
+            )}
+          </button>
+
           <button
             ref={gearRef}
             type="button"
-            className="gear"
+            className="icon-btn"
             aria-label="Chain table settings"
             aria-haspopup="dialog"
             aria-expanded={settingsOpen}
@@ -207,6 +231,37 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       {/* Settings portal */}
       {settingsPortal}
 
+      {/* THEME VARIABLES (global) */}
+      <style jsx global>{`
+        :root{
+          --bg: #ffffff;
+          --text: #0f172a;
+          --border: #E6E9EF;
+          --card: #ffffff;
+          --surface: #f5f7fa;
+          --chip: #f4f6f9;
+          --chip-active-bg: #0f172a;
+          --chip-active-text: #ffffff;
+          --accent-bg: #eaf2ff;
+          --accent-bd: #cfe2ff;
+          --accent-weak: #eef5ff;
+        }
+        [data-theme="dark"]{
+          --bg: #0b1018;
+          --text: #e8edf7;
+          --border: #2a3445;
+          --card: #0f1520;
+          --surface: #131b28;
+          --chip: #1a2332;
+          --chip-active-bg: #0d172a;
+          --chip-active-text: #ffffff;
+          --accent-bg: #182642;
+          --accent-bd: #284275;
+          --accent-weak: #152038;
+        }
+        body{ background: var(--bg); color: var(--text); }
+      `}</style>
+
       <style jsx>{`
         /* ---- Layout wrappers ---- */
         .opt { margin-top: 6px; }
@@ -219,30 +274,36 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         /* ---- Buttons ---- */
         .pill{
           height:36px; padding:0 14px; border-radius:12px;
-          border:1px solid var(--border, #E6E9EF); background:#fff;
-          font-weight:700; font-size:14px; line-height:1; color:#0f172a;
+          border:1px solid var(--border); background:var(--card);
+          font-weight:700; font-size:14px; line-height:1; color:var(--text);
         }
-        .pill.is-on{ border-color:#bcd3ff; background:#eef5ff; }
+        .pill.is-on{ border-color:var(--accent-bd); background:var(--accent-weak); }
 
         .seg{
           height:38px; padding:0 16px; border-radius:14px;
-          border:1px solid var(--border, #E6E9EF);
-          background:#f5f7fa; font-weight:800; font-size:15px;
-          color:#0f172a; line-height:1;
+          border:1px solid var(--border);
+          background:var(--surface); font-weight:800; font-size:15px;
+          color:var(--text); line-height:1;
         }
-        .seg.is-on{ background:#eaf2ff; border-color:#cfe2ff; }
+        .seg.is-on{ background:var(--accent-bg); border-color:var(--accent-bd); }
 
-        .gear{
+        .icon-btn{
           height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px; border:1px solid var(--border, #E6E9EF); background:#fff;
-          color:#0f172a;
+          border-radius:14px; border:1px solid var(--border); background:var(--card);
+          color:var(--text);
+        }
+
+        /* ---- Settings popover ---- */
+        .popover{
+          background:var(--card); border:1px solid var(--border); border-radius:14px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.18);
         }
 
         /* ---- Expiry strip ---- */
         .expiry-wrap{
           margin: 14px 0 18px;
           padding: 2px 0 10px;
-          border-bottom: 2px solid #E9EDF3;
+          border-bottom: 2px solid var(--border);
         }
         .expiry{
           display:flex; align-items:flex-start; gap:28px;
@@ -250,25 +311,25 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           -webkit-overflow-scrolling: touch; padding-bottom:6px;
         }
         .expiry::-webkit-scrollbar{ height:6px; }
-        .expiry::-webkit-scrollbar-thumb{ background:#e1e6ef; border-radius:999px; }
+        .expiry::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
 
         .group{ flex:0 0 auto; }
         .m{
-          font-weight:800; font-size:17px; letter-spacing:.2px; color:#0f172a;
+          font-weight:800; font-size:17px; letter-spacing:.2px; color:var(--text);
           padding:0 0 6px 0;
-          border-bottom:1px solid #E6E9EF;
+          border-bottom:1px solid var(--border);
           margin-bottom:8px;
         }
         .days{ display:flex; gap:10px; }
 
         .day{
           min-width:46px; height:34px; padding:0 10px;
-          border-radius:12px; border:1px solid #E6E9EF;
-          background:#f4f6f9; font-weight:800; font-size:16px; color:#0f172a;
+          border-radius:12px; border:1px solid var(--border);
+          background:var(--chip); font-weight:800; font-size:16px; color:var(--text);
           display:inline-flex; align-items:center; justify-content:center;
         }
         .day.is-active{
-          background:#0f172a; color:#fff; border-color:#0f172a;
+          background:var(--chip-active-bg); color:var(--chip-active-text); border-color:var(--chip-active-bg);
         }
 
         @media (max-width: 840px){
