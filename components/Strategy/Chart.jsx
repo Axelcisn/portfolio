@@ -110,7 +110,7 @@ function buildAreaPaths(xs, ys, xScale, yScale){
   let seg=null, sign=0;
 
   const push = () => {
-    if(!seg || seg.length<3) { seg=null; return; }
+    if(!seg || seg.length < 3) { seg=null; return; }
     const d = seg.map((p,i)=>`${i?'L':'M'}${xScale(p[0])},${yScale(p[1])}`).join(" ") + " Z";
     (sign>0?pos:neg).push(d);
     seg=null; sign=0;
@@ -143,6 +143,7 @@ function buildAreaPaths(xs, ys, xScale, yScale){
 
 /* ---------- component ---------- */
 const GREEK_LABEL = { vega:"Vega", delta:"Delta", gamma:"Gamma", theta:"Theta", rho:"Rho" };
+const GREEK_COLOR = { vega:"#f59e0b", delta:"#60a5fa", gamma:"#a78bfa", theta:"#f97316", rho:"#10b981" }; // used for right axis text
 
 export default function Chart({
   spot=null,
@@ -162,40 +163,13 @@ export default function Chart({
     return rowsFromLegs(legs, days);
   }, [rows, legs, T]);
 
-  /* --- domain (adds zoom without panning; center stays at strike mid) --- */
   const ks = useMemo(() => rowsEff.filter(r=>Number.isFinite(r?.K)).map(r=>+r.K).sort((a,b)=>a-b), [rowsEff]);
-
-  // base domain from spot/strikes (unchanged logic)
-  const baseDomain = useMemo(() => {
+  const xDomain = useMemo(() => {
     const s = Number(spot) || (ks[0] ?? 100);
     const lo = Math.max(0.01, Math.min(ks[0] ?? s, s) * 0.9);
     const hi = Math.max(lo * 1.1, Math.max(ks[ks.length-1] ?? s, s) * 1.1);
     return [lo, hi];
   }, [spot, ks]);
-
-  // zoomable state domain
-  const [xDomain, setXDomain] = useState(baseDomain);
-  useEffect(() => { setXDomain(baseDomain); }, [baseDomain[0], baseDomain[1]]);
-
-  // fixed zoom center: if multiple strikes, use their mid; else spot; else base mid
-  const zoomCenter = useMemo(() => {
-    if (ks.length) return (ks[0] + ks[ks.length-1]) / 2;
-    return Number(spot) || (baseDomain[0] + baseDomain[1]) / 2;
-  }, [ks, spot, baseDomain]);
-
-  const baseSpan = baseDomain[1] - baseDomain[0];
-  const MIN_SPAN = Math.max(baseSpan * 0.10, 4); // not too narrow
-  const MAX_SPAN = baseSpan * 5;                 // not too far out
-
-  const zoom = (factor) => {
-    setXDomain(([lo,hi]) => {
-      const curSpan = hi - lo;
-      const span = Math.max(MIN_SPAN, Math.min(curSpan * factor, MAX_SPAN));
-      const c = zoomCenter;
-      return [Math.max(0.01, c - span/2), c + span/2];
-    });
-  };
-  const resetZoom = () => setXDomain(baseDomain);
 
   const N=401;
   const xs = useMemo(() => {
@@ -232,6 +206,7 @@ export default function Chart({
 
   const xTicks = ticks(xDomain[0], xDomain[1], 7);
   const yTicks = ticks(yRange[0], yRange[1], 6);
+  const gTicks = ticks(gMin-gPad, gMax+gPad, 6); // NEW: right-axis ticks
   const centerStrike = ks.length ? (ks[0]+ks[ks.length-1])/2 : (Number(spot)||xDomain[0]);
 
   // precise shading between curve and y=0
@@ -240,7 +215,7 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // win mass (approx) – unchanged
+  // win mass (approx)
   const avgDays = useMemo(()=> {
     const opt = rowsEff.filter(r=>!TYPE_INFO[r.type]?.stock && Number.isFinite(r.days));
     if(!opt.length) return Math.round(T*365)||30;
@@ -250,9 +225,21 @@ export default function Chart({
   const m = Math.log(Math.max(1e-9, Number(spot||1))) + (mu-0.5*sVol*sVol)*(avgDays/365);
   const sLn = sVol*Math.sqrt(avgDays/365);
   const lognormPdf = (x)=>x>0?(1/(x*sLn*Math.sqrt(2*Math.PI)))*Math.exp(-Math.pow(Math.log(x)-m,2)/(2*sLn*sLn)):0;
-  const winMass = useMemo(()=>{ let mass=0,total=0; for(let i=1;i<xs.length;i++){ const xm=0.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=0.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; total+=p*dx; if(y>0) mass+=p*dx; } return total>0?Math.max(0,Math.min(1,mass/total)):NaN; }, [xs,yExp]);
+  const winMass = useMemo(()=>{ let mass=0,total=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; total+=p*dx; if(y>0) mass+=p*dx; } return total>0?Math.max(0,Math.min(1,mass/total)):NaN; }, [xs,yExp]);
 
   const lotSize = useMemo(()=>rowsEff.reduce((s,r)=>s+Math.abs(Number(r.qty||0)),0)||1,[rowsEff]);
+
+  // helper to format right-axis greek ticks
+  const greekColor = GREEK_COLOR[greekWhich] || "#f59e0b";
+  const fmtGreekTick = (v) => {
+    const a = Math.abs(v);
+    if (greekWhich === "gamma")  return a >= 1 ? v.toFixed(2) : a >= 0.1 ? v.toFixed(3) : v.toFixed(4);
+    if (greekWhich === "delta")  return v.toFixed(2);
+    if (greekWhich === "vega")   return a >= 10 ? v.toFixed(0) : a >= 1 ? v.toFixed(1) : v.toFixed(2);
+    if (greekWhich === "theta")  return a >= 1 ? v.toFixed(2) : v.toFixed(3);
+    if (greekWhich === "rho")    return a >= 1 ? v.toFixed(2) : v.toFixed(3);
+    return v.toFixed(2);
+  };
 
   const Wrapper=frameless?"div":"section"; const wrapClass=frameless?"chart-wrap":"card chart-wrap";
 
@@ -263,7 +250,7 @@ export default function Chart({
         <div className="legend">
           <div className="leg"><span className="sw" style={{ borderColor: "var(--accent)" }} />Current P&L</div>
           <div className="leg"><span className="sw" style={{ borderColor: "var(--text-muted,#8a8a8a)" }} />Expiration P&L</div>
-          <div className="leg"><span className="sw dash" style={{ borderColor: "#f59e0b" }} />{GREEK_LABEL[greekWhich]||"Greek"}</div>
+          <div className="leg"><span className="sw" style={{ borderColor: greekColor }} />{GREEK_LABEL[greekWhich]||"Greek"}</div>
         </div>
         <div className="header-tools">
           <div className="greek-ctl">
@@ -271,12 +258,6 @@ export default function Chart({
             <select id="greek" value={greekWhich} onChange={(e)=>onGreekChange?.(e.target.value)}>
               <option value="vega">Vega</option><option value="delta">Delta</option><option value="gamma">Gamma</option><option value="theta">Theta</option><option value="rho">Rho</option>
             </select>
-          </div>
-          {/* zoom controls (no panning; centered at strike mid) */}
-          <div className="zoom-ctl" role="group" aria-label="Zoom controls">
-            <button className="zoom-btn" onClick={()=>zoom(1.10)} aria-label="Zoom out">−</button>
-            <button className="zoom-btn" onClick={()=>zoom(0.90)} aria-label="Zoom in">+</button>
-            <button className="zoom-btn" onClick={resetZoom} aria-label="Reset zoom">⟲</button>
           </div>
         </div>
       </div>
@@ -298,18 +279,27 @@ export default function Chart({
         {Number.isFinite(spot) && (<line x1={xScale(spot)} x2={xScale(spot)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeDasharray="4 6" strokeOpacity="0.6" />)}
         {Number.isFinite(centerStrike) && (<line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />)}
 
+        {/* RIGHT GREEK AXIS (new) */}
+        <line x1={pad.l+innerW} x2={pad.l+innerW} y1={pad.t} y2={pad.t+innerH} stroke={greekColor} strokeOpacity="0.25" />
+        {gTicks.map((t,i)=>(
+          <g key={`gr-${i}`}>
+            <line x1={pad.l+innerW} x2={pad.l+innerW+4} y1={gScale(t)} y2={gScale(t)} stroke={greekColor} strokeOpacity="0.8" />
+            <text x={pad.l+innerW+6} y={gScale(t)} dy="0.32em" textAnchor="start" className="tick" style={{ fill: greekColor }}>
+              {fmtGreekTick(t)}
+            </text>
+          </g>
+        ))}
+        <text transform={`translate(${w-14} ${pad.t+innerH/2}) rotate(90)`} textAnchor="middle" className="axis" style={{ fill: greekColor }}>
+          {GREEK_LABEL[greekWhich]||"Greek"}
+        </text>
+
         {/* series */}
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${yScale(yNow[i])}`).join(" ")} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${yScale(yExp[i])}`).join(" ")} fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
-        <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${gScale(gVals[i])}`).join(" ")} fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="6 6" />
+        <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${gScale(gVals[i])}`).join(" ")} fill="none" stroke={greekColor} strokeWidth="2" />
 
         {/* break-evens */}
         {be.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
-
-        {/* axis titles */}
-        <text x={pad.l+innerW/2} y={pad.t+innerH+32} textAnchor="middle" className="axis">Underlying price</text>
-        <text transform={`translate(14 ${pad.t+innerH/2}) rotate(-90)`} textAnchor="middle" className="axis">P/L</text>
-        <text transform={`translate(${w-14} ${pad.t+innerH/2}) rotate(90)`} textAnchor="middle" className="axis">{GREEK_LABEL[greekWhich]||"Greek"}</text>
       </svg>
 
       {/* metrics */}
@@ -328,17 +318,9 @@ export default function Chart({
         .legend{ display:flex; gap:14px; flex-wrap:wrap; }
         .leg{ display:inline-flex; align-items:center; gap:8px; font-size:12.5px; opacity:.9; }
         .sw{ width:18px; height:0; border-top:2px solid; border-radius:2px; }
-        .sw.dash{ border-style:dashed; }
         .header-tools{ display:flex; align-items:center; gap:10px; }
         .greek-ctl{ display:flex; align-items:center; gap:8px; }
         .greek-ctl select{ height:28px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:0 8px; }
-        .zoom-ctl{ display:flex; align-items:center; gap:6px; margin-left:4px; }
-        .zoom-btn{
-          width:28px; height:28px; border-radius:8px;
-          border:1px solid var(--border); background:var(--bg); color:var(--text);
-          font-weight:700; line-height:1;
-        }
-        .zoom-btn:hover{ background:var(--card); }
 
         .tick{ font-size:11px; fill:var(--text); opacity:.75; }
         .axis{ font-size:12px; fill:var(--text); opacity:.7; }
