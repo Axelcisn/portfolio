@@ -5,44 +5,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
-import { getYahooStatus } from "@/lib/client/yahooAdmin";
+import YahooHealthButton from "./YahooHealthButton"; // ← NEW
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  // Provider + grouping (UI only for now)
-  const [provider, setProvider] = useState("api");    // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry");   // 'expiry' | 'strike'
+  // Provider + grouping
+  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
   // Settings popover
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const gearRef = useRef(null);            // <-- anchors to the NEW gear near the table
+  const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // --- Yahoo health (drives red state)
-  const [yahooHealthy, setYahooHealthy] = useState(true);
-  const [yahooErr, setYahooErr] = useState(null);
-  useEffect(() => {
-    let live = true;
-    const check = async () => {
-      try {
-        const s = await getYahooStatus(); // { ok, hasCookie, ... }
-        if (!live) return;
-        const ok = !!(s?.ok && s?.hasCookie);
-        setYahooHealthy(ok);
-        setYahooErr(s?.lastError || null);
-      } catch (e) {
-        if (!live) return;
-        setYahooHealthy(false);
-        setYahooErr(e?.message || "Status check failed");
-      }
-    };
-    check();
-    const id = setInterval(check, 60_000);
-    return () => { live = false; clearInterval(id); };
-  }, []);
-
-  // Keep popover aligned to the NEW gear
+  // Keep popover aligned to the gear
   useEffect(() => {
     if (!settingsOpen || !gearRef.current) return;
     const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
@@ -64,7 +41,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (gearRef.current?.contains(e.target)) return;
       setSettingsOpen(false);
     };
-    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
+    const onKey = (e) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -107,7 +86,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!symbol) { setApiExpiries(null); return; }
+      if (!symbol) {
+        setApiExpiries(null);
+        return;
+      }
       try {
         setLoadingExp(true);
         const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
@@ -120,7 +102,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [symbol]);
 
   // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
@@ -150,7 +134,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
       g.items.push({ day: d.getDate(), iso });
     }
-    // unique + sort days inside month
     for (const g of out) {
       const seen = new Set();
       g.items = g.items
@@ -172,13 +155,11 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       const it0 = g0.items[0];
       setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
     } else if (!sel.iso) {
-      // enrich current selection with iso if we now have it
       const g = groups.find((g) => g.m === sel.m);
       const it = g?.items.find((it) => it.day === sel.d);
       if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups]);
+  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ------------------------- Settings portal ------------------------ */
 
@@ -192,10 +173,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
               position: "fixed",
               zIndex: 1000,
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(
-                Math.max(12, anchorRect.right - 360),
-                window.innerWidth - 360 - 12
-              ),
+              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
               width: 360,
             }}
             role="dialog"
@@ -247,16 +225,17 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             By strike
           </button>
 
-          {/* (Old) toolbar gear still opens the same popover, anchored to the new gear */}
+          {/* New health button — separate from the gear */}
+          <YahooHealthButton />
+
           <button
+            ref={gearRef}
             type="button"
             className="gear"
             aria-label="Chain table settings"
-            onClick={() => {
-              setSettingsOpen(true);
-              // scroll new gear into view so the popover appears nearby
-              setTimeout(() => gearRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
-            }}
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((v) => !v)}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -294,156 +273,159 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         </div>
       </div>
 
-      {/* Chain actions row (right-aligned) — NEW settings gear by the table */}
-      <div className="table-actions">
-        <button
-          ref={gearRef}
-          type="button"
-          aria-label="Chain table settings"
-          className={`gear2 ${settingsOpen ? "is-active" : ""} ${yahooHealthy ? "" : "is-bad"}`}
-          title={yahooHealthy ? "Settings" : (yahooErr ? `Not working: ${yahooErr}` : "Not working")}
-          onClick={() => setSettingsOpen((v) => !v)}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
-            />
-          </svg>
-        </button>
-      </div>
-
       {/* Table */}
-      <ChainTable
-        symbol={symbol}
-        currency={currency}
-        provider={provider}
-        groupBy={groupBy}
-        expiry={sel}
-      />
+      <ChainTable symbol={symbol} currency={currency} provider={provider} groupBy={groupBy} expiry={sel} />
 
       {/* Settings portal */}
       {settingsPortal}
 
       <style jsx>{`
         /* ---- Layout wrappers ---- */
-        .opt { margin-top: 6px; }
-        .toolbar{
-          display:flex; align-items:center; justify-content:space-between;
-          gap:16px; margin: 6px 0 10px;
+        .opt {
+          margin-top: 6px;
         }
-        .left, .right{ display:flex; align-items:center; gap:10px; }
+        .toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin: 6px 0 10px;
+        }
+        .left,
+        .right {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
 
         /* ---- Buttons (theme-aware) ---- */
-        .pill{
-          height:36px; padding:0 14px; border-radius:12px;
-          border:1px solid var(--border); background:var(--card);
-          font-weight:700; font-size:14px; line-height:1; color:var(--text);
+        .pill {
+          height: 36px;
+          padding: 0 14px;
+          border-radius: 12px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          font-weight: 700;
+          font-size: 14px;
+          line-height: 1;
+          color: var(--text);
         }
-        .pill.is-on{
+        .pill.is-on {
           background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--card));
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
-        .seg{
-          height:38px; padding:0 16px; border-radius:14px;
-          border:1px solid var(--border);
-          background:var(--surface); font-weight:800; font-size:15px;
-          color:var(--text); line-height:1;
+        .seg {
+          height: 38px;
+          padding: 0 16px;
+          border-radius: 14px;
+          border: 1px solid var(--border);
+          background: var(--surface);
+          font-weight: 800;
+          font-size: 15px;
+          color: var(--text);
+          line-height: 1;
         }
-        .seg.is-on{
+        .seg.is-on {
           background: color-mix(in srgb, var(--accent, #3b82f6) 14%, var(--surface));
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
-        .gear{
-          height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px; border:1px solid var(--border); background:var(--card);
-          color:var(--text);
+        .gear {
+          height: 38px;
+          width: 42px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 14px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          color: var(--text);
         }
 
-        /* ---- Expiry strip ---- */
-        .expiry-wrap{
-          margin: 14px 0 10px;
+        /* ---- Expiry strip (theme-aware) ---- */
+        .expiry-wrap {
+          margin: 14px 0 18px;
           padding: 2px 0 10px;
           border-bottom: 2px solid var(--border);
         }
-        .expiry{
-          display:flex; align-items:flex-start; gap:28px;
-          overflow-x:auto; overscroll-behavior-x: contain;
-          -webkit-overflow-scrolling: touch; padding-bottom:6px;
+        .expiry {
+          display: flex;
+          align-items: flex-start;
+          gap: 28px;
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch;
+          padding-bottom: 6px;
         }
-        .expiry[aria-busy="true"] { opacity:.75; }
-        .expiry::-webkit-scrollbar{ height:6px; }
-        .expiry::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
+        .expiry[aria-busy="true"] {
+          opacity: 0.75;
+        }
+        .expiry::-webkit-scrollbar {
+          height: 6px;
+        }
+        .expiry::-webkit-scrollbar-thumb {
+          background: var(--border);
+          border-radius: 999px;
+        }
 
-        .group{ flex:0 0 auto; }
-        .m{
-          font-weight:800; font-size:17px; letter-spacing:.2px; color:var(--text);
-          padding:0 0 6px 0;
-          border-bottom:1px solid var(--border);
-          margin-bottom:8px; opacity:.95;
+        .group {
+          flex: 0 0 auto;
         }
-        .days{ display:flex; gap:10px; }
+        .m {
+          font-weight: 800;
+          font-size: 17px;
+          letter-spacing: 0.2px;
+          color: var(--text);
+          padding: 0 0 6px 0;
+          border-bottom: 1px solid var(--border);
+          margin-bottom: 8px;
+          opacity: 0.95;
+        }
+        .days {
+          display: flex;
+          gap: 10px;
+        }
 
-        .day{
-          min-width:46px; height:34px; padding:0 10px;
-          border-radius:12px; border:1px solid var(--border);
-          background:var(--surface); font-weight:800; font-size:16px; color:var(--text);
-          display:inline-flex; align-items:center; justify-content:center;
-          transition: background .15s ease, transform .12s ease;
+        .day {
+          min-width: 46px;
+          height: 34px;
+          padding: 0 10px;
+          border-radius: 12px;
+          border: 1px solid var(--border);
+          background: var(--surface);
+          font-weight: 800;
+          font-size: 16px;
+          color: var(--text);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: background 0.15s ease, transform 0.12s ease;
         }
-        .day:hover{
+        .day:hover {
           background: color-mix(in srgb, var(--text) 6%, var(--surface));
           transform: translateY(-1px);
         }
-        .day.is-active{
-          background:var(--text); color:var(--bg);
-          border-color:var(--text);
+        .day.is-active {
+          background: var(--text);
+          color: var(--bg);
+          border-color: var(--text);
         }
 
-        /* ---- New chain actions row & gear by table ---- */
-        .table-actions{
-          margin: 8px 0 8px;
-          display:flex; justify-content:flex-end;
-        }
-        .gear2{
-          position:relative;
-          height:38px; width:42px;
-          display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px;
-          border:2px solid var(--border);      /* outer border */
-          background:var(--card);
-          color:var(--text);
-          transition: border-color .15s ease, color .15s ease, box-shadow .15s ease;
-        }
-        .gear2::after{                          /* inner border */
-          content:"";
-          position:absolute; inset:4px;
-          border-radius:12px;
-          border:2px solid var(--border);
-          pointer-events:none;
-        }
-        /* Active -> blue */
-        .gear2.is-active{
-          border-color: var(--accent, #3b82f6);
-          box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 35%, transparent);
-        }
-        .gear2.is-active::after{ border-color: var(--accent, #3b82f6); }
-        .gear2.is-active svg{ color: var(--accent, #3b82f6); }
-
-        /* Not working -> red */
-        .gear2.is-bad{
-          border-color: #ef4444;
-          box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 35%, transparent);
-        }
-        .gear2.is-bad::after{ border-color:#ef4444; }
-        .gear2.is-bad svg{ color:#ef4444; }
-
-        @media (max-width: 840px){
-          .seg{ height:36px; padding:0 14px; font-size:14px; }
-          .m{ font-size:16px; }
-          .day{ height:32px; min-width:42px; font-size:15px; }
+        @media (max-width: 840px) {
+          .seg {
+            height: 36px;
+            padding: 0 14px;
+            font-size: 14px;
+          }
+          .m {
+            font-size: 16px;
+          }
+          .day {
+            height: 32px;
+            min-width: 42px;
+            font-size: 15px;
+          }
         }
       `}</style>
     </section>
