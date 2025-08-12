@@ -4,6 +4,7 @@
 import { useState } from "react";
 import OptionsToolbar from "./OptionsToolbar";
 import ChainSettings from "./ChainSettings";
+import ChainTable from "./ChainTable";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const [provider, setProvider] = useState("api");    // 'api' | 'upload'
@@ -23,6 +24,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     askIv: false, bidIv: false,
   });
 
+  // Placeholder dataset (empty); will be filled by API/Upload in A6
+  const rows = []; // keep empty now
+
   return (
     <section className="options">
       <OptionsToolbar
@@ -39,7 +43,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         currency={currency}
       />
 
-      {/* Settings popover */}
       <ChainSettings
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -61,17 +64,21 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           <div className="sub">
             {view === "byExp" ? "Grouped by expiration" : "Grouped by strike"}
             {" • Provider: "}{provider.toUpperCase()}
-            {" • Rows: "}
-            {rowsMode === "custom" ? `${customRows}` : rowsMode}
-            {" • Sort: "}{sort.toUpperCase()}
           </div>
         </div>
 
-        <div className="placeholder card">
-          <p className="muted">
-            Table will render here in the next steps (A5–A6). This is only the structure.
-          </p>
-        </div>
+        <ChainTable
+          currency={currency}
+          rows={rows}
+          sort={sort}
+          rowsMode={rowsMode}
+          customRows={customRows}
+          columns={columns}
+          onUseSelection={(ids) => {
+            // wired in A6 to push into Strategy builder
+            console.log("Selected row ids:", ids);
+          }}
+        />
       </div>
 
       <style jsx>{`
@@ -79,8 +86,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         .body{ padding:10px 6px; display:flex; flex-direction:column; gap:10px; }
         .row .title{ font-weight:800; font-size:16px; }
         .row .sub{ font-size:12px; opacity:.75; margin-top:2px; }
-        .placeholder{ padding:18px; }
-        .muted{ opacity:.75; }
       `}</style>
     </section>
   );
