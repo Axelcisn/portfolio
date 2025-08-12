@@ -52,7 +52,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
   }, [settingsOpen]);
 
-  /* -------------------- STEP 3: expiries from API -------------------- */
+  /* -------------------- Expiries (filtered) -------------------- */
 
   // Fallback (keeps your exact visual while API loads/absent)
   const fallbackGroups = useMemo(
@@ -77,7 +77,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     []
   );
 
-  // Live expiries from /api/expiries
+  // Live expiries from filtered API
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
 
@@ -87,9 +87,12 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (!symbol) { setApiExpiries(null); return; }
       try {
         setLoadingExp(true);
-        const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+        // 👇 only change: call filtered endpoint (minVol=1, useOI=1)
+        const url = `/api/expiries/filtered?symbol=${encodeURIComponent(symbol)}&minVol=1&useOI=1`;
+        const res = await fetch(url, { cache: "no-store" });
         const j = await res.json().catch(() => ({}));
-        if (!cancelled) setApiExpiries(Array.isArray(j?.expiries) ? j.expiries : []);
+        const list = Array.isArray(j?.data?.dates) ? j.data.dates : [];
+        if (!cancelled) setApiExpiries(list);
       } catch {
         if (!cancelled) setApiExpiries([]);
       } finally {
@@ -119,7 +122,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       const labelMonth = d.toLocaleString(undefined, { month: "short" });
       // Show year suffix only for January (matches your screenshots)
       const label = mIdx === 0 ? `${labelMonth} ’${String(y).slice(-2)}` : labelMonth;
-      const key = `${y}-${mIdx}`; // unique even if label repeats (e.g., "Aug" in different years)
+      const key = `${y}-${mIdx}`; // unique per year-month
 
       let g = out[out.length - 1];
       if (!g || g.k !== key) {
@@ -128,7 +131,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
       g.days.push(d.getDate());
     }
-    // ensure day order + unique
     for (const g of out) g.days = Array.from(new Set(g.days)).sort((a, b) => a - b);
     return out;
   }, [apiExpiries, fallbackGroups]);
