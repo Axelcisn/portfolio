@@ -16,31 +16,52 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
   const btnRefs = useRef(Object.create(null));
   const [bar, setBar] = useState({ left: 0, width: 0 });
 
-  // ensure a ref exists per tab key
   const keys = useMemo(() => tabs.map(t => t.key), [tabs]);
   useEffect(() => {
-    for (const k of keys) {
-      if (!btnRefs.current[k]) btnRefs.current[k] = { el: null };
-    }
+    for (const k of keys) if (!btnRefs.current[k]) btnRefs.current[k] = { el: null };
   }, [keys]);
 
   const updateBar = () => {
-    const host = wrapRef.current;
-    const btn = btnRefs.current[activeKey]?.el;
-    if (!host || !btn) return;
-    const hr = host.getBoundingClientRect();
-    const br = btn.getBoundingClientRect();
-    setBar({ left: br.left - hr.left + host.scrollLeft, width: br.width });
+    try {
+      const host = wrapRef.current;
+      const btn = btnRefs.current[activeKey]?.el;
+      if (!host || !btn) return;
+      const hr = host.getBoundingClientRect?.();
+      const br = btn.getBoundingClientRect?.();
+      if (!hr || !br) return;
+      setBar({
+        left: br.left - hr.left + (host.scrollLeft || 0),
+        width: br.width || 0,
+      });
+    } catch {
+      /* no-op */
+    }
   };
 
   useEffect(() => {
-    updateBar();
-    const ro = new ResizeObserver(updateBar);
-    if (wrapRef.current) ro.observe(wrapRef.current);
-    window.addEventListener("resize", updateBar);
+    // Run after paint
+    const raf = typeof window !== "undefined" && window.requestAnimationFrame
+      ? window.requestAnimationFrame
+      : (fn) => setTimeout(fn, 0);
+    raf(updateBar);
+
+    // Guarded ResizeObserver (some environments don’t have it)
+    const RO = typeof window !== "undefined" && "ResizeObserver" in window
+      ? window.ResizeObserver
+      : null;
+
+    let ro = null;
+    if (RO && wrapRef.current) {
+      ro = new RO(() => updateBar());
+      try { ro.observe(wrapRef.current); } catch { /* ignore */ }
+    }
+
+    const onResize = () => updateBar();
+    if (typeof window !== "undefined") window.addEventListener("resize", onResize);
+
     return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", updateBar);
+      if (ro) try { ro.disconnect(); } catch { /* ignore */ }
+      if (typeof window !== "undefined") window.removeEventListener("resize", onResize);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeKey, tabs.length]);
@@ -51,7 +72,7 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
     const dir = e.key === "ArrowRight" ? 1 : -1;
     const next = (idx + dir + tabs.length) % tabs.length;
     onChange?.(tabs[next].key);
-    btnRefs.current[tabs[next].key]?.el?.focus();
+    btnRefs.current[tabs[next].key]?.el?.focus?.();
   };
 
   return (
@@ -75,7 +96,6 @@ export default function TabsNav({ tabs = [], activeKey, onChange, className = ""
           </button>
         );
       })}
-      {/* accent underline */}
       <div
         className="accent"
         style={{ transform: `translateX(${bar.left}px)`, width: `${bar.width}px` }}
