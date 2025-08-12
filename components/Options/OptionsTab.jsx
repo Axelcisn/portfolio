@@ -1,91 +1,93 @@
-// components/Options/OptionsTab.jsx
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import OptionsToolbar from "./OptionsToolbar";
-import ChainSettings from "./ChainSettings";
 import ChainTable from "./ChainTable";
 
+/* ---------- defaults shared with toolbar/settings ---------- */
+export const DEFAULT_SETTINGS = {
+  rowsMode: "20",           // "10" | "20" | "all" | "custom"
+  customRows: 25,           // used when rowsMode === "custom"
+  sort: "asc",              // "asc" | "desc"
+  columns: {
+    bid: true,
+    ask: true,
+    price: true,
+    delta: false,
+    gamma: false,
+    theta: false,
+    vega: false,
+    rho: false,
+    timeValue: false,
+    intrinsic: false,
+    askIv: false,
+    bidIv: false,
+  },
+};
+
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  const [provider, setProvider] = useState("api");    // 'api' | 'upload'
-  const [view, setView] = useState("byExp");          // 'byExp' | 'byStrike'
-  const [sym, setSym] = useState(symbol || "");
+  // Provider & inputs
+  const [provider, setProvider] = useState("api"); // "api" | "upload"
+  const [ticker, setTicker] = useState(symbol || "");
+  const [group, setGroup] = useState("byExp");     // "byExp" | "byStrike"
   const [expiry, setExpiry] = useState("");
+  const expiryOptions = useMemo(() => [], []);
 
-  // Settings state
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [rowsMode, setRowsMode] = useState("10");     // '10' | '20' | 'all' | 'custom'
-  const [customRows, setCustomRows] = useState(25);
-  const [sort, setSort] = useState("asc");            // 'asc' | 'desc'
-  const [columns, setColumns] = useState({
-    bid: true, ask: true, price: true,
-    delta: false, gamma: false, theta: false, vega: false, rho: false,
-    timeValue: false, intrinsicValue: false,
-    askIv: false, bidIv: false,
-  });
+  // Centralized settings (single source of truth)
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
 
-  // Placeholder dataset (empty); will be filled by API/Upload in A6
-  const rows = []; // keep empty now
+  const onUseTicker = () => {
+    // (Wire to fetch chain later — for now this is a stub.)
+    // Keep UX feedback minimal.
+    console.debug("Use ticker clicked:", { provider, ticker, expiry, group, settings });
+  };
 
   return (
-    <section className="options">
-      <OptionsToolbar
-        provider={provider}
-        onProviderChange={setProvider}
-        symbol={sym}
-        onSymbolChange={setSym}
-        onConfirmSymbol={setSym}
-        expiry={expiry}
-        onExpiryChange={setExpiry}
-        view={view}
-        onViewChange={setView}
-        onOpenSettings={() => setSettingsOpen((v) => !v)}
-        currency={currency}
-      />
-
-      <ChainSettings
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        rowsMode={rowsMode}
-        customRows={customRows}
-        onRowsModeChange={setRowsMode}
-        onCustomRowsChange={setCustomRows}
-        sort={sort}
-        onSortChange={setSort}
-        columns={columns}
-        onColumnsChange={setColumns}
-      />
-
-      <div className="body">
-        <div className="row">
-          <div className="title">
-            {sym ? `${sym} options` : "Options chain"}
-          </div>
-          <div className="sub">
-            {view === "byExp" ? "Grouped by expiration" : "Grouped by strike"}
-            {" • Provider: "}{provider.toUpperCase()}
-          </div>
-        </div>
-
-        <ChainTable
-          currency={currency}
-          rows={rows}
-          sort={sort}
-          rowsMode={rowsMode}
-          customRows={customRows}
-          columns={columns}
-          onUseSelection={(ids) => {
-            // wired in A6 to push into Strategy builder
-            console.log("Selected row ids:", ids);
-          }}
+    <section>
+      <div className="toolbar-wrap">
+        <OptionsToolbar
+          provider={provider}
+          onProviderChange={setProvider}
+          ticker={ticker}
+          onTickerChange={setTicker}
+          onUse={onUseTicker}
+          expiry={expiry}
+          expiryOptions={expiryOptions}
+          onExpiryChange={setExpiry}
+          group={group}
+          onGroupChange={setGroup}
+          settings={settings}
+          onSettingsChange={setSettings}
         />
       </div>
 
+      <div className="chain-head">
+        <div className="ttl">Options chain</div>
+        <div className="sub">
+          {group === "byExp" ? "Grouped by expiration" : "Grouped by strike"} • Provider:{" "}
+          {provider.toUpperCase()}
+        </div>
+      </div>
+
+      {/* Placeholder table — will render real chain later. */}
+      <div className="card empty">
+        <div className="empty-title">No options loaded</div>
+        <div className="empty-sub">
+          Pick a provider or upload a screenshot, then choose an expiry.
+        </div>
+      </div>
+
       <style jsx>{`
-        .options{ margin-top:8px; position:relative; }
-        .body{ padding:10px 6px; display:flex; flex-direction:column; gap:10px; }
-        .row .title{ font-weight:800; font-size:16px; }
-        .row .sub{ font-size:12px; opacity:.75; margin-top:2px; }
+        .toolbar-wrap { margin-bottom: 10px; }
+        .chain-head { display:flex; align-items:baseline; gap:12px; margin:8px 0 10px; }
+        .ttl { font-weight:800; font-size:18px; }
+        .sub { opacity:.7; font-size:12.5px; }
+        .card.empty{
+          padding:18px; border:1px solid var(--border);
+          border-radius:14px; background:var(--card);
+        }
+        .empty-title{ font-weight:800; margin-bottom:4px; }
+        .empty-sub{ opacity:.75; }
       `}</style>
     </section>
   );
