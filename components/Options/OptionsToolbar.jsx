@@ -1,48 +1,101 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ChainSettings from "./ChainSettings";
 
 /**
- * Only change: make the settings button reliably open/close the popover.
- * We always render <ChainSettings/> and pass open={open}. Visibility is via CSS.
+ * Minimal change: make the gear button open/close the settings popover
+ * with a rock-solid portal positioned off the button. No other UI touched.
  */
 export default function OptionsToolbar({
   provider = "api",
-  onProvider, onProviderChange,
+  onProvider,
+  onProviderChange,
   groupBy = "expiry",
-  onGroupBy, onGroupByChange,
+  onGroupBy,
+  onGroupByChange,
 }) {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, right: 0 });
 
   const btnRef = useRef(null);
   const popRef = useRef(null);
-  const wrapRef = useRef(null);
 
-  // Close on outside click / Esc
+  const fireProvider = (val) => {
+    onProvider?.(val);
+    onProviderChange?.(val);
+  };
+  const fireGroupBy = (val) => {
+    onGroupBy?.(val);
+    onGroupByChange?.(val);
+  };
+
+  // Position popover relative to the gear button
+  const updateCoords = () => {
+    if (!btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const gap = 8;
+    setCoords({
+      top: r.bottom + gap,
+      right: Math.max(8, window.innerWidth - r.right),
+    });
+  };
+
+  // Open/close on click; when opening compute position
+  const toggle = () => {
+    setOpen((v) => {
+      const next = !v;
+      if (next) updateCoords();
+      return next;
+    });
+  };
+
+  // Close on outside click and ESC; keep position on resize/scroll
   useEffect(() => {
     if (!open) return;
-    const onDocClick = (e) => {
+
+    const onDocDown = (e) => {
       if (btnRef.current?.contains(e.target)) return;
       if (popRef.current?.contains(e.target)) return;
       setOpen(false);
     };
-    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e) => e.key === "Escape" && setOpen(false);
+    const onReflow = () => updateCoords();
 
-    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("mousedown", onDocDown, true);
+    window.addEventListener("resize", onReflow);
+    window.addEventListener("scroll", onReflow, true);
     document.addEventListener("keydown", onKey);
+
     return () => {
-      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("mousedown", onDocDown, true);
+      window.removeEventListener("resize", onReflow);
+      window.removeEventListener("scroll", onReflow, true);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
 
-  // Keep existing parent callbacks intact
-  const fireProvider = (val) => { onProvider?.(val); onProviderChange?.(val); };
-  const fireGroupBy  = (val) => { onGroupBy?.(val);  onGroupByChange?.(val);  };
+  // Render the popover through a portal so no parent overflow/stacking can hide it
+  const Popover = () => {
+    if (typeof document === "undefined") return null; // SSR guard
+    return createPortal(
+      <div
+        ref={popRef}
+        className={`cs-popover ${open ? "is-open" : ""}`}
+        style={{ top: coords.top, right: coords.right }}
+        role="dialog"
+        aria-label="Chain settings"
+      >
+        {/* ChainSettings can still read the `open` prop if it needs it */}
+        <ChainSettings open={open} onClose={() => setOpen(false)} />
+      </div>,
+      document.body
+    );
+  };
 
   return (
-    <div className="toolbar" ref={wrapRef}>
+    <div className="toolbar">
       <div className="left">
         <button
           type="button"
@@ -87,7 +140,7 @@ export default function OptionsToolbar({
           aria-haspopup="dialog"
           aria-expanded={open ? "true" : "false"}
           aria-label="Chain table settings"
-          onClick={() => setOpen((v) => !v)}
+          onClick={toggle}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
             <path
@@ -96,22 +149,15 @@ export default function OptionsToolbar({
             />
           </svg>
         </button>
-
-        {/* Always render; visibility controlled by CSS and open prop */}
-        <div
-          ref={popRef}
-          className={`popover ${open ? "is-open" : ""}`}
-          role="dialog"
-          aria-label="Chain settings"
-        >
-          <ChainSettings open={open} onClose={() => setOpen(false)} />
-        </div>
       </div>
+
+      {/* Portal keeps layout untouched but ensures popover always appears */}
+      <Popover />
 
       <style jsx>{`
         .toolbar{
           display:flex; align-items:center; justify-content:space-between;
-          gap:16px; margin: 6px 0 10px; position:relative;
+          gap:16px; margin: 6px 0 10px;
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
 
@@ -135,14 +181,14 @@ export default function OptionsToolbar({
           color:#0f172a;
         }
 
-        .popover{
-          position:absolute; right:0; top:44px;
-          background:#fff; border:1px solid var(--border,#E6E9EF); border-radius:14px;
-          box-shadow:0 10px 30px rgba(0,0,0,.08);
-          z-index:30;
-          display:none;
+        /* Portal wrapper */
+        :global(.cs-popover){
+          position:fixed; z-index:1000;
+          display:none; /* visibility controlled via class below */
         }
-        .popover.is-open{ display:block; }
+        :global(.cs-popover.is-open){
+          display:block;
+        }
       `}</style>
     </div>
   );
