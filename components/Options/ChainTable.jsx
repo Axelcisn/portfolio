@@ -17,7 +17,7 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
     return d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
   };
 
-  // Pick the best YYYY-MM-DD from /api/expiries that matches { m, d }
+  // Pick the best YYYY-MM-DD from /api/expiries that matches { m, d } (fallback only)
   async function resolveDate(sym, sel) {
     if (!sym || !sel?.m || !sel?.d) return null;
     try {
@@ -73,10 +73,16 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
       setError(null);
       setMeta(null);
       setRows([]);
+
       if (!symbol || !expiry?.m || !expiry?.d) { setStatus("idle"); return; }
+      if (provider && provider !== "api") { setStatus("idle"); return; } // not implemented yet
 
       setStatus("loading");
-      const dateISO = await resolveDate(symbol, expiry);
+
+      // Prefer the ISO date provided by OptionsTab; if absent, fall back to resolver
+      const isoFromTab = expiry?.iso || null;
+      const dateISO = isoFromTab || (await resolveDate(symbol, expiry));
+
       if (!dateISO) {
         if (!cancelled) { setStatus("error"); setError("No chain for selected expiry."); }
         return;
@@ -105,8 +111,8 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
     }
     load();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, expiry?.m, expiry?.d]);
+    // Re-run when symbol or the selected ISO changes; also react to (m,d) if ISO is missing
+  }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
 
   // Limit rows for readability (you can change count later via settings)
   const visible = useMemo(() => rows.slice(0, 40), [rows]);
