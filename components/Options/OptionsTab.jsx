@@ -1,295 +1,157 @@
-// components/Options/OptionsTab.jsx
 "use client";
+import { useEffect, useMemo, useState } from "react";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import ChainTable from "./ChainTable";
-import ChainSettings from "./ChainSettings";
+export default function ChainTable({ symbol, currency, provider, groupBy, expiryISO }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+  const [calls, setCalls] = useState([]);
+  const [puts, setPuts] = useState([]);
+  const [meta, setMeta] = useState(null);
 
-export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  // Provider + grouping (UI only for now)
-  const [provider, setProvider] = useState("api");    // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry");   // 'expiry' | 'strike'
-
-  // Settings popover
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const gearRef = useRef(null);
-  const [anchorRect, setAnchorRect] = useState(null);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  // Keep popover aligned to the gear
+  // fetch options only when provider=api + symbol + expiryISO
   useEffect(() => {
-    if (!settingsOpen || !gearRef.current) return;
-    const update = () => {
-      const r = gearRef.current.getBoundingClientRect();
-      setAnchorRect(r);
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
-    };
-  }, [settingsOpen]);
+    setErr(null);
+    setCalls([]); setPuts([]); setMeta(null);
+    if (provider !== "api" || !symbol || !expiryISO) return;
 
-  // Close on outside click / ESC
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onDocDown = (e) => {
-      const pop = document.getElementById("chain-settings-popover");
-      if (pop?.contains(e.target)) return;
-      if (gearRef.current?.contains(e.target)) return;
-      setSettingsOpen(false);
-    };
-    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
+    let abort = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const u = `/api/options?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(expiryISO)}`;
+        const r = await fetch(u, { cache: "no-store" });
+        const j = await r.json();
+        if (abort) return;
 
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("touchstart", onDocDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("touchstart", onDocDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [settingsOpen]);
+        if (!r.ok || j?.ok === false) throw new Error(j?.error || "Failed");
+        setCalls(Array.isArray(j.data?.calls) ? j.data.calls : []);
+        setPuts(Array.isArray(j.data?.puts) ? j.data.puts : []);
+        setMeta(j.data?.meta || null);
+      } catch (e) {
+        setErr(e?.message || "Error");
+      } finally {
+        setLoading(false);
+      }
+    })();
 
-  // Lightweight, static sample expiries just for structure/visuals
-  const expiries = useMemo(
-    () => [
-      { m: "Aug", days: [15, 22, 29] },
-      { m: "Sep", days: [5, 12, 19, 26] },
-      { m: "Oct", days: [17] },
-      { m: "Nov", days: [21] },
-      { m: "Dec", days: [19] },
-      { m: "Jan ’26", days: [16] },
-      { m: "Feb", days: [20] },
-      { m: "Mar", days: [20] },
-      { m: "May", days: [15] },
-      { m: "Jun", days: [18] },
-      { m: "Aug", days: [21] },
-      { m: "Sep", days: [18] },
-      { m: "Dec", days: [18] },
-      { m: "Jan ’27", days: [15] },
-      { m: "Jun", days: [17] },
-      { m: "Dec", days: [17] },
-    ],
-    []
-  );
+    return () => { abort = true; };
+  }, [provider, symbol, expiryISO]);
 
-  // Selected expiry (month label + day)
-  const [sel, setSel] = useState({ m: "Jan ’26", d: 16 });
+  // union of strikes for perfect left/center/right symmetry
+  const strikes = useMemo(() => {
+    const s = new Set();
+    for (const c of calls) if (Number.isFinite(c?.strike)) s.add(c.strike);
+    for (const p of puts) if (Number.isFinite(p?.strike)) s.add(p.strike);
+    return Array.from(s).sort((a, b) => a - b);
+  }, [calls, puts]);
 
-  // Render the settings popover in a portal (avoids overflow/clipping issues)
-  const settingsPortal =
-    mounted && settingsOpen && anchorRect
-      ? createPortal(
-          <div
-            id="chain-settings-popover"
-            className="popover"
-            style={{
-              position: "fixed",
-              zIndex: 1000,
-              // align just under the gear, keep inside viewport
-              top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(
-                Math.max(12, anchorRect.right - 360),
-                window.innerWidth - 360 - 12
-              ),
-              width: 360,
-            }}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Chain table settings"
-          >
-            <ChainSettings onClose={() => setSettingsOpen(false)} />
-          </div>,
-          document.body
-        )
-      : null;
+  const byStrike = (arr) => {
+    const m = new Map();
+    for (const o of arr) if (Number.isFinite(o?.strike)) m.set(o.strike, o);
+    return m;
+  };
+  const callsBy = useMemo(() => byStrike(calls), [calls]);
+  const putsBy = useMemo(() => byStrike(puts), [puts]);
+
+  const fmt2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : "—");
+  const fmt1 = (v) => (Number.isFinite(v) ? v.toFixed(1) : "—");
 
   return (
-    <section className="opt">
-      {/* Toolbar */}
-      <div className="toolbar">
-        <div className="left">
-          <button
-            type="button"
-            className={`pill ${provider === "api" ? "is-on" : ""}`}
-            onClick={() => setProvider("api")}
-            aria-pressed={provider === "api"}
-          >
-            API
-          </button>
-          <button
-            type="button"
-            className={`pill ${provider === "upload" ? "is-on" : ""}`}
-            onClick={() => setProvider("upload")}
-            aria-pressed={provider === "upload"}
-          >
-            Upload
-          </button>
-        </div>
-
-        <div className="right">
-          <button
-            type="button"
-            className={`seg ${groupBy === "expiry" ? "is-on" : ""}`}
-            onClick={() => setGroupBy("expiry")}
-          >
-            By expiration
-          </button>
-          <button
-            type="button"
-            className={`seg ${groupBy === "strike" ? "is-on" : ""}`}
-            onClick={() => setGroupBy("strike")}
-          >
-            By strike
-          </button>
-
-          <button
-            ref={gearRef}
-            type="button"
-            className="gear"
-            aria-label="Chain table settings"
-            aria-haspopup="dialog"
-            aria-expanded={settingsOpen}
-            onClick={() => setSettingsOpen((v) => !v)}
-          >
-            {/* keep the existing gear to avoid behavior changes */}
-            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
-              />
-            </svg>
-          </button>
-        </div>
+    <div className="wrap">
+      <div className="heads">
+        <div className="h-left">Calls</div>
+        <div className="h-mid" />
+        <div className="h-right">Puts</div>
       </div>
 
-      {/* Expiry strip */}
-      <div className="expiry-wrap">
-        <div className="expiry">
-          {expiries.map((g) => (
-            <div className="group" key={g.m}>
-              <div className="m">{g.m}</div>
-              <div className="days">
-                {g.days.map((d) => {
-                  const active = sel.m === g.m && sel.d === d;
-                  return (
-                    <button
-                      key={`${g.m}-${d}`}
-                      className={`day ${active ? "is-active" : ""}`}
-                      onClick={() => setSel({ m: g.m, d })}
-                      aria-pressed={active}
-                    >
-                      {d}
-                    </button>
-                  );
-                })}
-              </div>
+      {/* Header row */}
+      <div className="grid head-row">
+        <div className="c cell">Price</div>
+        <div className="c cell">Ask</div>
+        <div className="c cell">Bid</div>
+
+        <div className="mid cell">
+          <span className="arrow">↑</span> Strike
+        </div>
+        <div className="mid cell">IV, %</div>
+
+        <div className="p cell">Bid</div>
+        <div className="p cell">Ask</div>
+        <div className="p cell">Price</div>
+      </div>
+
+      {/* Rows */}
+      {loading ? (
+        <div className="card"><div className="title">Loading chain…</div></div>
+      ) : err ? (
+        <div className="card"><div className="title">Error</div><div className="sub">{err}</div></div>
+      ) : !strikes.length ? (
+        <div className="card">
+          <div className="title">No options loaded</div>
+          <div className="sub">Pick a provider or upload a screenshot, then choose an expiry{meta?.expiry ? ` (e.g., ${meta.expiry}).` : "."}</div>
+        </div>
+      ) : (
+        strikes.map((K) => {
+          const c = callsBy.get(K) || {};
+          const p = putsBy.get(K) || {};
+          return (
+            <div className="grid row" key={`r-${K}`}>
+              {/* Calls (left) */}
+              <div className="c cell">{fmt2(c.price)}</div>
+              <div className="c cell">{fmt2(c.ask)}</div>
+              <div className="c cell">{fmt2(c.bid)}</div>
+
+              {/* Center */}
+              <div className="mid cell strike">{fmt2(K)}</div>
+              <div className="mid cell">{fmt1(c?.ivPct ?? p?.ivPct)}</div>
+
+              {/* Puts (right) */}
+              <div className="p cell">{fmt2(p.bid)}</div>
+              <div className="p cell">{fmt2(p.ask)}</div>
+              <div className="p cell">{fmt2(p.price)}</div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Table */}
-      <ChainTable
-        symbol={symbol}
-        currency={currency}
-        provider={provider}
-        groupBy={groupBy}
-        expiry={sel}
-      />
-
-      {/* Settings portal */}
-      {settingsPortal}
+          );
+        })
+      )}
 
       <style jsx>{`
-        /* ---- Layout wrappers ---- */
-        .opt { margin-top: 6px; }
-        .toolbar{
-          display:flex; align-items:center; justify-content:space-between;
-          gap:16px; margin: 6px 0 10px;
-        }
-        .left, .right{ display:flex; align-items:center; gap:10px; }
+        .wrap{ margin-top:10px; }
+        .heads{ display:flex; align-items:center; justify-content:space-between; margin:12px 0 8px; }
+        .h-left, .h-right{ font-weight:800; font-size:28px; letter-spacing:.2px; color:var(--text,#0f172a); }
+        .h-mid{ flex:1; }
 
-        /* ---- Buttons (theme-aware) ---- */
-        .pill{
-          height:36px; padding:0 14px; border-radius:12px;
-          border:1px solid var(--border); background:var(--card);
-          font-weight:700; font-size:14px; line-height:1; color:var(--text);
+        /* 8 columns: 3 (calls) + 2 (center) + 3 (puts)  */
+        .grid{
+          display:grid;
+          grid-template-columns:
+            minmax(86px,1fr) minmax(86px,1fr) minmax(86px,1fr)
+            112px 86px
+            minmax(86px,1fr) minmax(86px,1fr) minmax(86px,1fr);
+          gap: 6px 14px; align-items:center;
         }
-        .pill.is-on{
-          background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--card));
-          border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
+        .head-row{
+          padding: 8px 0 10px;
+          border-top:1px solid var(--border,#E6E9EF);
+          border-bottom:1px solid var(--border,#E6E9EF);
+          font-weight:700; font-size:15px; color:var(--text,#2b3442);
         }
+        .row{ padding:10px 0; border-bottom:1px dashed color-mix(in oklab, var(--border,#E6E9EF) 70%, transparent); }
+        .cell{ height:28px; display:flex; align-items:center; }
+        .c{ justify-content:flex-start; }
+        .p{ justify-content:flex-end; }
+        .mid{ justify-content:center; text-align:center; }
+        .strike{ font-weight:700; }
 
-        .seg{
-          height:38px; padding:0 16px; border-radius:14px;
-          border:1px solid var(--border);
-          background:var(--surface); font-weight:800; font-size:15px;
-          color:var(--text); line-height:1;
-        }
-        .seg.is-on{
-          background: color-mix(in srgb, var(--accent, #3b82f6) 14%, var(--surface));
-          border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
-        }
+        .arrow{ margin-right:6px; font-weight:900; }
+        .card{ border:1px solid var(--border,#E6E9EF); border-radius:14px; background:var(--card,#fff); padding:18px; margin-top:14px; }
+        .title{ font-weight:800; font-size:18px; margin-bottom:6px; }
+        .sub{ opacity:.75; }
 
-        .gear{
-          height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px; border:1px solid var(--border); background:var(--card);
-          color:var(--text);
-        }
-
-        /* ---- Expiry strip (theme-aware) ---- */
-        .expiry-wrap{
-          margin: 14px 0 18px;
-          padding: 2px 0 10px;
-          border-bottom: 2px solid var(--border);
-        }
-        .expiry{
-          display:flex; align-items:flex-start; gap:28px;
-          overflow-x:auto; overscroll-behavior-x: contain;
-          -webkit-overflow-scrolling: touch; padding-bottom:6px;
-        }
-        .expiry::-webkit-scrollbar{ height:6px; }
-        .expiry::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
-
-        .group{ flex:0 0 auto; }
-        .m{
-          font-weight:800; font-size:17px; letter-spacing:.2px; color:var(--text);
-          padding:0 0 6px 0;
-          border-bottom:1px solid var(--border);
-          margin-bottom:8px;
-          opacity:.95;
-        }
-        .days{ display:flex; gap:10px; }
-
-        .day{
-          min-width:46px; height:34px; padding:0 10px;
-          border-radius:12px; border:1px solid var(--border);
-          background:var(--surface); font-weight:800; font-size:16px; color:var(--text);
-          display:inline-flex; align-items:center; justify-content:center;
-          transition: background .15s ease, transform .12s ease;
-        }
-        .day:hover{
-          background: color-mix(in srgb, var(--text) 6%, var(--surface));
-          transform: translateY(-1px);
-        }
-        .day.is-active{
-          background:var(--text); color:var(--bg);
-          border-color:var(--text);
-        }
-
-        @media (max-width: 840px){
-          .seg{ height:36px; padding:0 14px; font-size:14px; }
-          .m{ font-size:16px; }
-          .day{ height:32px; min-width:42px; font-size:15px; }
+        @media (max-width: 980px){
+          .h-left, .h-right{ font-size:22px; }
+          .head-row{ font-size:14px; }
         }
       `}</style>
-    </section>
+    </div>
   );
 }
