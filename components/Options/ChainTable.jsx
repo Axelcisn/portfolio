@@ -170,10 +170,10 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">Ask</div>
         <div className="c cell" role="columnheader">Bid</div>
 
-        <div className="mid cell" role="columnheader" aria-sort={ariaSort}>
+        <div className="mid cell strike-hdr" role="columnheader" aria-sort={ariaSort}>
           <span className="arrow" aria-hidden="true">{arrowChar}</span> Strike
         </div>
-        <div className="mid cell" role="columnheader">IV, %</div>
+        <div className="mid cell iv-hdr" role="columnheader">IV, %</div>
 
         <div className="p cell" role="columnheader">Bid</div>
         <div className="p cell" role="columnheader">Ask</div>
@@ -212,8 +212,8 @@ export default function ChainTable({
                 <div className="c cell val">{fmt(r?.call?.bid)}</div>
 
                 {/* Center */}
-                <div className="mid cell val midtone">{fmt(r.strike)}</div>
-                <div className="mid cell val midtone">{fmt(r.ivPct, 2)}</div>
+                <div className="mid cell val strike-val">{fmt(r.strike)}</div>
+                <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
                 {/* Puts (right) */}
                 <div className="p cell val">{fmt(r?.put?.bid)}</div>
@@ -227,8 +227,9 @@ export default function ChainTable({
 
       <style jsx>{`
         .wrap{
-          /* dark grey for Strike & IV columns */
-          --midColText: #6b7280; /* professional dark grey */
+          /* brand colors for mid columns */
+          --strikeCol: #F2AE2E; /* Strike */
+          --ivCol:     #F27405; /* IV, %  */
           --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
           --spotOrange: #f59e0b;
           margin-top:10px;
@@ -264,25 +265,18 @@ export default function ChainTable({
           color: var(--text, #2b3442);
         }
 
-        /* Make Strike & IV headers dark grey */
-        .head-row .mid.cell{
-          color: var(--midColText);
-          font-weight:800;
-          letter-spacing:.01em;
-        }
+        /* Color the two center headers */
+        .head-row .strike-hdr{ color: var(--strikeCol); font-weight:800; letter-spacing:.01em; }
+        .head-row .iv-hdr{     color: var(--ivCol);     font-weight:800; letter-spacing:.01em; }
 
-        /* Center-align calls/puts columns */
+        /* Center-align columns */
         .cell{ height:26px; display:flex; align-items:center; }
         .c{ justify-content:center; text-align:center; }
         .p{ justify-content:center; text-align:center; }
         .mid{ justify-content:center; text-align:center; }
 
-        /* Arrow inherits the header color */
-        .arrow{
-          margin-right:6px;
-          font-weight:900;
-          color: currentColor;
-        }
+        /* Arrow inherits header color (Strike) */
+        .arrow{ margin-right:6px; font-weight:900; color: currentColor; }
 
         /* Status card */
         .card{
@@ -309,10 +303,9 @@ export default function ChainTable({
           border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
         }
 
-        /* Make Strike & IV values dark grey */
-        .body .row .midtone{
-          color: var(--midColText);
-        }
+        /* Apply brand colors to Strike & IV values */
+        .body .row .strike-val{ color: var(--strikeCol); }
+        .body .row .iv-val{     color: var(--ivCol); }
 
         .val{
           font-weight:700; font-size:13.5px; color: var(--text, #0f172a);
