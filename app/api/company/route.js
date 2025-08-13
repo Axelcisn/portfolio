@@ -1,58 +1,38 @@
 // app/api/company/route.js
 import { NextResponse } from "next/server";
+import { fxRate } from "../../../lib/fx";
 
-export const runtime = "nodejs";          // use Node runtime (Yahoo blocks some edge fetches)
-export const dynamic = "force-dynamic";   // always fresh
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-/* ---------------- micro-cache (module scoped) ---------------- */
-
-const TTL_MS = 45 * 1000;                  // 30–60s range → pick 45s
-const CACHE = new Map();                   // key -> { ts, payload }
-
-function cacheKey(symbol, q) {
-  const s = String(symbol || "").toUpperCase().trim();
-  const qq = String(q || "").toUpperCase().trim();
-  return qq ? `${s}|Q:${qq}` : s;          // key by symbol and optional q
-}
-function getCached(symbol, q) {
-  const k = cacheKey(symbol, q);
-  const hit = CACHE.get(k);
-  if (!hit) return null;
-  if (Date.now() - hit.ts > TTL_MS) {
-    CACHE.delete(k);
-    return null;
-  }
-  return hit.payload;
-}
-function setCached(symbol, q, payload) {
-  const k = cacheKey(symbol, q);
-  CACHE.set(k, { ts: Date.now(), payload });
-}
+/* ---------------- micro cache ---------------- */
+const TTL_MS = 45 * 1000; // ~1 minute
+const _cache = new Map(); // key -> { ts, payload }
+const getC = (k) => {
+  const rec = _cache.get(k);
+  return rec && (Date.now() - rec.ts) < TTL_MS ? rec.payload : null;
+};
+const setC = (k, payload) => _cache.set(k, { ts: Date.now(), payload });
 
 /* ---------------- helpers ---------------- */
-
-const UA = "Mozilla/5.0 (StrategyApp; Node) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119 Safari/537.36";
+const UA =
+  "Mozilla/5.0 (StrategyApp; Node) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
 function normFromQuote(q, symbol) {
   if (!q) return null;
   const spot = Number(
-    q.regularMarketPrice ??
-    q.postMarketPrice ??
-    q.preMarketPrice ??
-    q.bid ?? q.ask
+    q.regularMarketPrice ?? q.postMarketPrice ?? q.preMarketPrice ?? q.bid ?? q.ask
   );
   const prev = Number(q.regularMarketPreviousClose ?? q.previousClose);
-  const change = Number.isFinite(spot) && Number.isFinite(prev) ? spot - prev : (
-    Number(q.regularMarketChange)
-  );
-  const changePct = Number.isFinite(spot) && Number.isFinite(prev) && prev > 0
-    ? ((spot - prev) / prev) * 100
-    : Number(q.regularMarketChangePercent);
+  const change =
+    Number.isFinite(spot) && Number.isFinite(prev) ? spot - prev : Number(q.regularMarketChange);
+  const changePct =
+    Number.isFinite(spot) && Number.isFinite(prev) && prev > 0
+      ? ((spot - prev) / prev) * 100
+      : Number(q.regularMarketChangePercent);
 
   const marketState = (q.marketState || "").toUpperCase();
-  const session =
-    marketState === "PRE"  ? "Pre-market" :
-    marketState === "POST" ? "After hours" : "At close";
+  const session = marketState === "PRE" ? "Pre-market" : marketState === "POST" ? "After hours" : "At close";
 
   return {
     symbol: q.symbol || symbol,
@@ -72,7 +52,8 @@ function normFromChart(meta, symbol) {
   const spot = Number(meta.regularMarketPrice ?? meta.chartPreviousClose ?? meta.previousClose);
   const prev = Number(meta.chartPreviousClose ?? meta.previousClose);
   const change = Number.isFinite(spot) && Number.isFinite(prev) ? spot - prev : null;
-  const changePct = Number.isFinite(spot) && Number.isFinite(prev) && prev > 0 ? ((spot - prev) / prev) * 100 : null;
+  const changePct =
+    Number.isFinite(spot) && Number.isFinite(prev) && prev > 0 ? ((spot - prev) / prev) * 100 : null;
   return {
     symbol: meta.symbol || symbol,
     name: meta.longName || meta.shortName || symbol,
@@ -80,7 +61,8 @@ function normFromChart(meta, symbol) {
     currency: meta.currency || "USD",
     spot: Number.isFinite(spot) ? spot : null,
     prevClose: Number.isFinite(prev) ? prev : null,
-    change, changePct,
+    change,
+    changePct,
     marketSession: "At close",
     logoUrl: null,
   };
@@ -88,7 +70,7 @@ function normFromChart(meta, symbol) {
 
 /* Yahoo: try multiple endpoints before falling back */
 async function yahoo(symbol) {
-  // 1) quote query2
+  // 1) query2
   {
     const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
     const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store" });
@@ -99,7 +81,7 @@ async function yahoo(symbol) {
       if (n?.spot != null) return n;
     }
   }
-  // 2) quote query1 (alt CDN)
+  // 2) query1
   {
     const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
     const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store" });
@@ -150,44 +132,77 @@ async function stooq(symbol) {
   };
 }
 
+function normTarget(s) {
+  if (!s) return null;
+  const k = String(s).trim().toUpperCase();
+  return k === "USD" || k === "EUR" || k === "GBP" ? k : null;
+}
+
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
-  const qParam = (searchParams.get("q") || "").trim().toUpperCase();  // optional
-  const noCache = searchParams.get("nocache") === "1";
+  const target = normTarget(searchParams.get("target")); // optional: USD|EUR|GBP
+  const nocache = searchParams.get("nocache") === "1";
+  if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
 
-  if (!symbol) {
-    return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
+  const cacheKey = `${symbol}|${target || "-"}`;
+  if (!nocache) {
+    const hit = getC(cacheKey);
+    if (hit) return NextResponse.json(hit, { headers: { "Cache-Control": "no-store" } });
   }
 
-  // Serve from cache (unless bypassed)
-  if (!noCache) {
-    const cached = getCached(symbol, qParam);
-    if (cached) {
-      return NextResponse.json(cached, {
-        headers: { "Cache-Control": "no-store", "X-Company-Cache": "HIT" }
-      });
-    }
+  // Base data (original currency)
+  let base = null;
+  try {
+    base = await yahoo(symbol);
+  } catch {}
+  if (!base) {
+    try {
+      base = await stooq(symbol);
+    } catch {}
   }
-
-  // Build fresh payload
-  let data = null;
-  try { data = await yahoo(symbol); } catch {}
-  if (!data) {
-    try { data = await stooq(symbol); } catch {}
-  }
-  if (!data) {
-    data = {
-      symbol, name: symbol, exchange: "", currency: "USD",
-      spot: null, prevClose: null, change: null, changePct: null,
-      marketSession: "At close", logoUrl: null,
+  if (!base) {
+    base = {
+      symbol,
+      name: symbol,
+      exchange: "",
+      currency: "USD",
+      spot: null,
+      prevClose: null,
+      change: null,
+      changePct: null,
+      marketSession: "At close",
+      logoUrl: null,
     };
   }
 
-  // Write to cache and return
-  setCached(symbol, qParam, data);
+  // Compose payload (augment with FX if needed)
+  let payload = {
+    ...base,
+    sourceCurrency: base.currency,
+    displayCurrency: base.currency,
+    displaySpot: base.spot,
+  };
 
-  return NextResponse.json(data, {
-    headers: { "Cache-Control": "no-store", "X-Company-Cache": "MISS" }
-  });
+  if (target && target !== base.currency) {
+    try {
+      const fx = await fxRate(base.currency, target); // { rate, source, ts }
+      const spotT = Number.isFinite(base.spot) ? base.spot * fx.rate : null;
+      const prevT = Number.isFinite(base.prevClose) ? base.prevClose * fx.rate : null;
+
+      payload = {
+        ...payload,
+        fx: { base: base.currency, target, rate: fx.rate, source: fx.source, ts: fx.ts },
+        prevCloseTarget: prevT,
+        spotTarget: spotT,
+        displayCurrency: target,
+        displaySpot: spotT,
+      };
+    } catch {
+      // If FX fails, keep original currency without throwing
+    }
+  }
+
+  setC(cacheKey, payload);
+  return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
 }
