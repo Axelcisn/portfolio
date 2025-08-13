@@ -32,7 +32,9 @@ function normFromQuote(q, symbol) {
       : Number(q.regularMarketChangePercent);
 
   const marketState = (q.marketState || "").toUpperCase();
-  const session = marketState === "PRE" ? "Pre-market" : marketState === "POST" ? "After hours" : "At close";
+  const session =
+    marketState === "PRE" ? "Pre-market" :
+    marketState === "POST" ? "After hours" : "At close";
 
   return {
     symbol: q.symbol || symbol,
@@ -47,6 +49,7 @@ function normFromQuote(q, symbol) {
     logoUrl: null,
   };
 }
+
 function normFromChart(meta, symbol) {
   if (!meta) return null;
   const spot = Number(meta.regularMarketPrice ?? meta.chartPreviousClose ?? meta.previousClose);
@@ -176,9 +179,10 @@ export async function GET(req) {
     };
   }
 
-  // Compose payload (augment with FX if needed)
+  // Compose payload (augment with FX if needed) + canonical timestamp
   let payload = {
     ...base,
+    ts: Date.now(),                   // <— canonical "Last updated" timestamp
     sourceCurrency: base.currency,
     displayCurrency: base.currency,
     displaySpot: base.spot,
@@ -203,6 +207,6 @@ export async function GET(req) {
     }
   }
 
-  setC(cacheKey, payload);
+  if (!nocache) setC(cacheKey, payload);
   return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
 }
