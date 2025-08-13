@@ -88,12 +88,14 @@ export async function GET(req) {
     const calls = Array.isArray(node.calls) ? node.calls : [];
     const puts  = Array.isArray(node.puts)  ? node.puts  : [];
 
+    // 🔵 Only change: include `volume`
     const mapOpt = (o) => ({
       strike: num(o?.strike),
       bid:    num(o?.bid),
       ask:    num(o?.ask),
       price:  num(o?.lastPrice ?? o?.last ?? o?.regularMarketPrice),
       ivPct:  num(o?.impliedVolatility) != null ? num(o.impliedVolatility) * 100 : null,
+      volume: num(o?.volume), // ← NEW
     });
 
     const expiryUnix = num(node?.expiration);
