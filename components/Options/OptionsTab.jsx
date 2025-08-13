@@ -8,11 +8,13 @@ import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton"; // keep
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  // Provider + grouping
-  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
+  const isClient = typeof window !== "undefined";
 
-  // ---- Chain settings (persisted) ----
+  // Provider + grouping
+  const [provider, setProvider] = useState("api");     // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");    // 'expiry' | 'strike'
+
+  // ---- Chain settings ----
   const SETTINGS_DEFAULT = useMemo(
     () => ({
       showBy: "20",          // "10" | "20" | "all" | "custom"
@@ -26,8 +28,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
   // Restore settings from localStorage
   useEffect(() => {
+    if (!isClient) return;
     try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem("chainSettings.v1") : null;
+      const raw = localStorage.getItem("chainSettings.v1");
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
@@ -37,21 +40,24 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           cols: { ...(prev.cols || {}), ...((parsed && parsed.cols) || {}) },
         }));
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isClient]);
 
   // Persist settings on change
   useEffect(() => {
+    if (!isClient) return;
     try {
-      if (typeof window !== "undefined") {
-        localStorage.setItem("chainSettings.v1", JSON.stringify(chainSettings));
-      }
-    } catch { /* ignore */ }
-  }, [chainSettings]);
+      localStorage.setItem("chainSettings.v1", JSON.stringify(chainSettings));
+    } catch {
+      /* ignore */
+    }
+  }, [chainSettings, isClient]);
 
-  // Toggle sort handler (passed to ChainTable)
-  const handleToggleSort = () =>
+  // Toggle sort direction (↑/↓) — passed to ChainTable
+  const onToggleSort = () =>
     setChainSettings((s) => ({ ...s, sort: s.sort === "asc" ? "desc" : "asc" }));
 
   // Settings popover
@@ -59,12 +65,22 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => { if (isClient) setMounted(true); }, [isClient]);
 
   // Keep popover aligned to the gear
   useEffect(() => {
-    if (!settingsOpen || !gearRef.current) return;
-    const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
+    if (!isClient || !settingsOpen) return;
+
+    const update = () => {
+      const el = gearRef.current;
+      if (!el || !el.getBoundingClientRect) return;
+      try {
+        setAnchorRect(el.getBoundingClientRect());
+      } catch {
+        /* ignore */
+      }
+    };
+
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
@@ -72,18 +88,21 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [settingsOpen]);
+  }, [settingsOpen, isClient]);
 
   // Close on outside click / ESC
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!isClient || !settingsOpen) return;
+
     const onDocDown = (e) => {
-      const pop = document.getElementById("chain-settings-popover");
-      if (pop?.contains(e.target)) return;
-      if (gearRef.current?.contains(e.target)) return;
+      let pop = null;
+      try { pop = document.getElementById("chain-settings-popover"); } catch { /* ignore */ }
+      if (pop?.contains?.(e.target)) return;
+      if (gearRef.current?.contains?.(e.target)) return;
       setSettingsOpen(false);
     };
     const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
+
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -92,7 +111,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       document.removeEventListener("touchstart", onDocDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [settingsOpen]);
+  }, [settingsOpen, isClient]);
 
   /* -------------------- Expiries from API -------------------- */
 
@@ -179,10 +198,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     return out;
   }, [apiExpiries, fallbackGroups]);
 
-  // Selected expiry (month label + day + iso)
+  // Selected expiry
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16, iso: null });
 
-  // If selection is invalid for current groups, pick the first available
   useEffect(() => {
     if (!groups?.length) return;
     const exists = groups.some((g) => g.m === sel.m && g.items.some((it) => it.day === sel.d));
@@ -191,7 +209,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       const it0 = g0.items[0];
       setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
     } else if (!sel.iso) {
-      // enrich current selection with iso if we now have it
       const g = groups.find((g) => g.m === sel.m);
       const it = g?.items.find((it) => it.day === sel.d);
       if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
@@ -201,8 +218,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
   /* ------------------------- Settings portal ------------------------ */
 
+  const canPortal = mounted && isClient && settingsOpen && anchorRect && typeof document !== "undefined";
+
   const settingsPortal =
-    mounted && settingsOpen && anchorRect
+    canPortal
       ? createPortal(
           <div
             id="chain-settings-popover"
@@ -210,9 +229,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             style={{
               position: "fixed",
               zIndex: 1000,
-              top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
+              top: Math.min((anchorRect?.bottom ?? 0) + 8, window.innerHeight - 16),
               left: Math.min(
-                Math.max(12, anchorRect.right - 360),
+                Math.max(12, (anchorRect?.right ?? 0) - 360),
                 window.innerWidth - 360 - 12
               ),
               width: 360,
@@ -324,9 +343,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         currency={currency}
         provider={provider}
         groupBy={groupBy}
-        expiry={sel}                 // includes iso when available
-        settings={chainSettings}     // settings → table
-        onToggleSort={handleToggleSort} // ← NEW
+        expiry={sel}
+        settings={chainSettings}
+        onToggleSort={onToggleSort}
       />
 
       {/* Settings portal */}
@@ -341,7 +360,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
 
-        /* ---- Buttons (theme-aware) ---- */
+        /* ---- Buttons ---- */
         .pill{
           height:36px; padding:0 14px; border-radius:12px;
           border:1px solid var(--border); background:var(--card);
@@ -369,7 +388,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           color:var(--text);
         }
 
-        /* ---- Expiry strip (theme-aware) ---- */
+        /* ---- Expiry strip ---- */
         .expiry-wrap{
           margin: 14px 0 18px;
           padding: 2px 0 10px;
@@ -419,29 +438,3 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     </section>
   );
 }
-
-/* -------------------- Volume-based expiries (non-breaking) --------------------
-   This runs after the basic expiries loader and *overrides* the list only if
-   the volume endpoint succeeds with a non-empty result. No other changes. */
-import { useEffect as _useEffectVol } from "react"; // alias to avoid shadowing
-
-_useEffectVol(() => {
-  let cancelled = false;
-  (async () => {
-    if (!symbol) return;
-    try {
-      const res = await fetch(
-        `/api/expiries/volume?symbol=${encodeURIComponent(symbol)}`,
-        { cache: "no-store" }
-      );
-      const j = await res.json().catch(() => null);
-      if (!cancelled && j?.ok && Array.isArray(j.expiries) && j.expiries.length) {
-        // Override the current expiries with volume-filtered ones
-        setApiExpiries(j.expiries);
-      }
-    } catch {
-      // silent fallback — keep whatever the base endpoint provided
-    }
-  })();
-  return () => { cancelled = true; };
-}, [symbol]);
