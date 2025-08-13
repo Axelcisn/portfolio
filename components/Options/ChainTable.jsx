@@ -212,8 +212,8 @@ export default function ChainTable({
                 <div className="c cell val">{fmt(r?.call?.bid)}</div>
 
                 {/* Center */}
-                <div className="mid cell val">{fmt(r.strike)}</div>
-                <div className="mid cell val">{fmt(r.ivPct, 2)}</div>
+                <div className="mid cell val midtone">{fmt(r.strike)}</div>
+                <div className="mid cell val midtone">{fmt(r.ivPct, 2)}</div>
 
                 {/* Puts (right) */}
                 <div className="p cell val">{fmt(r?.put?.bid)}</div>
@@ -227,11 +227,10 @@ export default function ChainTable({
 
       <style jsx>{`
         .wrap{
-          /* refined header color used by “Strike” & “IV, %” */
-          --midHead: color-mix(in srgb, var(--text, #0f172a) 62%, var(--surface, #f7f9fc));
-          /* hover and spot-highlight tones */
+          /* dark grey for Strike & IV columns */
+          --midColText: #6b7280; /* professional dark grey */
           --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
-          --spotOrange: #f59e0b; /* warm, premium orange */
+          --spotOrange: #f59e0b;
           margin-top:10px;
         }
 
@@ -264,23 +263,25 @@ export default function ChainTable({
           font-weight:700; font-size:13.5px;
           color: var(--text, #2b3442);
         }
+
+        /* Make Strike & IV headers dark grey */
         .head-row .mid.cell{
-          color: var(--midHead);
+          color: var(--midColText);
           font-weight:800;
           letter-spacing:.01em;
         }
 
         /* Center-align calls/puts columns */
         .cell{ height:26px; display:flex; align-items:center; }
-        .c{ justify-content:center; text-align:center; }  /* Calls side */
-        .p{ justify-content:center; text-align:center; }  /* Puts side */
+        .c{ justify-content:center; text-align:center; }
+        .p{ justify-content:center; text-align:center; }
         .mid{ justify-content:center; text-align:center; }
 
-        /* Arrow tone — accent blended with header color */
+        /* Arrow inherits the header color */
         .arrow{
           margin-right:6px;
           font-weight:900;
-          color: color-mix(in srgb, var(--accent, #3b82f6) 70%, var(--midHead) 30%);
+          color: currentColor;
         }
 
         /* Status card */
@@ -302,12 +303,15 @@ export default function ChainTable({
           transition: background-color .18s ease;
         }
         .body .row:last-child{ border-bottom:0; }
-        .body .row:hover{
-          background-color: var(--rowHover);
-        }
+        .body .row:hover{ background-color: var(--rowHover); }
         .body .row.is-spot{
           background-color: color-mix(in srgb, var(--spotOrange) 20%, transparent);
           border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
+        }
+
+        /* Make Strike & IV values dark grey */
+        .body .row .midtone{
+          color: var(--midColText);
         }
 
         .val{
