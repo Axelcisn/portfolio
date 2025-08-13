@@ -1,6 +1,5 @@
 // app/api/market/stats/route.js
-// Runtime: Node.js (Vercel). Compute market stats with clean meta and ERP.
-// ─────────────────────────────────────────────────────────────
+// Runtime: Node.js (Vercel). Market stats API with ERP and clean meta.
 import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -8,48 +7,57 @@ export const dynamic = 'force-dynamic';
 
 // ─────────────────────────────────────────────────────────────
 // Formulas (LaTeX, for reference)
-// • Log return (daily): r_d = \ln\!\left(\frac{P_t}{P_{t-1}}\right)
-// • Simple return (daily): R_d = \frac{P_t}{P_{t-1}} - 1
-// • Annualization (daily interval):
-//   \mu_{\text{geom}} = \bar{r}_d \cdot 252
-//   \mu_{\text{arith}} = \overline{R_d} \cdot 252
-//   \sigma = s_{r_d} \cdot \sqrt{252}
+// • Log return (interval Δ): r_\Delta = \ln\!\left(\frac{P_t}{P_{t-1}}\right)
+// • Simple return (interval Δ): R_\Delta = \frac{P_t}{P_{t-1}} - 1
+// • Annualization (daily intervals):
+//   \mu_{\text{geom}} = \bar{r}_\Delta \cdot 252
+//   \mu_{\text{arith}} = \overline{R_\Delta} \cdot 252
+//   \sigma = s_{r_\Delta} \cdot \sqrt{252}
 // • Equity risk premium: \mathrm{ERP} = E(R_m) - r_f
 // • Compounding conversions:
 //   r_{\text{cont}} = \ln(1 + r_{\text{annual}})
 //   r_{\text{annual}} = e^{r_{\text{cont}}} - 1
-// All rates are decimals per year; time basis explicitly returned in meta.
+// All rates are decimals per year; time basis is returned in meta.
 // ─────────────────────────────────────────────────────────────
 
 const TTL_MS = 60 * 1000;
 const cache = new Map();
 
-// Yahoo index normalization (minimal but practical)
+// Normalize common aliases to Yahoo symbols
 function normalizeIndex(ix) {
   const q = (ix || '^GSPC').toUpperCase().trim();
   const map = {
-    SPX: '^GSPC',
+    'SPX': '^GSPC',
     '^SPX': '^GSPC',
-    S&P500: '^GSPC',
-    GSPC: '^GSPC',
-    NDX: '^NDX',
+    'S&P500': '^GSPC',
+    'GSPC': '^GSPC',
+
+    'NDX': '^NDX',
     '^NDX': '^NDX',
-    DJI: '^DJI',
+
+    'DJI': '^DJI',
     '^DJI': '^DJI',
-    RUT: '^RUT',
+
+    'RUT': '^RUT',
     '^RUT': '^RUT',
-    STOXX: '^STOXX',
+
+    'STOXX': '^STOXX',
     '^STOXX': '^STOXX',
-    EUROSTOXX50: '^SX5E',
-    SX5E: '^SX5E',
+
+    'EUROSTOXX50': '^SX5E',
+    'SX5E': '^SX5E',
     '^SX5E': '^SX5E',
-    FTSE: '^FTSE',
+
+    'FTSE': '^FTSE',
     '^FTSE': '^FTSE',
-    N225: '^N225',
+
+    'N225': '^N225',
     '^N225': '^N225',
-    SMI: '^SSMI',
+
+    'SMI': '^SSMI',
     '^SSMI': '^SSMI',
-    TSX: '^GSPTSE',
+
+    'TSX': '^GSPTSE',
     '^GSPTSE': '^GSPTSE',
   };
   return map[q] || (q.startsWith('^') ? q : `^${q}`);
@@ -74,47 +82,52 @@ function currencyByIndex(index) {
 
 // Basis transforms
 function toCont(rAnnual) { return Math.log(1 + Number(rAnnual)); }
-function toAnnual(rCont) { return Math.exp(Number(rCont)) - 1; }
+function toAnnual(rCont) { return Math.exp(Number(rCont)) - 1; } // reserved for completeness
 
 // Conservative fallbacks for r_f (annual, decimal)
 const RF_FALLBACK = { USD: 0.03, EUR: 0.02, GBP: 0.03, JPY: 0.001, CHF: 0.005, CAD: 0.03 };
 
-// Pull last close for a Yahoo symbol and range
-async function fetchYahooLast(symbol, range = '1mo', interval = '1d') {
+// Yahoo chart fetch
+async function fetchYahooChart(symbol, range = '1mo', interval = '1d') {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Yahoo HTTP ${res.status}`);
   const json = await res.json();
   const result = json?.chart?.result?.[0];
-  const t = result?.timestamp || [];
-  const c = result?.indicators?.quote?.[0]?.close || [];
-  return { timestamps: t, closes: c };
+  const timestamps = result?.timestamp || [];
+  const closes = result?.indicators?.quote?.[0]?.close || [];
+  return { timestamps, closes };
 }
 
-// Fetch a price series for stats
+// Price series (timestamp ms, price)
 async function fetchSeries(symbol, range, interval) {
-  const { timestamps, closes } = await fetchYahooLast(symbol, range, interval);
-  // Filter out nulls, keep aligned arrays
-  const arr = [];
+  const { timestamps, closes } = await fetchYahooChart(symbol, range, interval);
+  const out = [];
   for (let i = 0; i < closes.length; i++) {
-    const v = closes[i];
-    const ts = timestamps?.[i];
-    if (typeof v === 'number' && v > 0 && typeof ts === 'number') {
-      arr.push({ t: ts * 1000, p: v });
+    const p = closes[i];
+    const t = timestamps?.[i];
+    if (typeof p === 'number' && p > 0 && typeof t === 'number') {
+      out.push({ t: t * 1000, p });
     }
   }
-  return arr;
+  return out;
 }
 
-// Compute stats from price series
+// Stats from series
 function statsFromSeries(series, intervalHint = '1d') {
+  const ppYear = intervalHint === '1mo' ? 12 : 252;
   if (!series || series.length < 3) {
     return {
-      muGeom: 0, muArith: 0, sigmaAnn: 0, n: 0,
-      startDate: null, endDate: null, ppYear: intervalHint === '1mo' ? 12 : 252,
+      muGeom: 0,
+      muArith: 0,
+      sigmaAnn: 0,
+      n: 0,
+      startDate: null,
+      endDate: null,
+      ppYear,
     };
   }
-  const ppYear = intervalHint === '1mo' ? 12 : 252;
+
   const logR = [];
   const simR = [];
   for (let i = 1; i < series.length; i++) {
@@ -130,20 +143,25 @@ function statsFromSeries(series, intervalHint = '1d') {
   const n = logR.length;
   if (n === 0) {
     return {
-      muGeom: 0, muArith: 0, sigmaAnn: 0, n: 0,
+      muGeom: 0,
+      muArith: 0,
+      sigmaAnn: 0,
+      n: 0,
       startDate: new Date(series[0].t).toISOString(),
       endDate: new Date(series[series.length - 1].t).toISOString(),
       ppYear,
     };
   }
+
   const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
   const stdev = (a) => {
     const m = mean(a);
     const v = a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1 || 1);
     return Math.sqrt(Math.max(v, 0));
   };
+
   const muGeom = mean(logR) * ppYear;      // μ_geom = \bar{r}_\Delta · periodsPerYear
-  const muArith = mean(simpClip(sinify(simR))) * ppYear; // robust mean for simple returns
+  const muArith = mean(simR) * ppYear;     // μ_arith = \overline{R_\Delta} · periodsPerYear
   const sigmaAnn = stdev(logR) * Math.sqrt(ppYear); // σ = s_{log} · √periodsPerYear
 
   return {
@@ -157,32 +175,23 @@ function statsFromSeries(series, intervalHint = '1d') {
   };
 }
 
-// Slightly robustify simple returns mean (trim tiny extremes)
-function sinify(a){ return a; } // placeholder hook (kept simple/transparent)
-function simpClip(a){
-  if (a.length < 10) return a;
-  const b = [...a].sort((x,y)=>x-y);
-  const k = Math.floor(a.length * 0.01); // 1% trim on each tail
-  return b.slice(k, b.length - k);
-}
-
-// Risk-free (annual) via quick provider: USD from ^IRX, others fallback for now
+// Risk-free (annual) via USD ^IRX, others fallback for now
 async function fetchRiskFreeAnnual(ccy) {
   if (ccy === 'USD') {
-    const { closes, timestamps } = await fetchYahooLast('%5EIRX', '1mo', '1d');
+    const { timestamps, closes } = await fetchYahooChart('^IRX', '1mo', '1d');
     let i = closes.length - 1;
     while (i >= 0 && (closes[i] == null || typeof closes[i] !== 'number')) i--;
     if (i >= 0) {
       const pct = closes[i];
       const rAnnual = pct / 100;
-      const asOf = new Date((timestamps?.[i] || Date.now()/1000) * 1000).toISOString();
+      const asOf = new Date((timestamps?.[i] || Date.now() / 1000) * 1000).toISOString();
       return { rAnnual, asOf, source: 'Yahoo ^IRX (13W T-Bill)' };
     }
   }
   return { rAnnual: RF_FALLBACK[ccy] ?? RF_FALLBACK.USD, asOf: new Date().toISOString(), source: 'fallback' };
 }
 
-// Map lookback param to Yahoo range/interval
+// Map lookback → Yahoo range/interval
 function rangeParams(lookback) {
   const lb = (lookback || '5y').toLowerCase();
   switch (lb) {
@@ -193,7 +202,7 @@ function rangeParams(lookback) {
     case '5y': return { range: '5y', interval: '1d', window: '5y' };
     case 'ytd': return { range: 'ytd', interval: '1d', window: 'ytd' };
     case '10y': return { range: '10y', interval: '1d', window: '10y' };
-    default: return { range: '5y', interval: '1d', window: '5y' };
+    default:   return { range: '5y', interval: '1d', window: '5y' };
   }
 }
 
@@ -230,7 +239,7 @@ export async function GET(req) {
     const rf = await fetchRiskFreeAnnual(ccy);
     const rOut = basis === 'cont' ? toCont(rf.rAnnual) : rf.rAnnual;
 
-    // ERP = E(R_m) - r_f (use geometric mean by default)
+    // ERP = E(R_m) - r_f  (use geometric mean by default)
     const erp = s.muGeom - rf.rAnnual;
 
     const payload = {
