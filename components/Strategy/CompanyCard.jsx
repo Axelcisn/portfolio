@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* Exchange pretty labels */
 const EX_NAMES = {
@@ -110,29 +111,16 @@ export default function CompanyCard({
     [picked]
   );
 
-  /* -------- FX target (persisted) -------- */
-  const [target, setTarget] = useState("USD");            // USD | EUR | GBP (app-wide preference)
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("pref.fxTarget");
-      if (saved === "USD" || saved === "EUR" || saved === "GBP") setTarget(saved);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem("pref.fxTarget", target); } catch {}
-  }, [target]);
-
-  /* -------- basic facts (display) -------- */
-  const [currency, setCurrency] = useState(value?.currency || "USD"); // displayCurrency
-  const [spot, setSpot] = useState(value?.spot || null);              // displaySpot
+  /* -------- basic facts -------- */
+  const [currency, setCurrency] = useState(value?.currency || "");
+  const [spot, setSpot] = useState(value?.spot || null);
   const [exchangeLabel, setExchangeLabel] = useState("");
-
-  // FX metadata from last company call (to convert chart ticks smoothly)
-  const [sourceCurrency, setSourceCurrency] = useState(null); // original quote ccy
-  const fxRateRef = useRef(null);                             // last known rate number (base->target)
 
   /* -------- horizon (days) -------- */
   const [days, setDays] = useState(30);
+
+  /* -------- global time basis (365/252) -------- */
+  const { basis, setBasis } = useTimeBasis(); // persisted, app-wide
 
   /* -------- volatility UI state -------- */
   const [volSrc, setVolSrc] = useState("iv");        // 'iv' | 'hist' | 'manual'
@@ -171,21 +159,33 @@ export default function CompanyCard({
   }
 
   async function fetchCompany(sym) {
-    const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}&target=${encodeURIComponent(target)}`, { cache: "no-store" });
+    const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
 
-    // display currency/spot from API (already converted if target != source)
-    const displayCcy = j.displayCurrency || j.currency || "USD";
-    const displaySpot = Number.isFinite(j.displaySpot) ? j.displaySpot : pickSpot(j);
+    const ccy =
+      j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
+    if (ccy) setCurrency(ccy);
 
-    setCurrency(displayCcy);
-    setSpot(Number.isFinite(displaySpot) ? displaySpot : null);
+    let px = pickSpot(j);
+    if (!Number.isFinite(px) || px <= 0) {
+      try {
+        const r2 = await fetch(`/api/company/autoFields?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+        const j2 = await r2.json();
+        if (r2.ok && j2?.ok !== false) {
+          const alt = pickSpot(j2);
+          if (Number.isFinite(alt) && alt > 0) px = alt;
+          const c2 = j2.currency || j2.ccy || j2?.quote?.currency;
+          if (c2 && !ccy) setCurrency(c2);
+        }
+      } catch {}
+    }
+    if (!Number.isFinite(px) || px <= 0) {
+      const c = await fetchSpotFromChart(sym);
+      if (Number.isFinite(c) && c > 0) px = c;
+    }
 
-    // remember FX context for chart ticks
-    setSourceCurrency(j.sourceCurrency || j.currency || null);
-    fxRateRef.current = j?.fx?.rate ?? null;
-
+    setSpot(Number.isFinite(px) ? px : null);
     setExchangeLabel(
       (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) ||
       j.exchange || j.exchangeName || ""
@@ -195,8 +195,8 @@ export default function CompanyCard({
       symbol: j.symbol || sym,
       name: j.name || j.longName || j.companyName || picked?.name || "",
       exchange: picked?.exchange || j.exchange || null,
-      currency: displayCcy,
-      spot: Number.isFinite(displaySpot) ? displaySpot : null,
+      currency: ccy || j.currency || "",
+      spot: Number.isFinite(px) ? px : null,
       high52: j.high52 ?? j.fiftyTwoWeekHigh ?? null,
       low52: j.low52 ?? j.fiftyTwoWeekLow ?? null,
       beta: j.beta ?? null,
@@ -297,7 +297,7 @@ export default function CompanyCard({
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc, days, target]);
+  }, [volSrc, days]);
 
   /* If a value was passed initially, confirm it once on mount */
   useEffect(() => {
@@ -324,8 +324,7 @@ export default function CompanyCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
 
-  /* Lightweight live price poll (15s) using chart endpoint only.
-     Convert using last known FX rate if target != base. */
+  /* Lightweight live price poll (15s) using chart endpoint only */
   useEffect(() => {
     if (!selSymbol) return;
     let stop = false;
@@ -333,17 +332,13 @@ export default function CompanyCard({
     const tick = async () => {
       const px = await fetchSpotFromChart(selSymbol);
       if (!stop && Number.isFinite(px)) {
-        let pxDisp = px;
-        if (sourceCurrency && target && target !== sourceCurrency && Number.isFinite(fxRateRef.current)) {
-          pxDisp = px * fxRateRef.current;
-        }
-        setSpot(pxDisp);
+        setSpot(px);
         onConfirm?.({
           symbol: selSymbol,
           name: picked?.name || value?.name || "",
           exchange: picked?.exchange || null,
           currency,
-          spot: pxDisp,
+          spot: px,
           high52: value?.high52 ?? null,
           low52: value?.low52 ?? null,
           beta: value?.beta ?? null,
@@ -354,12 +349,10 @@ export default function CompanyCard({
     tick();
     return () => { stop = true; clearTimeout(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selSymbol, target, sourceCurrency, currency]);
+  }, [selSymbol]);
 
   return (
     <section className="company-block">
-      {/* (Title removed by design) */}
-
       {/* Selected line */}
       {selSymbol && (
         <div className="company-selected small">
@@ -372,52 +365,30 @@ export default function CompanyCard({
 
       {/* Inline facts/controls */}
       <div className="company-fields">
-        {/* Currency (now selectable; same footprint) */}
+        {/* Currency */}
         <div className="fg">
           <label>Currency</label>
-          <select
-            className="field"
-            value={target}
-            onChange={(e) => {
-              const nxt = e.target.value;
-              if (nxt === "USD" || nxt === "EUR" || nxt === "GBP") {
-                setTarget(nxt);
-                if (selSymbol) confirmSymbol(selSymbol);
-              }
-            }}
-          >
-            <option value="USD">USD</option>
-            <option value="EUR">EUR</option>
-            <option value="GBP">GBP</option>
-          </select>
-          {(sourceCurrency && target && target !== sourceCurrency && Number.isFinite(fxRateRef.current)) ? (
-            <div className="small muted" style={{ marginTop: 6 }}>
-              {sourceCurrency} → {target} @ {fxRateRef.current.toFixed(4)}
-            </div>
-          ) : null}
+          <input className="field" value={currency || ""} readOnly />
         </div>
 
-        {/* Spot S (display currency) */}
+        {/* Spot S */}
         <div className="fg">
           <label>S</label>
           <input className="field" value={fmtMoney(spot, currency)} readOnly />
         </div>
 
-        {/* Time (days) */}
+        {/* ---- Time (basis only) ---- */}
         <div className="fg">
           <label>Time</label>
-          <input
+          <select
             className="field"
-            type="number"
-            min={1}
-            max={365}
-            value={days}
-            onChange={(e) => {
-              const v = clamp(e.target.value, 1, 365);
-              setDays(v);
-              onHorizonChange?.(v);
-            }}
-          />
+            aria-label="Time basis"
+            value={basis}
+            onChange={(e) => setBasis(Number(e.target.value))}
+          >
+            <option value={365}>365</option>
+            <option value={252}>252</option>
+          </select>
         </div>
 
         {/* Volatility */}
@@ -466,8 +437,11 @@ export default function CompanyCard({
         </div>
       </div>
 
-      {/* Local minimal styles for the spinner only (no layout changes) */}
+      {/* Local minimal styles (keeps Apple-style) */}
       <style jsx>{`
+        .time-wrap{ display:flex; gap:10px; align-items:center; }
+        .field.basis{ width:96px; text-align:center; }
+
         .vol-wrap{ position: relative; }
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
