@@ -9,7 +9,8 @@ export default function ChainTable({
   provider,
   groupBy,
   expiry,
-  settings, // row count / sort controls from the popover
+  settings,        // row count / sort controls from the popover
+  onToggleSort,    // ← NEW: header click toggles sort
 }) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
@@ -156,6 +157,17 @@ export default function ChainTable({
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
 
+  const handleSortClick = (e) => {
+    e.preventDefault();
+    onToggleSort?.();
+  };
+  const handleSortKey = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggleSort?.();
+    }
+  };
+
   return (
     <div className="wrap" aria-live="polite">
       <div className="heads">
@@ -170,9 +182,19 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">Ask</div>
         <div className="c cell" role="columnheader">Bid</div>
 
-        <div className="mid cell strike-hdr" role="columnheader" aria-sort={ariaSort}>
+        {/* Interactive Strike header */}
+        <div
+          className="mid cell strike-hdr"
+          role="columnheader"
+          aria-sort={ariaSort}
+          tabIndex={0}
+          onClick={handleSortClick}
+          onKeyDown={handleSortKey}
+          title="Toggle strike sort"
+        >
           <span className="arrow" aria-hidden="true">{arrowChar}</span> Strike
         </div>
+
         <div className="mid cell iv-hdr" role="columnheader">IV, %</div>
 
         <div className="p cell" role="columnheader">Bid</div>
@@ -266,8 +288,20 @@ export default function ChainTable({
         }
 
         /* Color the two center headers */
-        .head-row .strike-hdr{ color: var(--strikeCol); font-weight:800; letter-spacing:.01em; }
-        .head-row .iv-hdr{     color: var(--ivCol);     font-weight:800; letter-spacing:.01em; }
+        .head-row .strike-hdr{
+          color: var(--strikeCol);
+          font-weight:800; letter-spacing:.01em;
+          cursor: pointer; user-select: none;
+          border-radius: 8px;
+        }
+        .head-row .strike-hdr:focus{
+          outline: 2px solid color-mix(in srgb, var(--strikeCol) 60%, transparent);
+          outline-offset: 2px;
+        }
+        .head-row .iv-hdr{
+          color: var(--ivCol);
+          font-weight:800; letter-spacing:.01em;
+        }
 
         /* Center-align columns */
         .cell{ height:26px; display:flex; align-items:center; }
