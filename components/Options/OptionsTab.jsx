@@ -5,19 +5,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
-import YahooHealthButton from "./YahooHealthButton"; // stays
+import YahooHealthButton from "./YahooHealthButton"; // keep
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
   const [provider, setProvider] = useState("api"); // 'api' | 'upload'
   const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
-  // NEW: chain table settings (controlled)
+  // Chain table settings (NEW — wired to popover & table)
   const [chainSettings, setChainSettings] = useState({
-    showBy: "20",        // "10" | "20" | "all" | "custom"
+    showBy: "20",       // "10" | "20" | "all" | "custom"
     customRows: 25,
-    sort: "asc",         // "asc" | "desc"
-    cols: { bid: true, ask: true, price: true }, // placeholder for future columns
+    sort: "asc",        // "asc" | "desc"
+    cols: { bid: true, ask: true, price: true },
   });
 
   // Settings popover
@@ -49,9 +49,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (gearRef.current?.contains(e.target)) return;
       setSettingsOpen(false);
     };
-    const onKey = (e) => {
-      if (e.key === "Escape") setSettingsOpen(false);
-    };
+    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -94,10 +92,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!symbol) {
-        setApiExpiries(null);
-        return;
-      }
+      if (!symbol) { setApiExpiries(null); return; }
       try {
         setLoadingExp(true);
         const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
@@ -110,9 +105,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
     };
     load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [symbol]);
 
   // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
@@ -142,6 +135,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
       g.items.push({ day: d.getDate(), iso });
     }
+    // unique + sort days inside month
     for (const g of out) {
       const seen = new Set();
       g.items = g.items
@@ -163,11 +157,13 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       const it0 = g0.items[0];
       setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
     } else if (!sel.iso) {
+      // enrich current selection with iso if we now have it
       const g = groups.find((g) => g.m === sel.m);
       const it = g?.items.find((it) => it.day === sel.d);
       if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
     }
-  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
 
   /* ------------------------- Settings portal ------------------------ */
 
@@ -181,15 +177,19 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
               position: "fixed",
               zIndex: 1000,
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
+              left: Math.min(
+                Math.max(12, anchorRect.right - 360),
+                window.innerWidth - 360 - 12
+              ),
               width: 360,
             }}
             role="dialog"
             aria-modal="true"
             aria-label="Chain table settings"
           >
+            {/* WIRE SETTINGS → panel controls table */}
             <ChainSettings
-              settings={chainSettings}                 // ← wire settings in
+              settings={chainSettings}
               onChange={setChainSettings}
               onClose={() => setSettingsOpen(false)}
             />
@@ -237,9 +237,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             By strike
           </button>
 
-          {/* Health button — separate from the gear */}
+          {/* Separate health button */}
           <YahooHealthButton />
 
+          {/* Gear opens settings */}
           <button
             ref={gearRef}
             type="button"
@@ -252,7 +253,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l-2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
               />
             </svg>
           </button>
@@ -291,8 +292,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         currency={currency}
         provider={provider}
         groupBy={groupBy}
-        expiry={sel}               // includes sel.iso when available
-        settings={chainSettings}   // ← wire settings down to the table
+        expiry={sel}                 // includes ISO when available
+        settings={chainSettings}     // ← NEW: table reacts to panel
       />
 
       {/* Settings portal */}
