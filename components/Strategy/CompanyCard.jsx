@@ -13,6 +13,12 @@ const EX_NAMES = {
 };
 
 const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
+function fmtMoney(v, ccy = "") {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
+  return sign + n.toFixed(2);
+}
 function parsePctInput(str) {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
@@ -31,7 +37,6 @@ function lastFromArray(arr) {
 /** Try many common shapes to extract a spot/last/close price */
 function pickSpot(obj) {
   if (!obj || typeof obj !== "object") return NaN;
-
   const tryKeys = (o) => {
     if (!o || typeof o !== "object") return NaN;
     const keys = [
@@ -88,6 +93,18 @@ function pickLastClose(j) {
   return Number.isFinite(metaPx) ? metaPx : null;
 }
 
+function fmtLast(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - Number(ts);
+  if (diff < 45_000) return "Just now";
+  try {
+    const d = new Date(Number(ts));
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
 export default function CompanyCard({
   value = null,
   market = null,
@@ -108,6 +125,7 @@ export default function CompanyCard({
   /* -------- basic facts -------- */
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(value?.spot || null);
+  const [lastTs, setLastTs] = useState(null); // canonical "Last updated"
   const [exchangeLabel, setExchangeLabel] = useState("");
 
   /* -------- horizon (days) -------- */
@@ -157,6 +175,9 @@ export default function CompanyCard({
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
 
+    // capture server timestamp if present
+    if (j?.ts) setLastTs(j.ts);
+
     const ccy =
       j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
     if (ccy) setCurrency(ccy);
@@ -177,6 +198,8 @@ export default function CompanyCard({
     if (!Number.isFinite(px) || px <= 0) {
       const c = await fetchSpotFromChart(sym);
       if (Number.isFinite(c) && c > 0) px = c;
+      // chart has no ts → use "now"
+      setLastTs(Date.now());
     }
 
     setSpot(Number.isFinite(px) ? px : null);
@@ -290,7 +313,7 @@ export default function CompanyCard({
     };
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
-    // eslint-disable-next-line react-hooks/exhaustive-comments
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volSrc, days]);
 
   /* If a value was passed initially, confirm it once on mount */
@@ -300,7 +323,7 @@ export default function CompanyCard({
       setPicked({ symbol: sym, name: value.name || "", exchange: value.exchange || "" });
       confirmSymbol(sym);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-comments
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Re-fetch sigma when source or days change (debounced ~350ms) */
@@ -315,7 +338,7 @@ export default function CompanyCard({
       fetchSigma(selSymbol, volSrc, days).catch((e) => setMsg(String(e?.message || e)));
     }, 350);
     return () => clearTimeout(daysTimer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-comments
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
 
   /* Lightweight live price poll (15s) using chart endpoint only */
@@ -327,6 +350,7 @@ export default function CompanyCard({
       const px = await fetchSpotFromChart(selSymbol);
       if (!stop && Number.isFinite(px)) {
         setSpot(px);
+        setLastTs(Date.now()); // chart tick → use "now"
         onConfirm?.({
           symbol: selSymbol,
           name: picked?.name || value?.name || "",
@@ -342,17 +366,26 @@ export default function CompanyCard({
     };
     tick();
     return () => { stop = true; clearTimeout(id); };
-    // eslint-disable-next-line react-hooks/exhaustive-comments
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selSymbol]);
 
   return (
     <section className="company-block">
-      {/* Selected line */}
+      {/* Selected line with single source-of-truth price + last updated */}
       {selSymbol && (
         <div className="company-selected small">
           <span className="muted">Selected:</span> <strong>{selSymbol}</strong>
           {picked?.name ? ` — ${picked.name}` : ""}
           {exchangeLabel ? ` • ${exchangeLabel}` : ""}
+
+          {/* Live spot inline */}
+          {Number.isFinite(spot) && (
+            <>
+              {" • "}
+              <strong>{fmtMoney(spot, currency)}</strong>
+              <span className="muted tiny">{` · Last updated ${fmtLast(lastTs)}`}</span>
+            </>
+          )}
         </div>
       )}
       {msg && <div className="small" style={{ color: "#ef4444" }}>{msg}</div>}
@@ -427,13 +460,7 @@ export default function CompanyCard({
 
       {/* Local minimal styles (keeps Apple-style) */}
       <style jsx>{`
-        .fg { position: relative; } /* ensure child select is a click target */
-        .fg select.field{
-          position: relative;
-          z-index: 2;             /* sit above any sibling overlays */
-          pointer-events: auto;   /* guard against global styles disabling it */
-        }
-
+        .tiny{ font-size: 11.5px; opacity: .75; }
         .vol-wrap{ position: relative; }
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
