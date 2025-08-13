@@ -1,5 +1,7 @@
+// app/layout.jsx
 import "./globals.css";
 import NavBar from "../components/NavBar";
+import { TimeBasisProvider } from "../components/ui/TimeBasisContext";
 
 export const metadata = {
   title: "Portfolio",
@@ -30,10 +32,12 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body>
-        <NavBar />
-        <main className="container">{children}</main>
+        {/* Provide global 365/252 basis to the entire app */}
+        <TimeBasisProvider>
+          <NavBar />
+          <main className="container">{children}</main>
+        </TimeBasisProvider>
       </body>
     </html>
   );
 }
-
