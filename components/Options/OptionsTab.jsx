@@ -124,7 +124,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
 
-  // Manual refresh key for expiries
+  // Manual refresh key for expiries (also re-probes volume)
   const [expRefreshKey, setExpRefreshKey] = useState(0);
   const refreshExpiries = () => setExpRefreshKey((k) => k + 1);
 
@@ -147,11 +147,47 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     return () => { cancelled = true; };
   }, [symbol, expRefreshKey]); // ← include refresh key
 
-  // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
+  /* -------------------- Volume-based filtering -------------------- */
+
+  // Allow-list of ISO dates with non-zero volume (from /api/expiries/volume)
+  const [volAllow, setVolAllow] = useState(null); // Set<string> | null
+  const [volLoading, setVolLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const probe = async () => {
+      if (!symbol) { setVolAllow(null); return; }
+      try {
+        setVolLoading(true);
+        const r = await fetch(`/api/expiries/volume?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (Array.isArray(j?.expiries)) {
+          setVolAllow(new Set(j.expiries));
+        } else {
+          setVolAllow(null); // fail-open
+        }
+      } catch {
+        if (!cancelled) setVolAllow(null); // fail-open
+      } finally {
+        if (!cancelled) setVolLoading(false);
+      }
+    };
+    probe();
+    return () => { cancelled = true; };
+  }, [symbol, expRefreshKey]);
+
+  // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }], applying volume filter if present
   const groups = useMemo(() => {
     if (!apiExpiries || apiExpiries.length === 0) return fallbackGroups;
 
-    const parsed = apiExpiries
+    const effective = volAllow
+      ? apiExpiries.filter((iso) => volAllow.has(iso))
+      : apiExpiries;
+
+    if (!effective.length) return fallbackGroups;
+
+    const parsed = effective
       .map((iso) => {
         const d = new Date(iso);
         return Number.isFinite(d?.getTime()) ? { d, iso } : null;
@@ -182,7 +218,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         .sort((a, b) => a.day - b.day);
     }
     return out;
-  }, [apiExpiries, fallbackGroups]);
+  }, [apiExpiries, volAllow, fallbackGroups]);
 
   // Selected expiry (month label + day + iso)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16, iso: null });
@@ -277,7 +313,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
           {/* Health + Refresh + Gear */}
           <YahooHealthButton />
-          <RefreshExpiriesButton onRefresh={refreshExpiries} busy={loadingExp} />
+          <RefreshExpiriesButton onRefresh={refreshExpiries} busy={loadingExp || volLoading} />
           <button
             ref={gearRef}
             type="button"
@@ -299,7 +335,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
-        <div className="expiry" aria-busy={loadingExp ? "true" : "false"}>
+        <div className="expiry" aria-busy={(loadingExp || volLoading) ? "true" : "false"}>
           {groups.map((g) => (
             <div className="group" key={g.k || g.m}>
               <div className="m">{g.m}</div>
