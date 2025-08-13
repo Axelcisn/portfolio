@@ -5,14 +5,44 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
-import YahooHealthButton from "./YahooHealthButton"; // ← NEW
+import YahooHealthButton from "./YahooHealthButton"; // health button
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  // Provider + grouping
-  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
+  /* -------------------- Provider / grouping -------------------- */
+  const [provider, setProvider] = useState("api");     // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");    // 'expiry' | 'strike'
 
-  // Settings popover
+  /* -------------------- Chain settings state ------------------- */
+  const SETTINGS_KEY = "opt:chainSettings:v1";
+  const defaultSettings = {
+    showBy: "20",         // "10" | "20" | "all" | "custom"
+    customRows: 25,
+    sort: "asc",          // "asc" | "desc"
+    cols: { bid: true, ask: true, price: true },
+  };
+  const [settings, setSettings] = useState(defaultSettings);
+
+  // load once from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          setSettings((s) => ({ ...s, ...parsed, cols: { ...(s.cols || {}), ...(parsed.cols || {}) } }));
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // persist whenever settings change
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch { /* ignore */ }
+  }, [settings]);
+
+  /* -------------------- Settings popover ----------------------- */
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
@@ -41,9 +71,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (gearRef.current?.contains(e.target)) return;
       setSettingsOpen(false);
     };
-    const onKey = (e) => {
-      if (e.key === "Escape") setSettingsOpen(false);
-    };
+    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -54,7 +82,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
   }, [settingsOpen]);
 
-  /* -------------------- Expiries from API -------------------- */
+  /* -------------------- Expiries from API ---------------------- */
 
   // Fallback (keeps your exact visual while API loads/absent)
   const fallbackGroups = useMemo(
@@ -86,10 +114,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!symbol) {
-        setApiExpiries(null);
-        return;
-      }
+      if (!symbol) { setApiExpiries(null); return; }
       try {
         setLoadingExp(true);
         const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
@@ -102,9 +127,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
     };
     load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [symbol]);
 
   // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
@@ -134,6 +157,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
       g.items.push({ day: d.getDate(), iso });
     }
+    // unique + sort days inside month
     for (const g of out) {
       const seen = new Set();
       g.items = g.items
@@ -155,14 +179,15 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       const it0 = g0.items[0];
       setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
     } else if (!sel.iso) {
+      // enrich current selection with iso if we now have it
       const g = groups.find((g) => g.m === sel.m);
       const it = g?.items.find((it) => it.day === sel.d);
       if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
     }
-  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups]);
 
   /* ------------------------- Settings portal ------------------------ */
-
   const settingsPortal =
     mounted && settingsOpen && anchorRect
       ? createPortal(
@@ -173,14 +198,22 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
               position: "fixed",
               zIndex: 1000,
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
+              left: Math.min(
+                Math.max(12, anchorRect.right - 360),
+                window.innerWidth - 360 - 12
+              ),
               width: 360,
             }}
             role="dialog"
             aria-modal="true"
             aria-label="Chain table settings"
           >
-            <ChainSettings onClose={() => setSettingsOpen(false)} />
+            {/* Wire settings and onChange */}
+            <ChainSettings
+              settings={settings}
+              onChange={setSettings}
+              onClose={() => setSettingsOpen(false)}
+            />
           </div>,
           document.body
         )
@@ -225,7 +258,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             By strike
           </button>
 
-          {/* New health button — separate from the gear */}
+          {/* Separate health button */}
           <YahooHealthButton />
 
           <button
@@ -274,158 +307,100 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       </div>
 
       {/* Table */}
-      <ChainTable symbol={symbol} currency={currency} provider={provider} groupBy={groupBy} expiry={sel} />
+      <ChainTable
+        symbol={symbol}
+        currency={currency}
+        provider={provider}
+        groupBy={groupBy}
+        expiry={sel}
+        settings={settings}   // <-- pass through (table will use in next step)
+      />
 
       {/* Settings portal */}
       {settingsPortal}
 
       <style jsx>{`
         /* ---- Layout wrappers ---- */
-        .opt {
-          margin-top: 6px;
+        .opt { margin-top: 6px; }
+        .toolbar{
+          display:flex; align-items:center; justify-content:space-between;
+          gap:16px; margin: 6px 0 10px;
         }
-        .toolbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 16px;
-          margin: 6px 0 10px;
-        }
-        .left,
-        .right {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
+        .left, .right{ display:flex; align-items:center; gap:10px; }
 
         /* ---- Buttons (theme-aware) ---- */
-        .pill {
-          height: 36px;
-          padding: 0 14px;
-          border-radius: 12px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          font-weight: 700;
-          font-size: 14px;
-          line-height: 1;
-          color: var(--text);
+        .pill{
+          height:36px; padding:0 14px; border-radius:12px;
+          border:1px solid var(--border); background:var(--card);
+          font-weight:700; font-size:14px; line-height:1; color:var(--text);
         }
-        .pill.is-on {
+        .pill.is-on{
           background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--card));
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
-        .seg {
-          height: 38px;
-          padding: 0 16px;
-          border-radius: 14px;
-          border: 1px solid var(--border);
-          background: var(--surface);
-          font-weight: 800;
-          font-size: 15px;
-          color: var(--text);
-          line-height: 1;
+        .seg{
+          height:38px; padding:0 16px; border-radius:14px;
+          border:1px solid var(--border);
+          background:var(--surface); font-weight:800; font-size:15px;
+          color:var(--text); line-height:1;
         }
-        .seg.is-on {
+        .seg.is-on{
           background: color-mix(in srgb, var(--accent, #3b82f6) 14%, var(--surface));
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
-        .gear {
-          height: 38px;
-          width: 42px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 14px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--text);
+        .gear{
+          height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
+          border-radius:14px; border:1px solid var(--border); background:var(--card);
+          color:var(--text);
         }
 
         /* ---- Expiry strip (theme-aware) ---- */
-        .expiry-wrap {
+        .expiry-wrap{
           margin: 14px 0 18px;
           padding: 2px 0 10px;
           border-bottom: 2px solid var(--border);
         }
-        .expiry {
-          display: flex;
-          align-items: flex-start;
-          gap: 28px;
-          overflow-x: auto;
-          overscroll-behavior-x: contain;
-          -webkit-overflow-scrolling: touch;
-          padding-bottom: 6px;
+        .expiry{
+          display:flex; align-items:flex-start; gap:28px;
+          overflow-x:auto; overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch; padding-bottom:6px;
         }
-        .expiry[aria-busy="true"] {
-          opacity: 0.75;
-        }
-        .expiry::-webkit-scrollbar {
-          height: 6px;
-        }
-        .expiry::-webkit-scrollbar-thumb {
-          background: var(--border);
-          border-radius: 999px;
-        }
+        .expiry[aria-busy="true"] { opacity:.75; }
+        .expiry::-webkit-scrollbar{ height:6px; }
+        .expiry::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
 
-        .group {
-          flex: 0 0 auto;
+        .group{ flex:0 0 auto; }
+        .m{
+          font-weight:800; font-size:17px; letter-spacing:.2px; color:var(--text);
+          padding:0 0 6px 0;
+          border-bottom:1px solid var(--border);
+          margin-bottom:8px;
+          opacity:.95;
         }
-        .m {
-          font-weight: 800;
-          font-size: 17px;
-          letter-spacing: 0.2px;
-          color: var(--text);
-          padding: 0 0 6px 0;
-          border-bottom: 1px solid var(--border);
-          margin-bottom: 8px;
-          opacity: 0.95;
-        }
-        .days {
-          display: flex;
-          gap: 10px;
-        }
+        .days{ display:flex; gap:10px; }
 
-        .day {
-          min-width: 46px;
-          height: 34px;
-          padding: 0 10px;
-          border-radius: 12px;
-          border: 1px solid var(--border);
-          background: var(--surface);
-          font-weight: 800;
-          font-size: 16px;
-          color: var(--text);
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          transition: background 0.15s ease, transform 0.12s ease;
+        .day{
+          min-width:46px; height:34px; padding:0 10px;
+          border-radius:12px; border:1px solid var(--border);
+          background:var(--surface); font-weight:800; font-size:16px; color:var(--text);
+          display:inline-flex; align-items:center; justify-content:center;
+          transition: background .15s ease, transform .12s ease;
         }
-        .day:hover {
+        .day:hover{
           background: color-mix(in srgb, var(--text) 6%, var(--surface));
           transform: translateY(-1px);
         }
-        .day.is-active {
-          background: var(--text);
-          color: var(--bg);
-          border-color: var(--text);
+        .day.is-active{
+          background:var(--text); color:var(--bg);
+          border-color:var(--text);
         }
 
-        @media (max-width: 840px) {
-          .seg {
-            height: 36px;
-            padding: 0 14px;
-            font-size: 14px;
-          }
-          .m {
-            font-size: 16px;
-          }
-          .day {
-            height: 32px;
-            min-width: 42px;
-            font-size: 15px;
-          }
+        @media (max-width: 840px){
+          .seg{ height:36px; padding:0 14px; font-size:14px; }
+          .m{ font-size:16px; }
+          .day{ height:32px; min-width:42px; font-size:15px; }
         }
       `}</style>
     </section>
