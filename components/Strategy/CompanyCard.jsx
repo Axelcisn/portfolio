@@ -12,6 +12,8 @@ const EX_NAMES = {
   TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
 
+const STORE_KEY = "companyCard.v1";
+
 const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
 function fmtMoney(v, ccy = "") {
   const n = Number(v);
@@ -41,14 +43,8 @@ function pickSpot(obj) {
   const tryKeys = (o) => {
     if (!o || typeof o !== "object") return NaN;
     const keys = [
-      "spot",
-      "last",
-      "lastPrice",
-      "price",
-      "regularMarketPrice",
-      "close",
-      "previousClose",
-      "prevClose",
+      "spot", "last", "lastPrice", "price", "regularMarketPrice",
+      "close", "previousClose", "prevClose",
     ];
     for (const k of keys) {
       const v = Number(o?.[k]);
@@ -62,14 +58,8 @@ function pickSpot(obj) {
 
   // common nests
   const nests = [
-    obj.quote,
-    obj.quotes,
-    obj.price,
-    obj.data,
-    obj.meta,
-    obj.result?.[0],
-    obj.result,
-    obj.chart?.result?.[0]?.meta,
+    obj.quote, obj.quotes, obj.price, obj.data, obj.meta,
+    obj.result?.[0], obj.result, obj.chart?.result?.[0]?.meta,
   ];
   for (const nest of nests) {
     v = tryKeys(nest);
@@ -78,9 +68,7 @@ function pickSpot(obj) {
 
   // array closes (chart-like)
   const arrs = [
-    obj?.data?.c,
-    obj?.c,
-    obj?.close,
+    obj?.data?.c, obj?.c, obj?.close,
     obj?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
     obj?.result?.[0]?.indicators?.quote?.[0]?.close,
   ];
@@ -95,9 +83,7 @@ function pickSpot(obj) {
 /** Fallback close/last from chart payloads */
 function pickLastClose(j) {
   const arrs = [
-    j?.data?.c,
-    j?.c,
-    j?.close,
+    j?.data?.c, j?.c, j?.close,
     j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
     j?.result?.[0]?.indicators?.quote?.[0]?.close,
   ];
@@ -147,7 +133,7 @@ export default function CompanyCard({
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  /* -------- NEW: cancel-safe sigma fetch -------- */
+  /* -------- cancel-safe sigma fetch -------- */
   const sigmaAbortRef = useRef(null);
   const [volLoading, setVolLoading] = useState(false);
 
@@ -177,12 +163,7 @@ export default function CompanyCard({
 
     // currency from multiple places
     const ccy =
-      j.currency ||
-      j.ccy ||
-      j?.quote?.currency ||
-      j?.price?.currency ||
-      j?.meta?.currency ||
-      "";
+      j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
     if (ccy) setCurrency(ccy);
 
     // try direct spot
@@ -191,10 +172,7 @@ export default function CompanyCard({
     // fallback A: /api/company/autoFields
     if (!Number.isFinite(px) || px <= 0) {
       try {
-        const r2 = await fetch(
-          `/api/company/autoFields?symbol=${encodeURIComponent(sym)}`,
-          { cache: "no-store" }
-        );
+        const r2 = await fetch(`/api/company/autoFields?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
         const j2 = await r2.json();
         if (r2.ok && j2?.ok !== false) {
           const alt = pickSpot(j2);
@@ -233,10 +211,9 @@ export default function CompanyCard({
   }
 
   /**
-   * Try to obtain annualized sigma from:
-   *  1) /api/volatility using either ?source=live|historical or ?volSource=...
-   *  2) fallback: /api/company/autoFields (it returns sigma too)
-   * Cancel-safe via AbortController to prevent stale writes.
+   * Sigma fetch (cancel-safe)
+   *  1) /api/volatility?source=live|historical (or volSource=…)
+   *  2) fallback: /api/company/autoFields
    */
   async function fetchSigma(sym, uiSource, d) {
     if (!sym || uiSource === "manual") return;
@@ -252,9 +229,7 @@ export default function CompanyCard({
     const mapped = uiSource === "hist" ? "historical" : "live";
 
     const tryVol = async (paramName) => {
-      const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${paramName}=${encodeURIComponent(
-        mapped
-      )}&days=${encodeURIComponent(d)}`;
+      const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${paramName}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}`;
       const r = await fetch(u, { cache: "no-store", signal: ctrl.signal });
       const j = await r.json();
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
@@ -280,9 +255,7 @@ export default function CompanyCard({
       if (ctrl.signal.aborted || e2?.name === "AbortError") return;
       // attempt B: /api/company/autoFields
       try {
-        const url = `/api/company/autoFields?symbol=${encodeURIComponent(
-          sym
-        )}&days=${encodeURIComponent(d)}&volSource=${encodeURIComponent(mapped)}`;
+        const url = `/api/company/autoFields?symbol=${encodeURIComponent(sym)}&days=${encodeURIComponent(d)}&volSource=${encodeURIComponent(mapped)}`;
         const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
         const j = await r.json();
         if (!r.ok || j?.ok === false) throw new Error(j?.error || `AutoFields ${r.status}`);
@@ -313,6 +286,19 @@ export default function CompanyCard({
       } else {
         await fetchSigma(s, volSrc, days);
       }
+      // ----- SAVE after a successful confirm -----
+      try {
+        const payload = {
+          symbol: s,
+          name: picked?.name || "",
+          exchange: picked?.exchange || "",
+          currency: currency || "",
+          days,
+          volSrc,
+          sigma: volSrc === "manual" && Number.isFinite(sigma) ? sigma : null,
+        };
+        localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+      } catch {}
     } catch (e) {
       setMsg(String(e?.message || e));
     } finally {
@@ -329,25 +315,94 @@ export default function CompanyCard({
     try { sigmaAbortRef.current?.abort(); } catch {}
     clearTimeout(daysTimer.current);
     daysTimer.current = setTimeout(() => {
-      fetchSigma(selSymbol, volSrc, days).catch((e) =>
-        setMsg(String(e?.message || e))
-      );
+      fetchSigma(selSymbol, volSrc, days).catch((e) => setMsg(String(e?.message || e)));
+      // SAVE lightweight changes too (days/volSrc)
+      try {
+        const prev = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+        const next = {
+          ...prev,
+          symbol: selSymbol || prev.symbol || "",
+          days,
+          volSrc,
+        };
+        localStorage.setItem(STORE_KEY, JSON.stringify(next));
+      } catch {}
     }, 350);
     return () => clearTimeout(daysTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
 
-  // If source switches to manual, stop any loading immediately
+  // If source switches to manual, stop any loading immediately and persist
   useEffect(() => {
     if (volSrc === "manual") {
       try { sigmaAbortRef.current?.abort(); } catch {}
       setVolLoading(false);
+      try {
+        const prev = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+        localStorage.setItem(STORE_KEY, JSON.stringify({
+          ...prev,
+          symbol: selSymbol || prev.symbol || "",
+          volSrc,
+          sigma: Number.isFinite(sigma) ? sigma : null,
+        }));
+      } catch {}
     }
-  }, [volSrc]);
+  }, [volSrc]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist manual sigma edits
+  useEffect(() => {
+    if (volSrc !== "manual") return;
+    try {
+      const prev = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        ...prev,
+        symbol: selSymbol || prev.symbol || "",
+        volSrc,
+        sigma: Number.isFinite(sigma) ? sigma : null,
+      }));
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigma]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => { try { sigmaAbortRef.current?.abort(); } catch {} };
+  }, []);
+
+  /* ---------- RESTORE from localStorage on mount ---------- */
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return;
+      const j = JSON.parse(raw);
+      if (!j || typeof j !== "object") return;
+
+      const sym = String(j.symbol || "").trim().toUpperCase();
+      if (sym) {
+        setTyped(sym);
+        setPicked({ symbol: sym, name: j.name || "", exchange: j.exchange || "" });
+      }
+      if (j.currency) setCurrency(String(j.currency));
+      if (Number.isFinite(j.days)) setDays(clamp(j.days, 1, 365));
+      if (j.volSrc === "iv" || j.volSrc === "hist" || j.volSrc === "manual") {
+        setVolSrc(j.volSrc);
+      }
+      if (j.volSrc === "manual" && Number.isFinite(j.sigma)) {
+        setSigma(Number(j.sigma));
+      }
+
+      // Auto-refresh once if we have a symbol
+      if (sym) {
+        // delay a tick to let state settle
+        setTimeout(() => { confirmSymbol(sym); }, 0);
+      }
+    } catch {
+      /* ignore restore errors */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Lightweight live price poll (15s). Uses chart endpoint only; safe for 401s. */
@@ -377,6 +432,22 @@ export default function CompanyCard({
     return () => { stop = true; clearTimeout(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selSymbol]);
+
+  /* Clear saved selection + reset fields */
+  function clearSaved() {
+    try { localStorage.removeItem(STORE_KEY); } catch {}
+    try { sigmaAbortRef.current?.abort(); } catch {}
+    setTyped("");
+    setPicked(null);
+    setCurrency("");
+    setSpot(null);
+    setExchangeLabel("");
+    setDays(30);
+    setVolSrc("iv");
+    setSigma(null);
+    setVolMeta(null);
+    setMsg("");
+  }
 
   return (
     <section className="company-block">
@@ -412,6 +483,10 @@ export default function CompanyCard({
           <span className="muted">Selected:</span> <strong>{selSymbol}</strong>
           {picked?.name ? ` — ${picked.name}` : ""}
           {exchangeLabel ? ` • ${exchangeLabel}` : ""}
+          {/* subtle Clear */}
+          <button type="button" className="link-clear" onClick={clearSaved} title="Clear saved selection">
+            • Clear
+          </button>
         </div>
       )}
       {msg && <div className="small" style={{ color: "#ef4444" }}>{msg}</div>}
@@ -443,6 +518,11 @@ export default function CompanyCard({
               const v = clamp(e.target.value, 1, 365);
               setDays(v);
               onHorizonChange?.(v);
+              // persist days immediately
+              try {
+                const prev = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+                localStorage.setItem(STORE_KEY, JSON.stringify({ ...prev, symbol: selSymbol || prev.symbol || "", days: v }));
+              } catch {}
             }}
           />
         </div>
@@ -454,7 +534,15 @@ export default function CompanyCard({
             <select
               className="field"
               value={volSrc}
-              onChange={(e) => setVolSrc(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setVolSrc(v);
+                // persist vol source quickly
+                try {
+                  const prev = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+                  localStorage.setItem(STORE_KEY, JSON.stringify({ ...prev, symbol: selSymbol || prev.symbol || "", volSrc: v }));
+                } catch {}
+              }}
             >
               <option value="iv">Implied Volatility</option>
               <option value="hist">Historical Volatility</option>
@@ -467,18 +555,17 @@ export default function CompanyCard({
                 value={Number.isFinite(sigma) ? (sigma ?? 0) : ""}
                 onChange={(e) => {
                   const v = parsePctInput(e.target.value);
-                  setSigma(Number.isFinite(v) ? v : null);
+                  const next = Number.isFinite(v) ? v : null;
+                  setSigma(next);
                   onIvSourceChange?.("manual");
-                  onIvValueChange?.(Number.isFinite(v) ? v : null);
+                  onIvValueChange?.(next);
                 }}
               />
             ) : (
               <input
                 className="field"
                 readOnly
-                value={
-                  Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : ""
-                }
+                value={Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : ""}
               />
             )}
             {/* tiny inline spinner (Apple-style, no layout shift) */}
@@ -494,7 +581,7 @@ export default function CompanyCard({
         </div>
       </div>
 
-      {/* Local, scoped spinner styles only; preserves your design */}
+      {/* Local, scoped styles only; preserves your design */}
       <style jsx>{`
         .vol-wrap{ position: relative; }
         .sigma-spin{
@@ -510,6 +597,20 @@ export default function CompanyCard({
         }
         .sigma-spin.on{ opacity:.85; }
         @keyframes cc-spin{ to { transform: rotate(360deg); } }
+
+        .company-selected .link-clear{
+          margin-left: 6px;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          font: inherit;
+          color: color-mix(in srgb, var(--text, #0f172a) 60%, transparent);
+          cursor: pointer;
+        }
+        .company-selected .link-clear:hover{
+          color: var(--text, #0f172a);
+          text-decoration: underline;
+        }
       `}</style>
     </section>
   );
