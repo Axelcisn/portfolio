@@ -6,40 +6,12 @@ import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton";
-
-/* ---------- Apple-style Refresh button (icon + styles rely on currentColor) ---------- */
-const RefreshButton = ({ spinning, onClick }) => (
-  <button
-    type="button"
-    className={`refresh ${spinning ? "is-busy" : ""}`}
-    onClick={onClick}
-    aria-label="Refresh expiries"
-    title="Refresh expiries"
-  >
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M20 12a8 8 0 1 1-8-8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        d="M12 4h5m0 0v5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  </button>
-);
+import RefreshExpiriesButton from "./RefreshExpiriesButton";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
-  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
+  const [provider, setProvider] = useState("api");   // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");  // 'expiry' | 'strike'
 
   // ---- Chain settings (persisted) ----
   const SETTINGS_DEFAULT = useMemo(
@@ -47,13 +19,13 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       showBy: "20",          // "10" | "20" | "all" | "custom"
       customRows: 25,
       sort: "asc",           // "asc" | "desc"
-      cols: { bid: true, ask: true, price: true }
+      cols: { bid: true, ask: true, price: true },
     }),
     []
   );
   const [chainSettings, setChainSettings] = useState(SETTINGS_DEFAULT);
 
-  // Restore settings
+  // Restore settings from localStorage
   useEffect(() => {
     try {
       const raw = typeof window !== "undefined" ? localStorage.getItem("chainSettings.v1") : null;
@@ -70,7 +42,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist settings
+  // Persist settings on change
   useEffect(() => {
     try {
       if (typeof window !== "undefined") {
@@ -79,7 +51,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     } catch { /* ignore */ }
   }, [chainSettings]);
 
-  // Toggle sort (used by ChainTable header)
+  // Toggle sort direction (↑/↓) — passed to ChainTable
   const onToggleSort = () =>
     setChainSettings((s) => ({ ...s, sort: s.sort === "asc" ? "desc" : "asc" }));
 
@@ -125,7 +97,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
   /* -------------------- Expiries from API -------------------- */
 
-  // Fallback (keeps your exact visual while API loads/absent)
+  // Fallback (keeps your visual while API loads/absent)
   const fallbackGroups = useMemo(
     () => [
       { m: "Aug", items: [15, 22, 29].map((d) => ({ day: d, iso: null })), k: "f-1" },
@@ -148,9 +120,11 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     []
   );
 
-  // Live expiries loader + manual refresh
+  // Live expiries from /api/expiries
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
+
+  // Manual refresh key for expiries
   const [expRefreshKey, setExpRefreshKey] = useState(0);
   const refreshExpiries = () => setExpRefreshKey((k) => k + 1);
 
@@ -171,7 +145,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
     load();
     return () => { cancelled = true; };
-  }, [symbol, expRefreshKey]); // includes refresh key
+  }, [symbol, expRefreshKey]); // ← include refresh key
 
   // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
   const groups = useMemo(() => {
@@ -303,8 +277,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
           {/* Health + Refresh + Gear */}
           <YahooHealthButton />
-          <RefreshButton spinning={loadingExp} onClick={refreshExpiries} />
-
+          <RefreshExpiriesButton onRefresh={refreshExpiries} busy={loadingExp} />
           <button
             ref={gearRef}
             type="button"
@@ -317,7 +290,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l-2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
               />
             </svg>
           </button>
@@ -400,40 +373,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           border-radius:14px; border:1px solid var(--border); background:var(--card);
           color:var(--text);
         }
-
-        /* ---- Refresh (Apple-like) ---- */
-        .refresh{
-          position: relative;
-          height:38px; width:42px;
-          display:inline-flex; align-items:center; justify-content:center;
-          border-radius:14px;
-          border:1px solid var(--border);
-          background: var(--card);
-          color: var(--text);
-          transition: background .18s ease, border-color .18s ease, transform .06s ease, box-shadow .18s ease, color .18s ease;
-        }
-        .refresh::after{
-          content:"";
-          position:absolute; inset:6px;
-          border-radius:10px;
-          border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
-          pointer-events:none;
-        }
-        .refresh:hover{
-          background: color-mix(in srgb, var(--text) 6%, var(--card));
-        }
-        .refresh:active{ transform: translateY(0.5px); }
-        .refresh:focus-visible{
-          outline: 2px solid color-mix(in srgb, var(--accent, #3b82f6) 65%, transparent);
-          outline-offset: 2px;
-        }
-        .refresh.is-busy{
-          color: var(--accent, #3b82f6);
-          border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, var(--border));
-          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 22%, transparent);
-        }
-        .refresh.is-busy svg{ animation: spin .9s linear infinite; }
-        @keyframes spin{ from{ transform: rotate(0deg); } to{ transform: rotate(360deg); } }
 
         /* ---- Expiry strip (theme-aware) ---- */
         .expiry-wrap{
