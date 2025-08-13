@@ -377,33 +377,18 @@ export default function CompanyCard({
           <input className="field" value={fmtMoney(spot, currency)} readOnly />
         </div>
 
-        {/* Time (days + basis) */}
+        {/* ---- Time (basis only) ---- */}
         <div className="fg">
           <label>Time</label>
-          <div className="time-wrap">
-            <input
-              className="field"
-              type="number"
-              min={1}
-              max={365}
-              value={days}
-              onChange={(e) => {
-                const v = clamp(e.target.value, 1, 365);
-                setDays(v);
-                onHorizonChange?.(v);
-              }}
-            />
-            <select
-              className="field basis"
-              aria-label="Time basis"
-              value={basis}
-              onChange={(e) => setBasis(Number(e.target.value))}
-            >
-              <option value={365}>365</option>
-              <option value={252}>252</option>
-            </select>
-          </div>
-          <div className="small muted">Basis applies app-wide (Options & metrics)</div>
+          <select
+            className="field"
+            aria-label="Time basis"
+            value={basis}
+            onChange={(e) => setBasis(Number(e.target.value))}
+          >
+            <option value={365}>365</option>
+            <option value={252}>252</option>
+          </select>
         </div>
 
         {/* Volatility */}
