@@ -9,8 +9,8 @@ import YahooHealthButton from "./YahooHealthButton"; // keep
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
-  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
+  const [provider, setProvider] = useState("api");   // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry");  // 'expiry' | 'strike'
 
   // ---- Chain settings (persisted) ----
   const SETTINGS_DEFAULT = useMemo(
@@ -52,7 +52,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const onToggleSort = () =>
     setChainSettings((s) => ({ ...s, sort: s.sort === "asc" ? "desc" : "asc" }));
 
-  // Settings popover
+  // Settings popover plumbing
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
@@ -119,7 +119,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
 
-  // NEW: manual refresh key for expiries
+  // Manual refresh key for expiries (used by the icon button)
   const [expRefreshKey, setExpRefreshKey] = useState(0);
   const refreshExpiries = () => setExpRefreshKey((k) => k + 1);
 
@@ -210,10 +210,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
               position: "fixed",
               zIndex: 1000,
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(
-                Math.max(12, anchorRect.right - 360),
-                window.innerWidth - 360 - 12
-              ),
+              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
               width: 360,
             }}
             role="dialog"
@@ -272,6 +269,38 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           {/* Health button (separate control) */}
           <YahooHealthButton />
 
+          {/* NEW: Refresh icon button */}
+          <button
+            type="button"
+            className={`iconbtn ${loadingExp ? "is-busy" : ""}`}
+            onClick={refreshExpiries}
+            disabled={loadingExp}
+            aria-busy={loadingExp}
+            aria-label="Refresh expiries"
+            title="Refresh expiries"
+          >
+            <svg className="icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              {/* circular arc */}
+              <path
+                d="M20 12a8 8 0 1 1-2.34-5.66"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {/* corner arrow */}
+              <path
+                d="M20 4v6h-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+
           <button
             ref={gearRef}
             type="button"
@@ -293,42 +322,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
-        {/* Premium refresh control */}
-        <div className="exp-bar">
-          <div className="fill" />
-          <button
-            type="button"
-            className={`refreshPro ${loadingExp ? "is-busy" : ""}`}
-            onClick={refreshExpiries}
-            disabled={loadingExp}
-            aria-busy={loadingExp}
-            aria-label="Refresh expiries"
-            title="Refresh expiries"
-          >
-            <svg className="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              {/* circular arc (clean stroke) */}
-              <path
-                d="M20 12a8 8 0 1 1-2.34-5.66"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              {/* corner arrow (clockwise) */}
-              <path
-                d="M20 4v6h-6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span className="txt">{loadingExp ? "Refreshing…" : "Refresh"}</span>
-          </button>
-        </div>
-
         <div className="expiry" aria-busy={loadingExp ? "true" : "false"}>
           {groups.map((g) => (
             <div className="group" key={g.k || g.m}>
@@ -398,63 +391,36 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
-        .gear{
+        /* Icon buttons (Health / Refresh / Gear) */
+        .iconbtn, .gear{
           height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
           border-radius:14px; border:1px solid var(--border); background:var(--card);
           color:var(--text);
+          transition: background .15s ease, transform .12s ease, box-shadow .15s ease;
+        }
+        .iconbtn:hover, .gear:hover{
+          background: color-mix(in srgb, var(--text) 6%, var(--card));
+          transform: translateY(-1px);
+          box-shadow: 0 6px 16px rgba(0,0,0,.06);
+        }
+        .iconbtn:focus, .gear:focus{
+          outline: none;
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+        }
+        .iconbtn:disabled{
+          opacity:.65; cursor:not-allowed; transform:none; box-shadow:none;
         }
 
-        /* ---- Expiry strip ---- */
+        .iconbtn .icon{ display:block; }
+        .iconbtn.is-busy .icon{ animation: spin .9s linear infinite; }
+        @keyframes spin { from {transform:rotate(0)} to {transform:rotate(360deg)} }
+
+        /* ---- Expiry strip (theme-aware) ---- */
         .expiry-wrap{
           margin: 14px 0 18px;
           padding: 2px 0 10px;
           border-bottom: 2px solid var(--border);
         }
-
-        /* Premium refresh button */
-        .exp-bar{
-          display:flex; align-items:center; gap:10px;
-          margin-bottom:8px;
-        }
-        .exp-bar .fill{ flex:1; }
-
-        .refreshPro{
-          height:30px; padding:0 12px; border-radius:12px;
-          border:1px solid color-mix(in srgb, var(--border, #E6E9EF) 90%, transparent);
-          background: var(--card);
-          color: var(--text);
-          font-weight:700; font-size:13px; line-height:1;
-          display:inline-flex; align-items:center; gap:8px;
-          transition: border-color .15s ease, background .15s ease, transform .12s ease, box-shadow .15s ease;
-          box-shadow: 0 0 0 0 rgba(0,0,0,0);
-        }
-        .refreshPro:hover{
-          background: color-mix(in srgb, var(--text) 6%, var(--card));
-          transform: translateY(-1px);
-          box-shadow: 0 6px 16px rgba(0,0,0,.06);
-        }
-        .refreshPro:focus{
-          outline: none;
-          box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
-        }
-        .refreshPro:disabled{
-          opacity:.65; cursor:not-allowed; transform:none; box-shadow:none;
-        }
-
-        .refreshPro .icon{
-          display:block;
-        }
-        .refreshPro.is-busy .icon{
-          animation: spin .9s linear infinite;
-        }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to   { transform: rotate(360deg); }
-        }
-        .refreshPro .txt{
-          letter-spacing:.01em;
-        }
-
         .expiry{
           display:flex; align-items:flex-start; gap:28px;
           overflow-x:auto; overscroll-behavior-x: contain;
