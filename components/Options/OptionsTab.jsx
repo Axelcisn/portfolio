@@ -419,3 +419,29 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     </section>
   );
 }
+
+/* -------------------- Volume-based expiries (non-breaking) --------------------
+   This runs after the basic expiries loader and *overrides* the list only if
+   the volume endpoint succeeds with a non-empty result. No other changes. */
+import { useEffect as _useEffectVol } from "react"; // alias to avoid shadowing
+
+_useEffectVol(() => {
+  let cancelled = false;
+  (async () => {
+    if (!symbol) return;
+    try {
+      const res = await fetch(
+        `/api/expiries/volume?symbol=${encodeURIComponent(symbol)}`,
+        { cache: "no-store" }
+      );
+      const j = await res.json().catch(() => null);
+      if (!cancelled && j?.ok && Array.isArray(j.expiries) && j.expiries.length) {
+        // Override the current expiries with volume-filtered ones
+        setApiExpiries(j.expiries);
+      }
+    } catch {
+      // silent fallback — keep whatever the base endpoint provided
+    }
+  })();
+  return () => { cancelled = true; };
+}, [symbol]);
