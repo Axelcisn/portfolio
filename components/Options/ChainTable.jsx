@@ -3,37 +3,34 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-/**
- * Props:
- *  - symbol, currency, provider, groupBy, expiry (existing)
- *  - settings (optional): {
- *      showBy: "10" | "20" | "all" | "custom",
- *      customRows?: number,
- *      sort: "asc" | "desc"
- *    }
- */
 export default function ChainTable({
   symbol,
   currency,
   provider,
   groupBy,
   expiry,
-  settings, // ← NEW (optional)
+  settings, // ← NEW
 }) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
-  const [meta, setMeta] = useState(null);      // {spot, currency, expiry}
-  const [rows, setRows] = useState([]);        // merged by strike: { strike, call: {...}, put: {...}, ivPct }
-
-  // Safe defaults if settings prop isn't wired yet
-  const s = {
-    showBy: "20",
-    customRows: 25,
-    sort: "asc",
-    ...(settings || {}),
-  };
+  const [meta, setMeta] = useState(null); // {spot, currency, expiry}
+  const [rows, setRows] = useState([]);   // merged by strike: { strike, call, put, ivPct }
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
+
+  // Settings — safe defaults
+  const sortDir = (settings?.sort === "desc" ? "desc" : "asc");
+  const rowLimit = useMemo(() => {
+    const mode = settings?.showBy || "20";
+    if (mode === "10") return 10;
+    if (mode === "20") return 20;
+    if (mode === "all") return Infinity;
+    if (mode === "custom") {
+      const n = Math.max(1, Number(settings?.customRows) || 25);
+      return n;
+    }
+    return 20;
+  }, [settings?.showBy, settings?.customRows]);
 
   // --- helpers to mirror the month labeling from OptionsTab (Jan shows year, others don't)
   const monthLabel = (d) => {
@@ -54,7 +51,6 @@ export default function ChainTable({
         return monthLabel(d) === sel.m && d.getDate() === sel.d;
       });
       if (!matches.length) return null;
-      // choose the nearest-in-time date (usually only 1 match anyway)
       const now = Date.now();
       matches.sort((a, b) => Math.abs(new Date(a) - now) - Math.abs(new Date(b) - now));
       return matches[0];
@@ -77,7 +73,6 @@ export default function ChainTable({
         bid: Number.isFinite(o.bid) ? o.bid : null,
         ivPct: Number.isFinite(o.ivPct) ? o.ivPct : null,
       };
-      // center IV as mid if both; else whichever exists
       const cIV = row.call?.ivPct;
       const pIV = row.put?.ivPct;
       row.ivPct =
@@ -87,7 +82,7 @@ export default function ChainTable({
     };
     for (const c of calls || []) add("call", c);
     for (const p of puts || []) add("put", p);
-    // Default build is ascending by strike; we'll apply user sort after
+    // default ascending; we'll handle desc later without reflowing layout
     return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
   };
 
@@ -122,11 +117,11 @@ export default function ChainTable({
         const calls = Array.isArray(j?.data?.calls) ? j.data.calls : [];
         const puts  = Array.isArray(j?.data?.puts)  ? j.data.puts  : [];
         const m = j?.data?.meta || {};
-        const merged = buildRows(calls, puts);
+        const mergedAsc = buildRows(calls, puts);
 
         if (cancelled) return;
         setMeta({ spot: m.spot ?? null, currency: m.currency || currency, expiry: m.expiry || dateISO });
-        setRows(merged);
+        setRows(mergedAsc);
         setStatus("ready");
       } catch (e) {
         if (cancelled) return;
@@ -139,22 +134,13 @@ export default function ChainTable({
     // Re-run when symbol or the selected ISO changes; also react to (m,d) if ISO is missing
   }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
 
-  // ---- Apply settings: sort + row limit (no visual/layout changes) ----
-  const sortedRows = useMemo(() => {
-    if (s.sort === "desc") return [...rows].reverse();
-    return rows;
-  }, [rows, s.sort]);
-
-  const limit = useMemo(() => {
-    if (s.showBy === "10") return 10;
-    if (s.showBy === "20") return 20;
-    if (s.showBy === "custom") return Math.max(1, Number(s.customRows) || 1);
-    return Infinity; // "all"
-  }, [s.showBy, s.customRows]);
-
+  // Apply sort + row limit (no visual/layout changes)
   const visible = useMemo(() => {
-    return Number.isFinite(limit) ? sortedRows.slice(0, limit) : sortedRows;
-  }, [sortedRows, limit]);
+    if (!rows?.length) return [];
+    const sorted = (sortDir === "desc") ? [...rows].reverse() : rows;
+    const limit = rowLimit === Infinity ? sorted.length : rowLimit;
+    return sorted.slice(0, limit);
+  }, [rows, sortDir, rowLimit]);
 
   return (
     <div className="wrap" aria-live="polite">
