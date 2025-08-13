@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTimeBasis } from "../ui/TimeBasisContext";
+import { robustSpot } from "../../lib/spot"; // <-- NEW
 
 /* Exchange pretty labels */
 const EX_NAMES = {
@@ -24,7 +25,7 @@ function parsePctInput(str) {
   return Number.isFinite(v) ? v / 100 : NaN;
 }
 
-/* ---------- robust price helpers ---------- */
+/* ---------- robust price helpers (fallbacks still available if needed) ---------- */
 function lastFromArray(arr) {
   if (!Array.isArray(arr) || !arr.length) return NaN;
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -72,7 +73,6 @@ function pickSpot(obj) {
     v = lastFromArray(a);
     if (Number.isFinite(v)) return v;
   }
-
   return NaN;
 }
 
@@ -111,32 +111,18 @@ export default function CompanyCard({
     [picked]
   );
 
-  /* -------- FX target (persisted app-wide) -------- */
-  const [target, setTarget] = useState("USD"); // USD | EUR | GBP
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("pref.fxTarget");
-      if (saved === "USD" || saved === "EUR" || saved === "GBP") setTarget(saved);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem("pref.fxTarget", target); } catch {}
-  }, [target]);
-
-  /* -------- basic facts (display) -------- */
-  const [currency, setCurrency] = useState(value?.currency || "USD"); // displayCurrency
-  const [spot, setSpot] = useState(value?.spot || null);              // displaySpot
+  /* -------- basic facts -------- */
+  const [currency, setCurrency] = useState(value?.currency || "");
+  const [spot, setSpot] = useState(value?.spot || null);
   const [exchangeLabel, setExchangeLabel] = useState("");
+  const [lastTs, setLastTs] = useState(null);      // <-- NEW (timestamp)
+  const [session, setSession] = useState("");      // <-- NEW (market session label)
 
-  // FX metadata from last company call (to convert chart ticks smoothly)
-  const [sourceCurrency, setSourceCurrency] = useState(null);
-  const fxRateRef = useRef(null);
-
-  /* -------- horizon (days – internal, not shown) -------- */
+  /* -------- horizon (days) -------- */
   const [days, setDays] = useState(30);
 
   /* -------- global time basis (365/252) -------- */
-  const { basis, setBasis } = useTimeBasis(); // app-wide, persisted
+  const { basis } = useTimeBasis(); // persisted, app-wide
 
   /* -------- volatility UI state -------- */
   const [volSrc, setVolSrc] = useState("iv");        // 'iv' | 'hist' | 'manual'
@@ -161,52 +147,32 @@ export default function CompanyCard({
      API helpers (robust, with fallbacks)
      ========================= */
 
-  async function fetchSpotFromChart(sym) {
-    try {
-      const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
-      const r = await fetch(u, { cache: "no-store" });
-      const j = await r.json();
-      if (!r.ok || j?.ok === false) throw new Error(j?.error || `Chart ${r.status}`);
-      const last = pickLastClose(j);
-      return Number.isFinite(last) ? last : null;
-    } catch {
-      return null;
-    }
-  }
-
+  // Replaces the previous /api/company direct read for spot/session,
+  // using the shared robustSpot helper for consistency.
   async function fetchCompany(sym) {
-    const r = await fetch(
-      `/api/company?symbol=${encodeURIComponent(sym)}&target=${encodeURIComponent(target)}`,
-      { cache: "no-store" }
-    );
-    const j = await r.json();
-    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
+    // spot + session + currency via robustSpot
+    const sp = await robustSpot(sym, { nocache: false });
+    setSpot(sp.spot);
+    if (sp.currency) setCurrency(sp.currency);
+    setSession(sp.session || "At close");
+    setLastTs(sp.ts || Date.now());
 
-    // display currency/spot from API (already converted if target != source)
-    const displayCcy = j.displayCurrency || j.currency || "USD";
-    const displaySpot = Number.isFinite(j.displaySpot) ? j.displaySpot : pickSpot(j);
-
-    setCurrency(displayCcy);
-    setSpot(Number.isFinite(displaySpot) ? displaySpot : null);
-
-    // remember FX context for chart ticks
-    setSourceCurrency(j.sourceCurrency || j.currency || null);
-    fxRateRef.current = j?.fx?.rate ?? null;
-
+    // Exchange label from picked (preferred) or leave blank
     setExchangeLabel(
-      (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) ||
-      j.exchange || j.exchangeName || ""
+      (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) || ""
     );
 
+    // Bubble up minimal info (keep extra fields nullable)
     onConfirm?.({
-      symbol: j.symbol || sym,
-      name: j.name || j.longName || j.companyName || picked?.name || "",
-      exchange: picked?.exchange || j.exchange || null,
-      currency: displayCcy,
-      spot: Number.isFinite(displaySpot) ? displaySpot : null,
-      high52: j.high52 ?? j.fiftyTwoWeekHigh ?? null,
-      low52: j.low52 ?? j.fiftyTwoWeekLow ?? null,
-      beta: j.beta ?? null,
+      symbol: sp.symbol || sym,
+      name: picked?.name || value?.name || "",
+      exchange: picked?.exchange || null,
+      currency: sp.currency || "",
+      spot: Number.isFinite(sp.spot) ? sp.spot : null,
+      high52: value?.high52 ?? null,
+      low52: value?.low52 ?? null,
+      beta: value?.beta ?? null,
+      basis, // keep header/parent aware of chosen basis
     });
   }
 
@@ -304,7 +270,7 @@ export default function CompanyCard({
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc, days, target]);
+  }, [volSrc, days]);
 
   /* If a value was passed initially, confirm it once on mount */
   useEffect(() => {
@@ -331,37 +297,25 @@ export default function CompanyCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
 
-  /* Lightweight live price poll (15s) using chart endpoint only.
-     Convert using last known FX rate if target != base. */
+  /* Lightweight live price poll via robustSpot (aligns with micro-cache TTL) */
   useEffect(() => {
     if (!selSymbol) return;
     let stop = false;
     let id;
     const tick = async () => {
-      const px = await fetchSpotFromChart(selSymbol);
-      if (!stop && Number.isFinite(px)) {
-        let pxDisp = px;
-        if (sourceCurrency && target && target !== sourceCurrency && Number.isFinite(fxRateRef.current)) {
-          pxDisp = px * fxRateRef.current;
+      try {
+        const sp = await robustSpot(selSymbol, { nocache: false });
+        if (!stop) {
+          if (Number.isFinite(sp.spot)) setSpot(sp.spot);
+          setSession(sp.session || "At close");
+          setLastTs(sp.ts || Date.now());
         }
-        setSpot(pxDisp);
-        onConfirm?.({
-          symbol: selSymbol,
-          name: picked?.name || value?.name || "",
-          exchange: picked?.exchange || null,
-          currency,
-          spot: pxDisp,
-          high52: value?.high52 ?? null,
-          low52: value?.low52 ?? null,
-          beta: value?.beta ?? null,
-        });
-      }
-      id = setTimeout(tick, 15000);
+      } catch { /* ignore */ }
+      id = setTimeout(tick, 30000); // ~30s
     };
     tick();
     return () => { stop = true; clearTimeout(id); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selSymbol, target, sourceCurrency, currency]);
+  }, [selSymbol]);
 
   return (
     <section className="company-block">
@@ -377,35 +331,19 @@ export default function CompanyCard({
 
       {/* Inline facts/controls */}
       <div className="company-fields">
-        {/* Currency (select target; same footprint) */}
+        {/* Currency */}
         <div className="fg">
           <label>Currency</label>
-          <select
-            className="field"
-            value={target}
-            onChange={(e) => {
-              const nxt = e.target.value;
-              if (nxt === "USD" || nxt === "EUR" || nxt === "GBP") {
-                setTarget(nxt);
-                if (selSymbol) confirmSymbol(selSymbol);
-              }
-            }}
-          >
-            <option value="USD">USD</option>
-            <option value="EUR">EUR</option>
-            <option value="GBP">GBP</option>
-          </select>
-          {(sourceCurrency && target && target !== sourceCurrency && Number.isFinite(fxRateRef.current)) ? (
-            <div className="small muted" style={{ marginTop: 6 }}>
-              {sourceCurrency} → {target} @ {fxRateRef.current.toFixed(4)}
-            </div>
-          ) : null}
+          <input className="field" value={currency || ""} readOnly />
         </div>
 
-        {/* Spot S (display currency) */}
+        {/* Spot S */}
         <div className="fg">
           <label>S</label>
           <input className="field" value={fmtMoney(spot, currency)} readOnly />
+          <div className="small muted">
+            {lastTs ? `Last updated ${new Date(lastTs).toLocaleTimeString([], { hour12: false })} · ${session || "At close"}` : ""}
+          </div>
         </div>
 
         {/* ---- Time (basis only) ---- */}
@@ -415,7 +353,8 @@ export default function CompanyCard({
             className="field"
             aria-label="Time basis"
             value={basis}
-            onChange={(e) => setBasis(Number(e.target.value))}
+            onChange={() => { /* basis UI moved to header; read-only here */ }}
+            disabled
           >
             <option value={365}>365</option>
             <option value={252}>252</option>
