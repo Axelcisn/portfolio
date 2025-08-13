@@ -7,7 +7,11 @@ import { useEffect, useState, useCallback } from "react";
  * Apple-style health button for Yahoo session.
  * - Blue (ok), Red (bad), neutral while checking/repairing.
  * - Click to repair when in "bad" state.
- * - Inner ring now matches background (not tinted).
+ * - Inner ring matches background (not tinted).
+ *
+ * Wiring fixes:
+ *  - GET /api/yahoo/session → read j.data.ok (not j.ok)
+ *  - POST /api/yahoo/session → repair (was /api/yahoo/repair)
  */
 export default function YahooHealthButton() {
   const [state, setState] = useState("checking"); // checking | ok | bad | repairing
@@ -17,7 +21,9 @@ export default function YahooHealthButton() {
       setState((s) => (s === "repairing" ? s : "checking"));
       const r = await fetch("/api/yahoo/session", { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
-      setState(j?.ok ? "ok" : "bad");
+      // Treat session as healthy only if server says ok AND cookie exists
+      const healthy = !!(j?.data?.ok && j?.data?.hasCookie);
+      setState(healthy ? "ok" : "bad");
     } catch {
       setState("bad");
     }
@@ -26,9 +32,10 @@ export default function YahooHealthButton() {
   const repair = useCallback(async () => {
     try {
       setState("repairing");
-      await fetch("/api/yahoo/repair", { method: "POST" });
+      // use POST /api/yahoo/session to refresh cookie+crumb
+      await fetch("/api/yahoo/session", { method: "POST" });
     } catch {
-      // ignore
+      // ignore; we'll reflect status after re-check
     } finally {
       await check();
     }
@@ -104,7 +111,8 @@ export default function YahooHealthButton() {
           border: 1px solid var(--border);
           background: var(--card);
           color: var(--text);
-          transition: border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+          transition: border-color 0.18s ease, box-shadow 0.18s ease,
+            color 0.18s ease, opacity 0.18s ease;
           outline: none;
         }
 
@@ -114,8 +122,8 @@ export default function YahooHealthButton() {
           position: absolute;
           inset: 6px;
           border-radius: 10px;
-          border: 2px solid var(--card); /* <- background color, not currentColor */
-          opacity: 1;                     /* fully blended with background */
+          border: 2px solid var(--card); /* background color, not currentColor */
+          opacity: 1;
           pointer-events: none;
           transition: opacity 0.18s ease;
         }
@@ -126,7 +134,11 @@ export default function YahooHealthButton() {
 
         /* State colors affect only outer border + icon */
         .yhb.is-ok {
-          border-color: color-mix(in srgb, var(--accent, #3b82f6) 60%, var(--border));
+          border-color: color-mix(
+            in srgb,
+            var(--accent, #3b82f6) 60%,
+            var(--border)
+          );
           color: var(--accent, #3b82f6);
         }
 
