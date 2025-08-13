@@ -137,6 +137,9 @@ export default function ChainTable({
     return sorted.slice(0, limit);
   }, [rows, sortDir, rowLimit]);
 
+  const arrowChar = sortDir === "desc" ? "↓" : "↑";
+  const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
+
   return (
     <div className="wrap" aria-live="polite">
       <div className="heads">
@@ -151,8 +154,8 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">Ask</div>
         <div className="c cell" role="columnheader">Bid</div>
 
-        <div className="mid cell" role="columnheader">
-          <span className="arrow" aria-hidden="true">↑</span> Strike
+        <div className="mid cell" role="columnheader" aria-sort={ariaSort}>
+          <span className="arrow" aria-hidden="true">{arrowChar}</span> Strike
         </div>
         <div className="mid cell" role="columnheader">IV, %</div>
 
@@ -177,38 +180,38 @@ export default function ChainTable({
               </>
             )}
           </div>
-          {/* meta line intentionally removed */}
         </div>
       )}
 
       {/* Rows */}
       {status === "ready" && (
-        <>
-          {/* meta-top intentionally removed */}
-          <div className="body">
-            {visible.map((r) => (
-              <div className="grid row" role="row" key={r.strike}>
-                {/* Calls (left) */}
-                <div className="c cell val">{fmt(r?.call?.price)}</div>
-                <div className="c cell val">{fmt(r?.call?.ask)}</div>
-                <div className="c cell val">{fmt(r?.call?.bid)}</div>
+        <div className="body">
+          {visible.map((r) => (
+            <div className="grid row" role="row" key={r.strike}>
+              {/* Calls (left) */}
+              <div className="c cell val">{fmt(r?.call?.price)}</div>
+              <div className="c cell val">{fmt(r?.call?.ask)}</div>
+              <div className="c cell val">{fmt(r?.call?.bid)}</div>
 
-                {/* Center */}
-                <div className="mid cell val">{fmt(r.strike)}</div>
-                <div className="mid cell val">{fmt(r.ivPct, 2)}</div>
+              {/* Center */}
+              <div className="mid cell val">{fmt(r.strike)}</div>
+              <div className="mid cell val">{fmt(r.ivPct, 2)}</div>
 
-                {/* Puts (right) */}
-                <div className="p cell val">{fmt(r?.put?.bid)}</div>
-                <div className="p cell val">{fmt(r?.put?.ask)}</div>
-                <div className="p cell val">{fmt(r?.put?.price)}</div>
-              </div>
-            ))}
-          </div>
-        </>
+              {/* Puts (right) */}
+              <div className="p cell val">{fmt(r?.put?.bid)}</div>
+              <div className="p cell val">{fmt(r?.put?.ask)}</div>
+              <div className="p cell val">{fmt(r?.put?.price)}</div>
+            </div>
+          ))}
+        </div>
       )}
 
       <style jsx>{`
-        .wrap{ margin-top:10px; }
+        .wrap{
+          /* define a subtle header color used by “Strike” & “IV, %” */
+          --midHead: color-mix(in srgb, var(--text, #0f172a) 62%, var(--surface, #f7f9fc));
+          margin-top:10px;
+        }
 
         .heads{
           display:flex; align-items:center; justify-content:space-between;
@@ -239,6 +242,12 @@ export default function ChainTable({
           font-weight:700; font-size:13.5px;
           color: var(--text, #2b3442);
         }
+        /* Make “Strike” & “IV, %” refined and consistent */
+        .head-row .mid.cell{
+          color: var(--midHead);
+          font-weight:800;
+          letter-spacing:.01em;
+        }
 
         /* Center-align calls/puts columns */
         .cell{ height:26px; display:flex; align-items:center; }
@@ -246,13 +255,12 @@ export default function ChainTable({
         .p{ justify-content:center; text-align:center; }  /* Puts side */
         .mid{ justify-content:center; text-align:center; }
 
-        /* Subtle, premium tone for middle headers */
-        .head-row .mid.cell{
-          color: color-mix(in srgb, var(--text, #0f172a) 78%, var(--surface, #f7f9fc));
-          font-weight:800;
-          letter-spacing:.01em;
+        /* Arrow tone — accent blended with header color */
+        .arrow{
+          margin-right:6px;
+          font-weight:900;
+          color: color-mix(in srgb, var(--accent, #3b82f6) 70%, var(--midHead) 30%);
         }
-        .arrow{ margin-right:6px; font-weight:900; color: var(--accent, #3b82f6); }
 
         /* Status card */
         .card{
