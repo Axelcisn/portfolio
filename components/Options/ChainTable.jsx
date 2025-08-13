@@ -3,11 +3,35 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-export default function ChainTable({ symbol, currency, provider, groupBy, expiry }) {
+/**
+ * Props:
+ *  - symbol, currency, provider, groupBy, expiry (existing)
+ *  - settings (optional): {
+ *      showBy: "10" | "20" | "all" | "custom",
+ *      customRows?: number,
+ *      sort: "asc" | "desc"
+ *    }
+ */
+export default function ChainTable({
+  symbol,
+  currency,
+  provider,
+  groupBy,
+  expiry,
+  settings, // ← NEW (optional)
+}) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null);      // {spot, currency, expiry}
   const [rows, setRows] = useState([]);        // merged by strike: { strike, call: {...}, put: {...}, ivPct }
+
+  // Safe defaults if settings prop isn't wired yet
+  const s = {
+    showBy: "20",
+    customRows: 25,
+    sort: "asc",
+    ...(settings || {}),
+  };
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
 
@@ -63,6 +87,7 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
     };
     for (const c of calls || []) add("call", c);
     for (const p of puts || []) add("put", p);
+    // Default build is ascending by strike; we'll apply user sort after
     return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
   };
 
@@ -114,8 +139,22 @@ export default function ChainTable({ symbol, currency, provider, groupBy, expiry
     // Re-run when symbol or the selected ISO changes; also react to (m,d) if ISO is missing
   }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
 
-  // Limit rows for readability (you can change count later via settings)
-  const visible = useMemo(() => rows.slice(0, 40), [rows]);
+  // ---- Apply settings: sort + row limit (no visual/layout changes) ----
+  const sortedRows = useMemo(() => {
+    if (s.sort === "desc") return [...rows].reverse();
+    return rows;
+  }, [rows, s.sort]);
+
+  const limit = useMemo(() => {
+    if (s.showBy === "10") return 10;
+    if (s.showBy === "20") return 20;
+    if (s.showBy === "custom") return Math.max(1, Number(s.customRows) || 1);
+    return Infinity; // "all"
+  }, [s.showBy, s.customRows]);
+
+  const visible = useMemo(() => {
+    return Number.isFinite(limit) ? sortedRows.slice(0, limit) : sortedRows;
+  }, [sortedRows, limit]);
 
   return (
     <div className="wrap" aria-live="polite">
