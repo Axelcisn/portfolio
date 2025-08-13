@@ -7,6 +7,7 @@ import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton";
 import RefreshExpiriesButton from "./RefreshExpiriesButton";
+import YahooHealthToaster from "./YahooHealthToaster"; // NEW
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
@@ -326,12 +327,15 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c.1-.42.14-.85.14-1.28"
               />
             </svg>
           </button>
         </div>
       </div>
+
+      {/* Mount the toaster (fixed position; does not affect layout) */}
+      <YahooHealthToaster />
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
