@@ -175,7 +175,8 @@ export default function CompanyCard({
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
 
-    if (j?.ts) setLastTs(j.ts); // capture server ts if present
+    // capture server timestamp if present
+    if (j?.ts) setLastTs(j.ts);
 
     const ccy =
       j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
@@ -197,7 +198,8 @@ export default function CompanyCard({
     if (!Number.isFinite(px) || px <= 0) {
       const c = await fetchSpotFromChart(sym);
       if (Number.isFinite(c) && c > 0) px = c;
-      setLastTs(Date.now()); // chart tick → use "now"
+      // chart has no ts → use "now"
+      setLastTs(Date.now());
     }
 
     setSpot(Number.isFinite(px) ? px : null);
@@ -369,10 +371,6 @@ export default function CompanyCard({
 
   const showVolSkeleton =
     volSrc !== "manual" && (!!selSymbol) && (volLoading || !Number.isFinite(sigma));
-  const showHeaderSkeleton =
-    !!selSymbol && (loading || !Number.isFinite(spot));
-  const showCurrencySkeleton =
-    !!selSymbol && (loading || !currency);
 
   return (
     <section className="company-block">
@@ -383,12 +381,10 @@ export default function CompanyCard({
           {picked?.name ? ` — ${picked.name}` : ""}
           {exchangeLabel ? ` • ${exchangeLabel}` : ""}
 
-          {/* Live spot inline (or skeleton while loading) */}
-          {" • "}
-          {showHeaderSkeleton ? (
-            <span className="skl skl-inline" aria-hidden="true" />
-          ) : (
+          {/* Live spot inline */}
+          {Number.isFinite(spot) && (
             <>
+              {" • "}
               <strong>{fmtMoney(spot, currency)}</strong>
               <span className="muted tiny">{` · Last updated ${fmtLast(lastTs)}`}</span>
             </>
@@ -402,10 +398,7 @@ export default function CompanyCard({
         {/* Currency */}
         <div className="fg">
           <label>Currency</label>
-          <div className="field-wrap">
-            <input className={`field ${showCurrencySkeleton ? "is-pending" : ""}`} value={currency || ""} readOnly />
-            {showCurrencySkeleton && <span className="skl skl-input" aria-hidden="true" />}
-          </div>
+          <input className="field" value={currency || ""} readOnly />
         </div>
 
         {/* ---- Time (basis only) ---- */}
@@ -486,8 +479,6 @@ export default function CompanyCard({
           outline-offset: 2px;
         }
 
-        .field-wrap{ position: relative; }
-
         .vol-wrap{ position: relative; }
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
@@ -500,9 +491,10 @@ export default function CompanyCard({
         .vol-spin.is-on{ opacity:1; }
         @keyframes vs-rot{ to { transform: rotate(360deg); } }
 
-        /* Shimmer skeletons */
+        /* Shimmer skeleton */
         .skl{
-          position:absolute;
+          position:absolute; right:42px; top:50%; height:12px; width:100px;
+          transform: translateY(-50%);
           border-radius: 8px;
           background: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
           overflow:hidden;
@@ -512,20 +504,12 @@ export default function CompanyCard({
           background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
           animation: shimmer 1.15s ease-in-out infinite;
         }
-        /* inline skeleton used in the Selected line for spot */
-        .skl-inline{
-          display:inline-block; width:110px; height:14px; transform:translateY(2px);
-        }
-        /* skeleton overlay inside inputs */
-        .skl-input{
-          right:10px; left:10px; top:50%; height:12px; transform:translateY(-50%);
-        }
         .w-80{ width:120px; }
 
         @keyframes shimmer{ 100% { transform: translateX(100%); } }
 
-        /* Pending value dims text slightly */
-        .field.is-pending{ color: color-mix(in srgb, var(--text, #0f172a) 55%, var(--card, #fff)); }
+        /* Pending value dims text slightly (when no skeleton is active it looks normal) */
+        .field.is-pending{ color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff)); }
       `}</style>
     </section>
   );
