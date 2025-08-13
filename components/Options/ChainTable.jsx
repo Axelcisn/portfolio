@@ -9,12 +9,12 @@ export default function ChainTable({
   provider,
   groupBy,
   expiry,
-  settings, // ← NEW
+  settings, // row count / sort controls from the popover
 }) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
-  const [meta, setMeta] = useState(null); // {spot, currency, expiry}
-  const [rows, setRows] = useState([]);   // merged by strike: { strike, call, put, ivPct }
+  const [meta, setMeta] = useState(null);      // {spot, currency, expiry}
+  const [rows, setRows] = useState([]);        // merged by strike: { strike, call, put, ivPct }
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
 
@@ -25,10 +25,7 @@ export default function ChainTable({
     if (mode === "10") return 10;
     if (mode === "20") return 20;
     if (mode === "all") return Infinity;
-    if (mode === "custom") {
-      const n = Math.max(1, Number(settings?.customRows) || 25);
-      return n;
-    }
+    if (mode === "custom") return Math.max(1, Number(settings?.customRows) || 25);
     return 20;
   }, [settings?.showBy, settings?.customRows]);
 
@@ -82,7 +79,6 @@ export default function ChainTable({
     };
     for (const c of calls || []) add("call", c);
     for (const p of puts || []) add("put", p);
-    // default ascending; we'll handle desc later without reflowing layout
     return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
   };
 
@@ -131,10 +127,9 @@ export default function ChainTable({
     }
     load();
     return () => { cancelled = true; };
-    // Re-run when symbol or the selected ISO changes; also react to (m,d) if ISO is missing
   }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
 
-  // Apply sort + row limit (no visual/layout changes)
+  // Apply sort + row limit
   const visible = useMemo(() => {
     if (!rows?.length) return [];
     const sorted = (sortDir === "desc") ? [...rows].reverse() : rows;
@@ -150,7 +145,7 @@ export default function ChainTable({
         <div className="h-right">Puts</div>
       </div>
 
-      {/* Column headers — unchanged */}
+      {/* Column headers */}
       <div className="grid head-row" role="row">
         <div className="c cell" role="columnheader">Price</div>
         <div className="c cell" role="columnheader">Ask</div>
@@ -182,22 +177,14 @@ export default function ChainTable({
               </>
             )}
           </div>
-          {meta?.expiry && (
-            <div className="meta">
-              Expiry: <b>{meta.expiry}</b>{meta?.spot ? <> • Spot: <b>{fmt(meta.spot)}</b> {meta.currency || ""}</> : null}
-            </div>
-          )}
+          {/* meta line intentionally removed */}
         </div>
       )}
 
       {/* Rows */}
       {status === "ready" && (
         <>
-          {meta?.expiry && (
-            <div className="meta-top">
-              Expiry: <b>{meta.expiry}</b>{meta?.spot ? <> • Spot: <b>{fmt(meta.spot)}</b> {meta.currency || ""}</> : null}
-            </div>
-          )}
+          {/* meta-top intentionally removed */}
           <div className="body">
             {visible.map((r) => (
               <div className="grid row" role="row" key={r.strike}>
@@ -243,6 +230,8 @@ export default function ChainTable({
           gap: 6px 14px;
           align-items:center;
         }
+
+        /* Header row */
         .head-row{
           padding: 8px 0 10px;
           border-top:1px solid var(--border, #E6E9EF);
@@ -250,12 +239,22 @@ export default function ChainTable({
           font-weight:700; font-size:13.5px;
           color: var(--text, #2b3442);
         }
+
+        /* Center-align calls/puts columns */
         .cell{ height:26px; display:flex; align-items:center; }
-        .c{ justify-content:flex-start; }  /* Calls side */
-        .p{ justify-content:flex-end; }    /* Puts side */
+        .c{ justify-content:center; text-align:center; }  /* Calls side */
+        .p{ justify-content:center; text-align:center; }  /* Puts side */
         .mid{ justify-content:center; text-align:center; }
+
+        /* Subtle, premium tone for middle headers */
+        .head-row .mid.cell{
+          color: color-mix(in srgb, var(--text, #0f172a) 78%, var(--surface, #f7f9fc));
+          font-weight:800;
+          letter-spacing:.01em;
+        }
         .arrow{ margin-right:6px; font-weight:900; color: var(--accent, #3b82f6); }
 
+        /* Status card */
         .card{
           border:1px solid var(--border, #E6E9EF);
           border-radius:14px;
@@ -266,13 +265,17 @@ export default function ChainTable({
         }
         .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
         .sub{ opacity:.75; font-size:13px; }
-        .meta{ margin-top:6px; font-size:12.5px; opacity:.85; }
 
+        /* Body rows + hover */
         .body .row{
           padding: 8px 0;
-          border-bottom:1px solid var(--border, #E6E9EF);
+          border-bottom:1px solid color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
+          transition: background .18s ease;
         }
         .body .row:last-child{ border-bottom:0; }
+        .body .row:hover{
+          background: color-mix(in srgb, var(--text, #0f172a) 6%, var(--card, #fff));
+        }
 
         .val{
           font-weight:700; font-size:13.5px; color: var(--text, #0f172a);
@@ -288,33 +291,3 @@ export default function ChainTable({
     </div>
   );
 }
-{/* A-1..A-4 table polish (non-destructive overrides) */}
-<style jsx>{`
-  /* Hide meta line shown above rows when ready */
-  .meta-top{ display:none !important; }
-
-  /* Center-align Call & Put sides (headers and values) */
-  .c, .p{
-    justify-content:center !important;
-    text-align:center !important;
-  }
-
-  /* Professionalize the center headers: ↑ Strike & IV, % */
-  .head-row .mid.cell{
-    /* slightly subtler than default header text */
-    color: color-mix(in srgb, var(--text, #0f172a) 78%, var(--surface, #f7f9fc)) !important;
-    font-weight:800;
-    letter-spacing:.01em;
-  }
-  /* keep the arrow accent crisp */
-  .head-row .arrow{ opacity:1; }
-
-  /* Soft hover over data rows */
-  .body .row{
-    transition: background .18s ease;
-    border-bottom-color: color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
-  }
-  .body .row:hover{
-    background: color-mix(in srgb, var(--text, #0f172a) 6%, var(--card, #fff));
-  }
-`}</style>
