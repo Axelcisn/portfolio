@@ -2,76 +2,120 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import useDebounce from "../../hooks/useDebounce";
+import TickerSearchUnified from "./TickerSearchUnified";
 
+/**
+ * Adapter wrapper to preserve the old TickerSearch API while using the
+ * canonical Apple-style UI from TickerSearchUnified.
+ *
+ * Props (compat):
+ *  - value?: string
+ *  - onPick?: (item) => void          // called when a suggestion is chosen
+ *  - onEnter?: (query: string) => void // called when user presses Enter (no pick)
+ *  - placeholder?: string
+ */
 export default function TickerSearch({
   value = "",
   onPick = () => {},
   onEnter = () => {},
   placeholder = "Type ticker or company…",
 }) {
-  const [q, setQ] = useState(value);
+  const [q, setQ] = useState(value || "");
   const [items, setItems] = useState([]);
-  const [open, setOpen] = useState(false);
-  const debounced = useDebounce(q, 200);
-  const boxRef = useRef(null);
+  const [busy, setBusy] = useState(false);
 
+  // Track whether a selection just happened to avoid double-calling onEnter
+  const justSelectedRef = useRef(false);
+
+  // Keep q in sync with external value
   useEffect(() => { setQ(value || ""); }, [value]);
 
-  useEffect(() => {
-    let abort = false;
-    async function run() {
-      const term = (debounced || "").trim();
-      if (!term) { setItems([]); setOpen(false); return; }
-      try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { cache: "no-store" });
-        const j = await r.json();
-        if (!abort) { setItems(Array.isArray(j?.results) ? j.results : j); setOpen(true); }
-      } catch {
-        if (!abort) { setItems([]); setOpen(false); }
-      }
-    }
-    run();
-    return () => { abort = true; };
-  }, [debounced]);
+  // Cancel in-flight searches
+  const abortRef = useRef(null);
 
-  // close the list after the click finishes so blur doesn't cancel selection
-  const pick = (it) => {
-    onPick(it);
-    setQ(it.symbol || "");
-    setOpen(false);
-  };
+  async function fetchSuggestions(term) {
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    try {
+      setBusy(true);
+      const r = await fetch(`/api/search?q=${encodeURIComponent(term)}`, {
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
+      const j = await r.json().catch(() => ({}));
+
+      const raw =
+        Array.isArray(j) ? j
+        : j?.quotes ?? j?.results ?? j?.data ?? [];
+
+      const mapped = (raw || [])
+        .filter((it) => it && (it.symbol || it.ticker || it.id))
+        .map((it) => ({
+          symbol: it.symbol ?? it.ticker ?? it.id ?? "",
+          name:
+            it.shortname ??
+            it.shortName ??
+            it.longname ??
+            it.longName ??
+            it.name ??
+            "",
+          exchange:
+            it.exchDisp ??
+            it.exchange ??
+            it.exch ??
+            (it.market || ""),
+          currency: it.currency ?? "",
+        }));
+
+      setItems(mapped);
+    } catch (_e) {
+      // silence (aborts/errors); show no results
+      setItems([]);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="relative" ref={boxRef}>
-      <input
-        className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-black"
+    // Capture Enter on the wrapper to support the legacy onEnter prop
+    <div
+      onKeyDownCapture={(e) => {
+        if (e.key === "Enter") {
+          // If a pick just occurred, skip this Enter callback once
+          if (justSelectedRef.current) {
+            // reset the flag for next keypress
+            justSelectedRef.current = false;
+            return;
+          }
+          onEnter(q.trim());
+        }
+      }}
+    >
+      <TickerSearchUnified
         value={q}
+        onChange={(next) => setQ(next)}
         placeholder={placeholder}
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onEnter(q.trim());
+        items={items}
+        busy={busy}
+        // Unified debounces this by 350ms
+        onQueryChange={(term) => {
+          const t = (term || "").trim();
+          if (!t) {
+            if (abortRef.current) abortRef.current.abort();
+            setItems([]);
+            setBusy(false);
+            return;
+          }
+          fetchSuggestions(t);
         }}
-        onFocus={() => { if (items.length) setOpen(true); }}
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onSelect={(it) => {
+          justSelectedRef.current = true;
+          setQ(it?.symbol || "");
+          onPick(it);
+        }}
       />
-
-      {open && items.length > 0 && (
-        <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded border border-gray-300 bg-white shadow">
-          {items.map((it, i) => (
-            <button
-              key={`${it.symbol}-${i}`}
-              type="button"
-              className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-gray-100"
-              onMouseDown={(e) => { e.preventDefault(); pick(it); }}
-            >
-              <div className="w-28 font-semibold text-black">{it.symbol}</div>
-              <div className="flex-1 text-black">{it.name || ""}</div>
-              <div className="shrink-0 text-gray-500">{it.exchDisp || it.exchange || ""}</div>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
