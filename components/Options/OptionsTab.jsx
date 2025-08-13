@@ -8,13 +8,11 @@ import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton"; // keep
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
-  const isClient = typeof window !== "undefined";
-
   // Provider + grouping
-  const [provider, setProvider] = useState("api");     // 'api' | 'upload'
-  const [groupBy, setGroupBy] = useState("expiry");    // 'expiry' | 'strike'
+  const [provider, setProvider] = useState("api"); // 'api' | 'upload'
+  const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
-  // ---- Chain settings ----
+  // ---- Chain settings (persisted) ----
   const SETTINGS_DEFAULT = useMemo(
     () => ({
       showBy: "20",          // "10" | "20" | "all" | "custom"
@@ -26,11 +24,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   );
   const [chainSettings, setChainSettings] = useState(SETTINGS_DEFAULT);
 
-  // Restore settings from localStorage
   useEffect(() => {
-    if (!isClient) return;
     try {
-      const raw = localStorage.getItem("chainSettings.v1");
+      const raw = typeof window !== "undefined" ? localStorage.getItem("chainSettings.v1") : null;
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
@@ -40,23 +36,19 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           cols: { ...(prev.cols || {}), ...((parsed && parsed.cols) || {}) },
         }));
       }
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isClient]);
+  }, []);
 
-  // Persist settings on change
   useEffect(() => {
-    if (!isClient) return;
     try {
-      localStorage.setItem("chainSettings.v1", JSON.stringify(chainSettings));
-    } catch {
-      /* ignore */
-    }
-  }, [chainSettings, isClient]);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("chainSettings.v1", JSON.stringify(chainSettings));
+      }
+    } catch { /* ignore */ }
+  }, [chainSettings]);
 
-  // Toggle sort direction (↑/↓) — passed to ChainTable
+  // Toggle sort direction for the table (via header click)
   const onToggleSort = () =>
     setChainSettings((s) => ({ ...s, sort: s.sort === "asc" ? "desc" : "asc" }));
 
@@ -65,22 +57,11 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { if (isClient) setMounted(true); }, [isClient]);
+  useEffect(() => setMounted(true), []);
 
-  // Keep popover aligned to the gear
   useEffect(() => {
-    if (!isClient || !settingsOpen) return;
-
-    const update = () => {
-      const el = gearRef.current;
-      if (!el || !el.getBoundingClientRect) return;
-      try {
-        setAnchorRect(el.getBoundingClientRect());
-      } catch {
-        /* ignore */
-      }
-    };
-
+    if (!settingsOpen || !gearRef.current) return;
+    const update = () => setAnchorRect(gearRef.current.getBoundingClientRect());
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
@@ -88,21 +69,17 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [settingsOpen, isClient]);
+  }, [settingsOpen]);
 
-  // Close on outside click / ESC
   useEffect(() => {
-    if (!isClient || !settingsOpen) return;
-
+    if (!settingsOpen) return;
     const onDocDown = (e) => {
-      let pop = null;
-      try { pop = document.getElementById("chain-settings-popover"); } catch { /* ignore */ }
-      if (pop?.contains?.(e.target)) return;
-      if (gearRef.current?.contains?.(e.target)) return;
+      const pop = document.getElementById("chain-settings-popover");
+      if (pop?.contains(e.target)) return;
+      if (gearRef.current?.contains(e.target)) return;
       setSettingsOpen(false);
     };
     const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
-
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -111,7 +88,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       document.removeEventListener("touchstart", onDocDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [settingsOpen, isClient]);
+  }, [settingsOpen]);
 
   /* -------------------- Expiries from API -------------------- */
 
@@ -142,6 +119,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
 
+  // NEW: manual refresh key for expiries
+  const [expRefreshKey, setExpRefreshKey] = useState(0);
+  const refreshExpiries = () => setExpRefreshKey((k) => k + 1);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -159,7 +140,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
     load();
     return () => { cancelled = true; };
-  }, [symbol]);
+  }, [symbol, expRefreshKey]); // ← include refresh key
 
   // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
   const groups = useMemo(() => {
@@ -198,9 +179,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     return out;
   }, [apiExpiries, fallbackGroups]);
 
-  // Selected expiry
+  // Selected expiry (month label + day + iso)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16, iso: null });
 
+  // If selection is invalid for current groups, pick the first available
   useEffect(() => {
     if (!groups?.length) return;
     const exists = groups.some((g) => g.m === sel.m && g.items.some((it) => it.day === sel.d));
@@ -218,10 +200,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
   /* ------------------------- Settings portal ------------------------ */
 
-  const canPortal = mounted && isClient && settingsOpen && anchorRect && typeof document !== "undefined";
-
   const settingsPortal =
-    canPortal
+    mounted && settingsOpen && anchorRect
       ? createPortal(
           <div
             id="chain-settings-popover"
@@ -229,9 +209,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             style={{
               position: "fixed",
               zIndex: 1000,
-              top: Math.min((anchorRect?.bottom ?? 0) + 8, window.innerHeight - 16),
+              top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
               left: Math.min(
-                Math.max(12, (anchorRect?.right ?? 0) - 360),
+                Math.max(12, anchorRect.right - 360),
                 window.innerWidth - 360 - 12
               ),
               width: 360,
@@ -313,6 +293,28 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
+        {/* NEW: tiny refresh control */}
+        <div className="exp-bar">
+          <div className="fill" />
+          <button
+            type="button"
+            className={`refresh ${loadingExp ? "is-busy" : ""}`}
+            onClick={refreshExpiries}
+            disabled={loadingExp}
+            aria-busy={loadingExp}
+            aria-label="Refresh expiries"
+            title="Refresh expiries"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M12 5a7 7 0 1 1-6.71 9h2.1A5 5 0 1 0 12 7V4l4 3l-4 3V8a4 4 0 1 1-3.87 5H4.01A7 7 0 0 1 12 5"
+              />
+            </svg>
+            <span>{loadingExp ? "Refreshing…" : "Refresh"}</span>
+          </button>
+        </div>
+
         <div className="expiry" aria-busy={loadingExp ? "true" : "false"}>
           {groups.map((g) => (
             <div className="group" key={g.k || g.m}>
@@ -343,9 +345,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         currency={currency}
         provider={provider}
         groupBy={groupBy}
-        expiry={sel}
-        settings={chainSettings}
-        onToggleSort={onToggleSort}
+        expiry={sel}                 // includes iso when available
+        settings={chainSettings}     // persist + drive table
+        onToggleSort={onToggleSort}  // strike header toggles sort
       />
 
       {/* Settings portal */}
@@ -360,7 +362,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
 
-        /* ---- Buttons ---- */
+        /* ---- Buttons (theme-aware) ---- */
         .pill{
           height:36px; padding:0 14px; border-radius:12px;
           border:1px solid var(--border); background:var(--card);
@@ -394,6 +396,30 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           padding: 2px 0 10px;
           border-bottom: 2px solid var(--border);
         }
+
+        /* NEW: refresh bar */
+        .exp-bar{
+          display:flex; align-items:center; gap:10px;
+          margin-bottom:8px;
+        }
+        .exp-bar .fill{ flex:1; }
+        .refresh{
+          height:30px; padding:0 10px; border-radius:10px;
+          border:1px solid var(--border);
+          background: var(--card);
+          color: var(--text);
+          font-weight:700; font-size:13px; line-height:1;
+          display:inline-flex; align-items:center; gap:8px;
+          transition: border-color .15s ease, background .15s ease, transform .12s ease;
+        }
+        .refresh:hover{ background: color-mix(in srgb, var(--text) 6%, var(--card)); transform: translateY(-1px); }
+        .refresh:disabled{ opacity:.65; cursor:not-allowed; transform:none; }
+        .refresh.is-busy svg{ animation: spin .9s linear infinite; }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to   { transform: rotate(360deg); }
+        }
+
         .expiry{
           display:flex; align-items:flex-start; gap:28px;
           overflow-x:auto; overscroll-behavior-x: contain;
