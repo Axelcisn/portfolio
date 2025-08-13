@@ -5,14 +5,43 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
-import YahooHealthButton from "./YahooHealthButton"; // keep
+import YahooHealthButton from "./YahooHealthButton";
+
+/* ---------- Apple-style Refresh button (icon + styles rely on currentColor) ---------- */
+const RefreshButton = ({ spinning, onClick }) => (
+  <button
+    type="button"
+    className={`refresh ${spinning ? "is-busy" : ""}`}
+    onClick={onClick}
+    aria-label="Refresh expiries"
+    title="Refresh expiries"
+  >
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M20 12a8 8 0 1 1-8-8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 4h5m0 0v5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  </button>
+);
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
   const [provider, setProvider] = useState("api"); // 'api' | 'upload'
   const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
-  // ---- Chain settings ----
+  // ---- Chain settings (persisted) ----
   const SETTINGS_DEFAULT = useMemo(
     () => ({
       showBy: "20",          // "10" | "20" | "all" | "custom"
@@ -24,7 +53,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   );
   const [chainSettings, setChainSettings] = useState(SETTINGS_DEFAULT);
 
-  // Restore settings from localStorage
+  // Restore settings
   useEffect(() => {
     try {
       const raw = typeof window !== "undefined" ? localStorage.getItem("chainSettings.v1") : null;
@@ -37,17 +66,17 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           cols: { ...(prev.cols || {}), ...((parsed && parsed.cols) || {}) },
         }));
       }
-    } catch {} // ignore
+    } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist settings on change
+  // Persist settings
   useEffect(() => {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("chainSettings.v1", JSON.stringify(chainSettings));
       }
-    } catch {}
+    } catch { /* ignore */ }
   }, [chainSettings]);
 
   // Toggle sort (used by ChainTable header)
@@ -119,28 +148,11 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     []
   );
 
-  // Live expiries from /api/expiries
+  // Live expiries loader + manual refresh
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
-
-  // NEW: volume map per expiry & refresh
-  const [expVol, setExpVol] = useState({}); // { 'YYYY-MM-DD': number|null }
-  const [volScanning, setVolScanning] = useState(false);
   const [expRefreshKey, setExpRefreshKey] = useState(0);
-  const refreshExpiries = () => {
-    try {
-      // clear cached volumes for this symbol
-      if (typeof window !== "undefined") {
-        const pre = `optvol.v1|${String(symbol).toUpperCase()}|`;
-        for (let i = sessionStorage.length - 1; i >= 0; i--) {
-          const k = sessionStorage.key(i);
-          if (k && k.startsWith(pre)) sessionStorage.removeItem(k);
-        }
-      }
-    } catch {}
-    setExpVol({});
-    setExpRefreshKey((k) => k + 1);
-  };
+  const refreshExpiries = () => setExpRefreshKey((k) => k + 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,84 +171,13 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
     load();
     return () => { cancelled = true; };
-  }, [symbol, expRefreshKey]);
+  }, [symbol, expRefreshKey]); // includes refresh key
 
-  // ---- Light chain checks for volume (with sessionStorage cache) ----
-  const VOL_TTL = 30 * 60 * 1000;
-  const volKey = (sym, iso) => `optvol.v1|${String(sym).toUpperCase()}|${iso}`;
-  const readVolCache = (sym, iso) => {
-    try {
-      const raw = sessionStorage.getItem(volKey(sym, iso));
-      if (!raw) return null;
-      const { ts, v } = JSON.parse(raw);
-      if (!Number.isFinite(ts) || Date.now() - ts > VOL_TTL) return null;
-      return typeof v === "number" ? v : null;
-    } catch { return null; }
-  };
-  const writeVolCache = (sym, iso, v) => {
-    try { sessionStorage.setItem(volKey(sym, iso), JSON.stringify({ ts: Date.now(), v })); } catch {}
-  };
-
-  useEffect(() => {
-    if (!symbol || !Array.isArray(apiExpiries) || apiExpiries.length === 0) return;
-    let cancelled = false;
-
-    const fetchVolume = async (iso) => {
-      try {
-        const r = await fetch(`/api/options?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(iso)}`, { cache: "no-store" });
-        const j = await r.json();
-        const calls = Array.isArray(j?.data?.calls) ? j.data.calls : [];
-        const puts  = Array.isArray(j?.data?.puts)  ? j.data.puts  : [];
-        const sum = [...calls, ...puts].reduce((acc, o) => acc + (Number.isFinite(o?.volume) ? o.volume : 0), 0);
-        return Number.isFinite(sum) ? sum : 0;
-      } catch {
-        return null; // unknown -> keep visible
-      }
-    };
-
-    (async () => {
-      setVolScanning(true);
-      const list = apiExpiries.slice(); // all expiries returned by API
-      const limit = 3;                  // concurrency
-      let idx = 0;
-
-      const worker = async () => {
-        while (!cancelled && idx < list.length) {
-          const i = idx++;
-          const iso = list[i];
-          if (!iso) continue;
-
-          let v = readVolCache(symbol, iso);
-          if (v == null) {
-            v = await fetchVolume(iso);
-            if (v != null) writeVolCache(symbol, iso, v);
-          }
-          if (cancelled) return;
-
-          setExpVol((prev) => (prev[iso] === v ? prev : { ...prev, [iso]: v }));
-        }
-      };
-
-      await Promise.all(Array.from({ length: limit }, worker));
-      if (!cancelled) setVolScanning(false);
-    })();
-
-    return () => { cancelled = true; };
-  }, [symbol, apiExpiries, expRefreshKey]);
-
-  // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }], hiding confirmed zero-volume expiries
+  // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
   const groups = useMemo(() => {
     if (!apiExpiries || apiExpiries.length === 0) return fallbackGroups;
 
-    // keep unknown volumes visible; hide only when we know it's 0
-    const usable = apiExpiries.filter((iso) => {
-      const v = expVol?.[iso];
-      return v === 0 ? false : true;
-    });
-
-    if (usable.length === 0) return fallbackGroups;
-
-    const parsed = usable
+    const parsed = apiExpiries
       .map((iso) => {
         const d = new Date(iso);
         return Number.isFinite(d?.getTime()) ? { d, iso } : null;
@@ -267,7 +208,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         .sort((a, b) => a.day - b.day);
     }
     return out;
-  }, [apiExpiries, expVol, fallbackGroups]);
+  }, [apiExpiries, fallbackGroups]);
 
   // Selected expiry (month label + day + iso)
   const [sel, setSel] = useState({ m: "Jan ’26", d: 16, iso: null });
@@ -321,24 +262,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         )
       : null;
 
-  // Inline Refresh button (Apple-ish, matches your icon button style)
-  const RefreshButton = ({ spinning, onClick }) => (
-    <button
-      type="button"
-      className={`iconbtn ${spinning ? "is-busy" : ""}`}
-      onClick={onClick}
-      aria-label="Refresh expiries"
-      title="Refresh expiries"
-    >
-      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M12 4a8 8 0 1 1-7.75 10.06a1 1 0 0 1 1.93-.52A6 6 0 1 0 6.7 7.8L8.3 9.4A1 1 0 0 1 7.6 11H4a1 1 0 0 1-1-1V6.4A1 1 0 0 1 4.7 5.7l1.1 1.1A7.96 7.96 0 0 1 12 4z"
-        />
-      </svg>
-    </button>
-  );
-
   return (
     <section className="opt">
       {/* Toolbar */}
@@ -380,7 +303,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
           {/* Health + Refresh + Gear */}
           <YahooHealthButton />
-          <RefreshButton spinning={volScanning || loadingExp} onClick={refreshExpiries} />
+          <RefreshButton spinning={loadingExp} onClick={refreshExpiries} />
 
           <button
             ref={gearRef}
@@ -394,7 +317,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l-2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
               />
             </svg>
           </button>
@@ -435,7 +358,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         groupBy={groupBy}
         expiry={sel}                 // includes iso when available
         settings={chainSettings}     // wire settings to the table
-        onToggleSort={onToggleSort}  // let Strike header toggle sort
+        onToggleSort={onToggleSort}  // Strike header toggles sort
       />
 
       {/* Settings portal */}
@@ -472,12 +395,44 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
         }
 
-        .gear, .iconbtn{
+        .gear{
           height:38px; width:42px; display:inline-flex; align-items:center; justify-content:center;
           border-radius:14px; border:1px solid var(--border); background:var(--card);
           color:var(--text);
         }
-        .iconbtn.is-busy svg{ animation: spin .8s linear infinite; }
+
+        /* ---- Refresh (Apple-like) ---- */
+        .refresh{
+          position: relative;
+          height:38px; width:42px;
+          display:inline-flex; align-items:center; justify-content:center;
+          border-radius:14px;
+          border:1px solid var(--border);
+          background: var(--card);
+          color: var(--text);
+          transition: background .18s ease, border-color .18s ease, transform .06s ease, box-shadow .18s ease, color .18s ease;
+        }
+        .refresh::after{
+          content:"";
+          position:absolute; inset:6px;
+          border-radius:10px;
+          border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+          pointer-events:none;
+        }
+        .refresh:hover{
+          background: color-mix(in srgb, var(--text) 6%, var(--card));
+        }
+        .refresh:active{ transform: translateY(0.5px); }
+        .refresh:focus-visible{
+          outline: 2px solid color-mix(in srgb, var(--accent, #3b82f6) 65%, transparent);
+          outline-offset: 2px;
+        }
+        .refresh.is-busy{
+          color: var(--accent, #3b82f6);
+          border-color: color-mix(in srgb, var(--accent, #3b82f6) 50%, var(--border));
+          box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 22%, transparent);
+        }
+        .refresh.is-busy svg{ animation: spin .9s linear infinite; }
         @keyframes spin{ from{ transform: rotate(0deg); } to{ transform: rotate(360deg); } }
 
         /* ---- Expiry strip (theme-aware) ---- */
