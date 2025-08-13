@@ -9,9 +9,9 @@ import { useEffect, useState, useCallback } from "react";
  * - Click to repair when in "bad" state.
  * - Inner ring matches background (not tinted).
  *
- * Wiring fixes:
- *  - GET /api/yahoo/session → read j.data.ok (not j.ok)
- *  - POST /api/yahoo/session → repair (was /api/yahoo/repair)
+ * Wiring:
+ *  - GET /api/yahoo/session → read j.data (not j.ok)
+ *  - POST /api/yahoo/session → repair (refresh cookie+crumb)
  */
 export default function YahooHealthButton() {
   const [state, setState] = useState("checking"); // checking | ok | bad | repairing
@@ -21,7 +21,6 @@ export default function YahooHealthButton() {
       setState((s) => (s === "repairing" ? s : "checking"));
       const r = await fetch("/api/yahoo/session", { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
-      // Treat session as healthy only if server says ok AND cookie exists
       const healthy = !!(j?.data?.ok && j?.data?.hasCookie);
       setState(healthy ? "ok" : "bad");
     } catch {
@@ -32,10 +31,9 @@ export default function YahooHealthButton() {
   const repair = useCallback(async () => {
     try {
       setState("repairing");
-      // use POST /api/yahoo/session to refresh cookie+crumb
-      await fetch("/api/yahoo/session", { method: "POST" });
+      await fetch("/api/yahoo/session", { method: "POST" }); // refresh session
     } catch {
-      // ignore; we'll reflect status after re-check
+      // ignore; reflect status after re-check
     } finally {
       await check();
     }
@@ -43,7 +41,7 @@ export default function YahooHealthButton() {
 
   useEffect(() => {
     check();
-    const id = setInterval(check, 10 * 60 * 1000);
+    const id = setInterval(check, 10 * 60 * 1000); // background health check
     return () => clearInterval(id);
   }, [check]);
 
