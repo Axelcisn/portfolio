@@ -288,3 +288,33 @@ export default function ChainTable({
     </div>
   );
 }
+{/* A-1..A-4 table polish (non-destructive overrides) */}
+<style jsx>{`
+  /* Hide meta line shown above rows when ready */
+  .meta-top{ display:none !important; }
+
+  /* Center-align Call & Put sides (headers and values) */
+  .c, .p{
+    justify-content:center !important;
+    text-align:center !important;
+  }
+
+  /* Professionalize the center headers: ↑ Strike & IV, % */
+  .head-row .mid.cell{
+    /* slightly subtler than default header text */
+    color: color-mix(in srgb, var(--text, #0f172a) 78%, var(--surface, #f7f9fc)) !important;
+    font-weight:800;
+    letter-spacing:.01em;
+  }
+  /* keep the arrow accent crisp */
+  .head-row .arrow{ opacity:1; }
+
+  /* Soft hover over data rows */
+  .body .row{
+    transition: background .18s ease;
+    border-bottom-color: color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
+  }
+  .body .row:hover{
+    background: color-mix(in srgb, var(--text, #0f172a) 6%, var(--card, #fff));
+  }
+`}</style>
