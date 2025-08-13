@@ -130,105 +130,84 @@ export default function ChainTable({
     return () => { cancelled = true; };
   }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
 
-  // Find the strike closest to spot (for highlight & centering)
-  const closestStrike = useMemo(() => {
-    const spot = Number(meta?.spot);
-    if (!rows?.length || !Number.isFinite(spot)) return null;
-    let best = null;
-    let bestDiff = Infinity;
-    for (const r of rows) {
-      const d = Math.abs(Number(r?.strike) - spot);
-      if (Number.isFinite(d) && d < bestDiff) {
-        bestDiff = d;
-        best = r?.strike ?? null;
-      }
-    }
-    return best;
-  }, [rows, meta?.spot]);
+  /* ---------- ATM-centered window (ATM always included) ---------- */
 
-  // --- ATM-centered window helper
+  // Pick N rows centered around ATM. ATM is always part of the slice.
   function selectAroundATM(sortedAsc, atmIndex, N) {
-    if (!Number.isFinite(atmIndex) || atmIndex < 0) {
-      // Fallback: just take the first N
-      return Number.isFinite(N) ? sortedAsc.slice(0, N) : sortedAsc;
-    }
-    if (!Number.isFinite(N) || N === Infinity) return sortedAsc;
     const len = sortedAsc.length;
-    if (N >= len) return sortedAsc;
+    if (!Number.isFinite(N) || N === Infinity || N >= len) return sortedAsc;
 
-    const isEven = (N % 2 === 0);
-    const half = Math.floor(N / 2);
+    // Fallback ATM index if not found
+    let atm = Number.isFinite(atmIndex) && atmIndex >= 0 ? atmIndex : Math.floor(len / 2);
 
-    // For even N: exact symmetry without ATM (e.g., 10 => 5 below + 5 above)
-    // For odd N: include ATM in the center (e.g., 15 => 7 below + ATM + 7 above)
-    let wantBelow = isEven ? half : half;
-    let wantAbove = isEven ? half : (N - half - 1);
-    const includeATM = !isEven;
+    // Always include ATM; distribute remaining rows around it
+    const remaining = N - 1;
+    let below = Math.floor(remaining / 2);    // e.g., N=10 -> 4
+    let above = remaining - below;            // e.g., N=10 -> 5
 
-    // Collect primary slices
-    const below = [];
-    for (let i = atmIndex - 1; i >= 0 && below.length < wantBelow; i--) below.push(sortedAsc[i]);
-    below.reverse();
+    // Initial window (inclusive)
+    let start = atm - below;
+    let end   = atm + above;
 
-    const center = includeATM ? [sortedAsc[atmIndex]] : [];
-
-    const above = [];
-    for (let i = atmIndex + 1; i < len && above.length < wantAbove; i++) above.push(sortedAsc[i]);
-
-    // If edges clipped, fill remaining from the opposite side
-    let deficit = N - (below.length + center.length + above.length);
-    let leftPtr = atmIndex - 1 - (wantBelow - below.length);
-    let rightPtr = atmIndex + 1 + (wantAbove - above.length);
-
-    while (deficit > 0 && (leftPtr >= 0 || rightPtr < len)) {
-      if (rightPtr < len) { above.push(sortedAsc[rightPtr++]); deficit--; if (deficit <= 0) break; }
-      if (leftPtr >= 0)   { below.unshift(sortedAsc[leftPtr--]); deficit--; }
+    // Shift window if it overflows left
+    if (start < 0) {
+      end += -start;
+      start = 0;
+    }
+    // Shift window if it overflows right
+    if (end > len - 1) {
+      const overshoot = end - (len - 1);
+      start = Math.max(0, start - overshoot);
+      end = len - 1;
     }
 
-    let out = [...below, ...center, ...above];
-
-    // Final safety trim if we somehow exceeded N
-    if (out.length > N) {
-      const extra = out.length - N;
-      out = out.slice(Math.floor(extra / 2), out.length - Math.ceil(extra / 2));
-    }
-    return out;
+    return sortedAsc.slice(start, end + 1);
   }
 
   // Apply ATM-centered selection + sort direction
   const visible = useMemo(() => {
     if (!rows?.length) return [];
 
-    // Ascending base (rows are already asc by strike)
-    const baseAsc = rows;
+    // Ascending base
+    const baseAsc = rows; // buildRows already returns ascending by strike
 
-    if (rowLimit === Infinity) {
-      return sortDir === "desc" ? [...baseAsc].reverse() : baseAsc;
+    // Find ATM index by closest strike to spot
+    const spot = Number(meta?.spot);
+    let atmIdx = null;
+    if (Number.isFinite(spot)) {
+      let bestI = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < baseAsc.length; i++) {
+        const d = Math.abs(baseAsc[i].strike - spot);
+        if (d < bestD) { bestD = d; bestI = i; }
+      }
+      atmIdx = bestI;
     }
 
-    // Find ATM index
-    let atmIdx = -1;
-    if (closestStrike != null) {
-      atmIdx = baseAsc.findIndex((r) => Number(r?.strike) === Number(closestStrike));
-    }
-    if (atmIdx < 0) atmIdx = Math.max(0, Math.floor(baseAsc.length / 2)); // graceful fallback
+    const N = rowLimit === Infinity ? baseAsc.length : Math.max(1, rowLimit);
+    const centeredAsc = selectAroundATM(baseAsc, atmIdx, N);
 
-    const centeredAsc = selectAroundATM(baseAsc, atmIdx, Math.max(1, rowLimit));
-    return sortDir === "desc" ? [...centeredAsc].reverse() : centeredAsc;
-  }, [rows, sortDir, rowLimit, closestStrike]);
+    return (sortDir === "desc") ? [...centeredAsc].reverse() : centeredAsc;
+  }, [rows, rowLimit, sortDir, meta?.spot]);
+
+  // For orange highlight, find the (global) closest strike to spot
+  const closestStrike = useMemo(() => {
+    const spot = Number(meta?.spot);
+    if (!rows?.length || !Number.isFinite(spot)) return null;
+    let best = null, bestDiff = Infinity;
+    for (const r of rows) {
+      const d = Math.abs(Number(r?.strike) - spot);
+      if (Number.isFinite(d) && d < bestDiff) { bestDiff = d; best = r?.strike ?? null; }
+    }
+    return best;
+  }, [rows, meta?.spot]);
 
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
 
-  const handleSortClick = (e) => {
-    e.preventDefault();
-    onToggleSort?.();
-  };
-  const handleSortKey = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onToggleSort?.();
-    }
+  const handleSortClick = (e) => { e.preventDefault(); onToggleSort?.(); };
+  const handleSortKey   = (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleSort?.(); }
   };
 
   return (
