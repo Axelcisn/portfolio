@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTimeBasis } from "../ui/TimeBasisContext";
-import { robustSpot } from "../../lib/spot"; // <-- NEW
 
 /* Exchange pretty labels */
 const EX_NAMES = {
@@ -14,18 +13,12 @@ const EX_NAMES = {
 };
 
 const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
-function fmtMoney(v, ccy = "") {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
-  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
-  return sign + n.toFixed(2);
-}
 function parsePctInput(str) {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
 }
 
-/* ---------- robust price helpers (fallbacks still available if needed) ---------- */
+/* ---------- robust price helpers ---------- */
 function lastFromArray(arr) {
   if (!Array.isArray(arr) || !arr.length) return NaN;
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -73,6 +66,7 @@ function pickSpot(obj) {
     v = lastFromArray(a);
     if (Number.isFinite(v)) return v;
   }
+
   return NaN;
 }
 
@@ -115,14 +109,12 @@ export default function CompanyCard({
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(value?.spot || null);
   const [exchangeLabel, setExchangeLabel] = useState("");
-  const [lastTs, setLastTs] = useState(null);      // <-- NEW (timestamp)
-  const [session, setSession] = useState("");      // <-- NEW (market session label)
 
   /* -------- horizon (days) -------- */
   const [days, setDays] = useState(30);
 
   /* -------- global time basis (365/252) -------- */
-  const { basis } = useTimeBasis(); // persisted, app-wide
+  const { basis, setBasis } = useTimeBasis(); // persisted, app-wide
 
   /* -------- volatility UI state -------- */
   const [volSrc, setVolSrc] = useState("iv");        // 'iv' | 'hist' | 'manual'
@@ -147,32 +139,61 @@ export default function CompanyCard({
      API helpers (robust, with fallbacks)
      ========================= */
 
-  // Replaces the previous /api/company direct read for spot/session,
-  // using the shared robustSpot helper for consistency.
-  async function fetchCompany(sym) {
-    // spot + session + currency via robustSpot
-    const sp = await robustSpot(sym, { nocache: false });
-    setSpot(sp.spot);
-    if (sp.currency) setCurrency(sp.currency);
-    setSession(sp.session || "At close");
-    setLastTs(sp.ts || Date.now());
+  async function fetchSpotFromChart(sym) {
+    try {
+      const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
+      const r = await fetch(u, { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `Chart ${r.status}`);
+      const last = pickLastClose(j);
+      return Number.isFinite(last) ? last : null;
+    } catch {
+      return null;
+    }
+  }
 
-    // Exchange label from picked (preferred) or leave blank
+  async function fetchCompany(sym) {
+    const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+    const j = await r.json();
+    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
+
+    const ccy =
+      j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
+    if (ccy) setCurrency(ccy);
+
+    let px = pickSpot(j);
+    if (!Number.isFinite(px) || px <= 0) {
+      try {
+        const r2 = await fetch(`/api/company/autoFields?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+        const j2 = await r2.json();
+        if (r2.ok && j2?.ok !== false) {
+          const alt = pickSpot(j2);
+          if (Number.isFinite(alt) && alt > 0) px = alt;
+          const c2 = j2.currency || j2.ccy || j2?.quote?.currency;
+          if (c2 && !ccy) setCurrency(c2);
+        }
+      } catch {}
+    }
+    if (!Number.isFinite(px) || px <= 0) {
+      const c = await fetchSpotFromChart(sym);
+      if (Number.isFinite(c) && c > 0) px = c;
+    }
+
+    setSpot(Number.isFinite(px) ? px : null);
     setExchangeLabel(
-      (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) || ""
+      (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) ||
+      j.exchange || j.exchangeName || ""
     );
 
-    // Bubble up minimal info (keep extra fields nullable)
     onConfirm?.({
-      symbol: sp.symbol || sym,
-      name: picked?.name || value?.name || "",
-      exchange: picked?.exchange || null,
-      currency: sp.currency || "",
-      spot: Number.isFinite(sp.spot) ? sp.spot : null,
-      high52: value?.high52 ?? null,
-      low52: value?.low52 ?? null,
-      beta: value?.beta ?? null,
-      basis, // keep header/parent aware of chosen basis
+      symbol: j.symbol || sym,
+      name: j.name || j.longName || j.companyName || picked?.name || "",
+      exchange: picked?.exchange || j.exchange || null,
+      currency: ccy || j.currency || "",
+      spot: Number.isFinite(px) ? px : null,
+      high52: j.high52 ?? j.fiftyTwoWeekHigh ?? null,
+      low52: j.low52 ?? j.fiftyTwoWeekLow ?? null,
+      beta: j.beta ?? null,
     });
   }
 
@@ -269,7 +290,7 @@ export default function CompanyCard({
     };
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-comments
   }, [volSrc, days]);
 
   /* If a value was passed initially, confirm it once on mount */
@@ -279,7 +300,7 @@ export default function CompanyCard({
       setPicked({ symbol: sym, name: value.name || "", exchange: value.exchange || "" });
       confirmSymbol(sym);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-comments
   }, []);
 
   /* Re-fetch sigma when source or days change (debounced ~350ms) */
@@ -294,27 +315,34 @@ export default function CompanyCard({
       fetchSigma(selSymbol, volSrc, days).catch((e) => setMsg(String(e?.message || e)));
     }, 350);
     return () => clearTimeout(daysTimer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-comments
   }, [days, volSrc, selSymbol]);
 
-  /* Lightweight live price poll via robustSpot (aligns with micro-cache TTL) */
+  /* Lightweight live price poll (15s) using chart endpoint only */
   useEffect(() => {
     if (!selSymbol) return;
     let stop = false;
     let id;
     const tick = async () => {
-      try {
-        const sp = await robustSpot(selSymbol, { nocache: false });
-        if (!stop) {
-          if (Number.isFinite(sp.spot)) setSpot(sp.spot);
-          setSession(sp.session || "At close");
-          setLastTs(sp.ts || Date.now());
-        }
-      } catch { /* ignore */ }
-      id = setTimeout(tick, 30000); // ~30s
+      const px = await fetchSpotFromChart(selSymbol);
+      if (!stop && Number.isFinite(px)) {
+        setSpot(px);
+        onConfirm?.({
+          symbol: selSymbol,
+          name: picked?.name || value?.name || "",
+          exchange: picked?.exchange || null,
+          currency,
+          spot: px,
+          high52: value?.high52 ?? null,
+          low52: value?.low52 ?? null,
+          beta: value?.beta ?? null,
+        });
+      }
+      id = setTimeout(tick, 15000);
     };
     tick();
     return () => { stop = true; clearTimeout(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-comments
   }, [selSymbol]);
 
   return (
@@ -337,15 +365,6 @@ export default function CompanyCard({
           <input className="field" value={currency || ""} readOnly />
         </div>
 
-        {/* Spot S */}
-        <div className="fg">
-          <label>S</label>
-          <input className="field" value={fmtMoney(spot, currency)} readOnly />
-          <div className="small muted">
-            {lastTs ? `Last updated ${new Date(lastTs).toLocaleTimeString([], { hour12: false })} · ${session || "At close"}` : ""}
-          </div>
-        </div>
-
         {/* ---- Time (basis only) ---- */}
         <div className="fg">
           <label>Time</label>
@@ -353,8 +372,7 @@ export default function CompanyCard({
             className="field"
             aria-label="Time basis"
             value={basis}
-            onChange={() => { /* basis UI moved to header; read-only here */ }}
-            disabled
+            onChange={(e) => setBasis(Number(e.target.value))}
           >
             <option value={365}>365</option>
             <option value={252}>252</option>
@@ -409,6 +427,13 @@ export default function CompanyCard({
 
       {/* Local minimal styles (keeps Apple-style) */}
       <style jsx>{`
+        .fg { position: relative; } /* ensure child select is a click target */
+        .fg select.field{
+          position: relative;
+          z-index: 2;             /* sit above any sibling overlays */
+          pointer-events: auto;   /* guard against global styles disabling it */
+        }
+
         .vol-wrap{ position: relative; }
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
