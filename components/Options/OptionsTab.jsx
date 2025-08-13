@@ -56,7 +56,56 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const onToggleSort = () =>
     setChainSettings((s) => ({ ...s, sort: s.sort === "asc" ? "desc" : "asc" }));
 
-  // Settings popover
+  // ---------------- Currency bridge (auto-sync, desktop only) ----------------
+  const [liveCurrency, setLiveCurrency] = useState(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem("company.lastCurrency");
+        if (stored) return stored;
+      }
+    } catch { /* ignore */ }
+    return currency;
+  });
+
+  // When parent prop changes (rare), accept it as baseline.
+  useEffect(() => { if (currency && currency !== liveCurrency) setLiveCurrency(currency); }, [currency]); // eslint-disable-line
+
+  // Refresh currency when symbol changes (pull from localStorage)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("company.lastCurrency");
+      if (stored && stored !== liveCurrency) setLiveCurrency(stored);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
+  // React to bridge events from CompanyCurrencyBridge
+  useEffect(() => {
+    const onEvt = (e) => {
+      const cur = e?.detail?.currency;
+      const sym = e?.detail?.symbol;
+      // Update if no symbol guard or it matches current symbol (case-insensitive)
+      if (cur && (!symbol || !sym || String(sym).toUpperCase() === String(symbol).toUpperCase())) {
+        setLiveCurrency(cur);
+      }
+    };
+    window.addEventListener("company-currency", onEvt);
+    return () => window.removeEventListener("company-currency", onEvt);
+  }, [symbol]);
+
+  // Cross-tab currency updates
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === "company.lastCurrency") {
+        const next = e.newValue || "";
+        if (next && next !== liveCurrency) setLiveCurrency(next);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [liveCurrency]);
+
+  // ---------------- Settings popover ----------------
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
@@ -366,12 +415,12 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       {/* Table */}
       <ChainTable
         symbol={symbol}
-        currency={currency}
+        currency={liveCurrency}       // ← auto-synced currency
         provider={provider}
         groupBy={groupBy}
-        expiry={sel}                 // includes iso when available
-        settings={chainSettings}     // wire settings to the table
-        onToggleSort={onToggleSort}  // Strike header toggles sort
+        expiry={sel}                  // includes iso when available
+        settings={chainSettings}      // wire settings to the table
+        onToggleSort={onToggleSort}   // Strike header toggles sort
       />
 
       {/* Settings portal */}
@@ -385,11 +434,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           gap:16px; margin: 6px 0 10px;
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
-
-        /* Ensure ONLY the right-toolbar health button is visible.
-           Hide any stray .yhb within this Options section. */
-        .opt :global(.yhb){ display:none; }
-        .toolbar .right :global(.yhb){ display:inline-flex; }
 
         /* ---- Buttons (theme-aware) ---- */
         .pill{
@@ -427,7 +471,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         }
         .expiry{
           display:flex; align-items:flex-start; gap:28px;
-          overflow-x:auto; overscroll-beavior-x: contain;
+          overflow-x:auto; overscroll-behavior-x: contain;
           -webkit-overflow-scrolling: touch; padding-bottom:6px;
         }
         .expiry[aria-busy="true"] { opacity:.75; }
