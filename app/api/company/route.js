@@ -4,30 +4,56 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";          // use Node runtime (Yahoo blocks some edge fetches)
 export const dynamic = "force-dynamic";   // always fresh
 
+/* ---------------- micro-cache ---------------- */
+
+const TTL_MS = 45 * 1000;                 // 45s micro-cache
+const CACHE = new Map();                  // SYMBOL -> { ts, payload }
+const PENDING = new Map();                // SYMBOL -> Promise<payload>
+
+const now = () => Date.now();
+const key = (s) => String(s || "").toUpperCase();
+
+function getCached(symbol) {
+  const hit = CACHE.get(symbol);
+  if (!hit) return null;
+  if (now() - hit.ts > TTL_MS) {
+    CACHE.delete(symbol);
+    return null;
+  }
+  return hit.payload;
+}
+function setCached(symbol, payload) {
+  CACHE.set(symbol, { ts: now(), payload });
+}
+
 /* ---------------- helpers ---------------- */
 
-const UA = "Mozilla/5.0 (StrategyApp; Node) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119 Safari/537.36";
+const UA =
+  "Mozilla/5.0 (StrategyApp; Node) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119 Safari/537.36";
 
 function normFromQuote(q, symbol) {
   if (!q) return null;
   const spot = Number(
     q.regularMarketPrice ??
-    q.postMarketPrice ??
-    q.preMarketPrice ??
-    q.bid ?? q.ask
+      q.postMarketPrice ??
+      q.preMarketPrice ??
+      q.bid ??
+      q.ask
   );
   const prev = Number(q.regularMarketPreviousClose ?? q.previousClose);
-  const change = Number.isFinite(spot) && Number.isFinite(prev) ? spot - prev : (
-    Number(q.regularMarketChange)
-  );
-  const changePct = Number.isFinite(spot) && Number.isFinite(prev) && prev > 0
-    ? ( (spot - prev) / prev ) * 100
-    : Number(q.regularMarketChangePercent);
+  const change = Number.isFinite(spot) && Number.isFinite(prev)
+    ? spot - prev
+    : Number(q.regularMarketChange);
+  const changePct =
+    Number.isFinite(spot) && Number.isFinite(prev) && prev > 0
+      ? ((spot - prev) / prev) * 100
+      : Number(q.regularMarketChangePercent);
 
   const marketState = (q.marketState || "").toUpperCase();
   const session =
-    marketState === "PRE"  ? "Pre‑market" :
-    marketState === "POST" ? "After hours" : "At close";
+    marketState === "PRE" ? "Pre-market"
+    : marketState === "POST" ? "After hours"
+    : "At close";
 
   return {
     symbol: q.symbol || symbol,
@@ -42,12 +68,19 @@ function normFromQuote(q, symbol) {
     logoUrl: null,
   };
 }
+
 function normFromChart(meta, symbol) {
   if (!meta) return null;
-  const spot = Number(meta.regularMarketPrice ?? meta.chartPreviousClose ?? meta.previousClose);
+  const spot = Number(
+    meta.regularMarketPrice ?? meta.chartPreviousClose ?? meta.previousClose
+  );
   const prev = Number(meta.chartPreviousClose ?? meta.previousClose);
-  const change = Number.isFinite(spot) && Number.isFinite(prev) ? spot - prev : null;
-  const changePct = Number.isFinite(spot) && Number.isFinite(prev) && prev > 0 ? ((spot - prev) / prev) * 100 : null;
+  const change =
+    Number.isFinite(spot) && Number.isFinite(prev) ? spot - prev : null;
+  const changePct =
+    Number.isFinite(spot) && Number.isFinite(prev) && prev > 0
+      ? ((spot - prev) / prev) * 100
+      : null;
   return {
     symbol: meta.symbol || symbol,
     name: meta.longName || meta.shortName || symbol,
@@ -55,7 +88,8 @@ function normFromChart(meta, symbol) {
     currency: meta.currency || "USD",
     spot: Number.isFinite(spot) ? spot : null,
     prevClose: Number.isFinite(prev) ? prev : null,
-    change, changePct,
+    change,
+    changePct,
     marketSession: "At close",
     logoUrl: null,
   };
@@ -65,8 +99,13 @@ function normFromChart(meta, symbol) {
 async function yahoo(symbol) {
   // 1) quote query2
   {
-    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
-    const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store" });
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(
+      symbol
+    )}`;
+    const r = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      cache: "no-store",
+    });
     if (r.ok) {
       const j = await r.json();
       const q = j?.quoteResponse?.result?.[0];
@@ -76,8 +115,13 @@ async function yahoo(symbol) {
   }
   // 2) quote query1 (alt CDN)
   {
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
-    const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store" });
+    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(
+      symbol
+    )}`;
+    const r = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      cache: "no-store",
+    });
     if (r.ok) {
       const j = await r.json();
       const q = j?.quoteResponse?.result?.[0];
@@ -87,8 +131,13 @@ async function yahoo(symbol) {
   }
   // 3) chart meta
   {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
-    const r = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" }, cache: "no-store" });
+    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+      symbol
+    )}?range=1d&interval=1m`;
+    const r = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      cache: "no-store",
+    });
     if (r.ok) {
       const j = await r.json();
       const meta = j?.chart?.result?.[0]?.meta;
@@ -101,8 +150,12 @@ async function yahoo(symbol) {
 
 /* Stooq fallback (very permissive) */
 async function stooq(symbol) {
-  const s = symbol.includes(".") ? symbol.toLowerCase() : `${symbol.toLowerCase()}.us`;
-  const url = `https://stooq.com/q/l/?s=${encodeURIComponent(s)}&f=sd2t2ohlcv&h&e=csv`;
+  const s = symbol.includes(".")
+    ? symbol.toLowerCase()
+    : `${symbol.toLowerCase()}.us`;
+  const url = `https://stooq.com/q/l/?s=${encodeURIComponent(
+    s
+  )}&f=sd2t2ohlcv&h&e=csv`;
   const r = await fetch(url, { cache: "no-store" });
   if (!r.ok) return null;
   const txt = await r.text();
@@ -125,24 +178,70 @@ async function stooq(symbol) {
   };
 }
 
+/* ---------------- route ---------------- */
+
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
-  if (!symbol) return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
-
-  let data = null;
-  try { data = await yahoo(symbol); } catch {}
-  if (!data) {
-    try { data = await stooq(symbol); } catch {}
-  }
-  if (!data) {
-    data = {
-      symbol, name: symbol, exchange: "", currency: "USD",
-      spot: null, prevClose: null, change: null, changePct: null,
-      marketSession: "At close", logoUrl: null,
-    };
+  const symbol = key(searchParams.get("symbol") || "");
+  const noCache = searchParams.get("nocache") === "1";
+  if (!symbol) {
+    return NextResponse.json({ error: "Missing symbol" }, { status: 400 });
   }
 
-  // Always respond 200 with a normalized shape, so the UI never goes into "fetch failed"
-  return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
+  // Serve cached if fresh and not bypassed
+  if (!noCache) {
+    const cached = getCached(symbol);
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+    // Share an in-flight request if present
+    const pending = PENDING.get(symbol);
+    if (pending) {
+      const payload = await pending;
+      return NextResponse.json(payload, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+  }
+
+  // Load fresh data (and de-dup concurrent calls)
+  const promise = (async () => {
+    let data = null;
+    try {
+      data = await yahoo(symbol);
+    } catch {}
+    if (!data) {
+      try {
+        data = await stooq(symbol);
+      } catch {}
+    }
+    if (!data) {
+      data = {
+        symbol,
+        name: symbol,
+        exchange: "",
+        currency: "USD",
+        spot: null,
+        prevClose: null,
+        change: null,
+        changePct: null,
+        marketSession: "At close",
+        logoUrl: null,
+      };
+    }
+    setCached(symbol, data);
+    return data;
+  })();
+
+  if (!noCache) PENDING.set(symbol, promise);
+  try {
+    const payload = await promise;
+    return NextResponse.json(payload, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  } finally {
+    PENDING.delete(symbol);
+  }
 }
