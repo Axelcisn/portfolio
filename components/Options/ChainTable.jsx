@@ -9,7 +9,8 @@ export default function ChainTable({
   provider,
   groupBy,
   expiry,
-  settings, // row count / sort controls from the popover
+  settings,        // row count / sort controls from the popover
+  onToggleSort,    // ← NEW: header click toggles sort
 }) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
@@ -156,8 +157,16 @@ export default function ChainTable({
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
 
-  // Shimmer rows for loading state
-  const shimmerRows = useMemo(() => Array.from({ length: 12 }, (_, i) => i), []);
+  const handleSortClick = (e) => {
+    e.preventDefault();
+    onToggleSort?.();
+  };
+  const handleSortKey = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggleSort?.();
+    }
+  };
 
   return (
     <div className="wrap" aria-live="polite">
@@ -173,9 +182,19 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">Ask</div>
         <div className="c cell" role="columnheader">Bid</div>
 
-        <div className="mid cell strike-hdr" role="columnheader" aria-sort={ariaSort}>
+        {/* Interactive Strike header */}
+        <div
+          className="mid cell strike-hdr"
+          role="columnheader"
+          aria-sort={ariaSort}
+          tabIndex={0}
+          onClick={handleSortClick}
+          onKeyDown={handleSortKey}
+          title="Toggle strike sort"
+        >
           <span className="arrow" aria-hidden="true">{arrowChar}</span> Strike
         </div>
+
         <div className="mid cell iv-hdr" role="columnheader">IV, %</div>
 
         <div className="p cell" role="columnheader">Bid</div>
@@ -184,41 +203,20 @@ export default function ChainTable({
       </div>
 
       {/* States */}
-      {status === "loading" && (
-        <div className="body loading" aria-busy="true">
-          {shimmerRows.map((i) => (
-            <div className="grid row is-loading" role="row" key={`sh-${i}`}>
-              {/* Calls (left) */}
-              <div className="c cell"><div className="shimmer w50" /></div>
-              <div className="c cell"><div className="shimmer w40" /></div>
-              <div className="c cell"><div className="shimmer w45" /></div>
-
-              {/* Center */}
-              <div className="mid cell"><div className="shimmer w55" /></div>
-              <div className="mid cell"><div className="shimmer w35" /></div>
-
-              {/* Puts (right) */}
-              <div className="p cell"><div className="shimmer w45" /></div>
-              <div className="p cell"><div className="shimmer w40" /></div>
-              <div className="p cell"><div className="shimmer w50" /></div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {status === "error" && (
+      {status !== "ready" && (
         <div className="card">
-          <div className="title">Couldn’t load options</div>
-          <div className="sub">{error || "Unknown error"}</div>
-        </div>
-      )}
-
-      {status === "idle" && (
-        <div className="card">
-          <div className="title">No options loaded</div>
+          <div className="title">
+            {status === "loading" ? "Loading options…" : status === "error" ? "Couldn’t load options" : "No options loaded"}
+          </div>
           <div className="sub">
-            Pick a provider or upload a screenshot, then choose an expiry
-            {expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""}.
+            {status === "loading" && "Fetching the chain for the selected expiry."}
+            {status === "error" && (error || "Unknown error")}
+            {status === "idle" && (
+              <>
+                Pick a provider or upload a screenshot, then choose an expiry
+                {expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""}.
+              </>
+            )}
           </div>
         </div>
       )}
@@ -256,9 +254,6 @@ export default function ChainTable({
           --ivCol:     #F27405; /* IV, %  */
           --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
           --spotOrange: #f59e0b;
-          /* shimmer palette */
-          --shA: color-mix(in srgb, var(--surface, #f7f9fc) 70%, transparent);
-          --shB: color-mix(in srgb, var(--surface, #f7f9fc) 40%, var(--card, #fff));
           margin-top:10px;
         }
 
@@ -293,8 +288,20 @@ export default function ChainTable({
         }
 
         /* Color the two center headers */
-        .head-row .strike-hdr{ color: var(--strikeCol); font-weight:800; letter-spacing:.01em; }
-        .head-row .iv-hdr{     color: var(--ivCol);     font-weight:800; letter-spacing:.01em; }
+        .head-row .strike-hdr{
+          color: var(--strikeCol);
+          font-weight:800; letter-spacing:.01em;
+          cursor: pointer; user-select: none;
+          border-radius: 8px;
+        }
+        .head-row .strike-hdr:focus{
+          outline: 2px solid color-mix(in srgb, var(--strikeCol) 60%, transparent);
+          outline-offset: 2px;
+        }
+        .head-row .iv-hdr{
+          color: var(--ivCol);
+          font-weight:800; letter-spacing:.01em;
+        }
 
         /* Center-align columns */
         .cell{ height:26px; display:flex; align-items:center; }
@@ -336,23 +343,6 @@ export default function ChainTable({
 
         .val{
           font-weight:700; font-size:13.5px; color: var(--text, #0f172a);
-        }
-
-        /* ------- Shimmer skeleton ------- */
-        .body.loading .row{ padding: 10px 0; }
-        .shimmer{
-          height:16px; width:60%;
-          border-radius:8px;
-          background: linear-gradient(90deg, var(--shA) 0%, var(--shB) 50%, var(--shA) 100%);
-          background-size: 200% 100%;
-          animation: shimmer 1.1s linear infinite;
-        }
-        .w35{ width:35%; } .w40{ width:40%; } .w45{ width:45%; }
-        .w50{ width:50%; } .w55{ width:55%; }
-
-        @keyframes shimmer{
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
         }
 
         @media (max-width: 980px){
