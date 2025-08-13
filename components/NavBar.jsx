@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import RomeClock from "./RomeClock";
 import ThemeToggle from "./ThemeToggle";
-import NavSearch from "./NavSearch"; // ← compact Apple-style search (auto-confirms on pick)
+import NavSearch from "./ui/NavSearch"; // ← fixed path
 
 const items = [
   { href: "/", label: "Dashboard" },
@@ -31,7 +31,7 @@ export default function NavBar() {
       </div>
 
       <div className="right">
-        {/* Search lives in the navbar; compact and self-styled */}
+        {/* Compact Apple-style search in the navbar */}
         <div className="nav-search" style={{ marginRight: 12 }}>
           <NavSearch />
         </div>
