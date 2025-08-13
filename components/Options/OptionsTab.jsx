@@ -7,7 +7,7 @@ import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton";
 import RefreshExpiriesButton from "./RefreshExpiriesButton";
-import YahooHealthToaster from "./YahooHealthToaster"; // NEW
+import YahooHealthToaster from "./YahooHealthToaster";
 
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
@@ -386,6 +386,11 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         }
         .left, .right{ display:flex; align-items:center; gap:10px; }
 
+        /* Ensure ONLY the right-toolbar health button is visible.
+           Hide any stray .yhb within this Options section. */
+        .opt :global(.yhb){ display:none; }
+        .toolbar .right :global(.yhb){ display:inline-flex; }
+
         /* ---- Buttons (theme-aware) ---- */
         .pill{
           height:36px; padding:0 14px; border-radius:12px;
@@ -422,7 +427,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         }
         .expiry{
           display:flex; align-items:flex-start; gap:28px;
-          overflow-x:auto; overscroll-behavior-x: contain;
+          overflow-x:auto; overscroll-beavior-x: contain;
           -webkit-overflow-scrolling: touch; padding-bottom:6px;
         }
         .expiry[aria-busy="true"] { opacity:.75; }
