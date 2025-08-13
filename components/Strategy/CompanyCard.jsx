@@ -12,6 +12,8 @@ const EX_NAMES = {
   TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
 
+const STORAGE_KEY = "companyCard.v1";
+
 const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
 function fmtMoney(v, ccy = "") {
   const n = Number(v);
@@ -110,6 +112,41 @@ function pickLastClose(j) {
     j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
     j?.regularMarketPrice;
   return Number.isFinite(metaPx) ? metaPx : null;
+}
+
+/* Safe storage helpers */
+function readSaved() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== "object") return null;
+    if (!j.symbol || typeof j.symbol !== "string") return null;
+    const out = {
+      symbol: j.symbol.toUpperCase(),
+      name: typeof j.name === "string" ? j.name : "",
+      exchange: typeof j.exchange === "string" ? j.exchange : "",
+      currency: typeof j.currency === "string" ? j.currency : "",
+      spot: Number.isFinite(j.spot) ? Number(j.spot) : null,
+      days: Number.isFinite(j.days) ? Math.max(1, Math.min(365, Number(j.days))) : 30,
+      volSrc: ["iv", "hist", "manual"].includes(j.volSrc) ? j.volSrc : "iv",
+      sigma: typeof j.sigma === "number" ? j.sigma : null,
+      ts: Number.isFinite(j.ts) ? Number(j.ts) : null,
+    };
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function writeSaved(state) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, ts: Date.now() }));
+  } catch {
+    /* ignore storage errors */
+  }
 }
 
 export default function CompanyCard({
@@ -334,6 +371,9 @@ export default function CompanyCard({
           if (vSeq === volSeqRef.current) setVolLoading(false);
         }
       }
+
+      // Persist after a successful confirm flow
+      saveSelection(s);
     } catch (e) {
       if (e?.name !== "AbortError") setMsg(String(e?.message || e));
     } finally {
@@ -345,7 +385,11 @@ export default function CompanyCard({
   /* Re-fetch sigma when source or days change (debounced, cancel-safe) */
   const debounceRef = useRef(null);
   useEffect(() => {
-    if (!selSymbol || volSrc === "manual") return;
+    if (!selSymbol || volSrc === "manual") {
+      // still persist edits (days) even if not fetching
+      saveSelection(selSymbol);
+      return;
+    }
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       abortIfAny(volCtrlRef);
@@ -355,11 +399,21 @@ export default function CompanyCard({
       setVolLoading(true);
       fetchSigma(selSymbol, volSrc, days, vSignal, vSeq)
         .catch((e) => { if (e?.name !== "AbortError") setMsg(String(e?.message || e)); })
-        .finally(() => { if (vSeq === volSeqRef.current) setVolLoading(false); });
+        .finally(() => { if (vSeq === volSeqRef.current) setVolLoading(false); saveSelection(selSymbol); });
     }, 350);
     return () => clearTimeout(debounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
+
+  /* Manual sigma changes → persist quickly */
+  const saveManualRef = useRef(null);
+  useEffect(() => {
+    if (volSrc !== "manual" || !selSymbol) return;
+    clearTimeout(saveManualRef.current);
+    saveManualRef.current = setTimeout(() => saveSelection(selSymbol), 250);
+    return () => clearTimeout(saveManualRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigma, selSymbol, volSrc]);
 
   /* Lightweight live price poll (15s). Uses chart endpoint only; safe for 401s. */
   useEffect(() => {
@@ -388,6 +442,8 @@ export default function CompanyCard({
           low52: value?.low52 ?? null,
           beta: value?.beta ?? null,
         });
+        // Persist fresh spot
+        saveSelection(selSymbol, px);
       }
       id = setTimeout(tick, 15000);
     };
@@ -396,6 +452,77 @@ export default function CompanyCard({
     return () => { stopped = true; clearTimeout(id); abortIfAny(pollCtrlRef); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selSymbol]);
+
+  /* ---------- Load from storage on mount, then background refresh ---------- */
+  useEffect(() => {
+    const saved = readSaved();
+    if (!saved) return;
+    // Prime UI immediately
+    setTyped(saved.symbol);
+    setPicked({ symbol: saved.symbol, name: saved.name || "", exchange: saved.exchange || "" });
+    setCurrency(saved.currency || "");
+    if (Number.isFinite(saved.spot)) setSpot(saved.spot);
+    setDays(saved.days ?? 30);
+    setVolSrc(saved.volSrc || "iv");
+    if (typeof saved.sigma === "number") setSigma(saved.sigma);
+
+    // Notify parent with cached info
+    onConfirm?.({
+      symbol: saved.symbol,
+      name: saved.name || "",
+      exchange: saved.exchange || null,
+      currency: saved.currency || "",
+      spot: Number.isFinite(saved.spot) ? saved.spot : null,
+      high52: value?.high52 ?? null,
+      low52: value?.low52 ?? null,
+      beta: value?.beta ?? null,
+    });
+
+    // Gentle refresh right after paint
+    setTimeout(() => confirmSymbol(saved.symbol), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------- Persist helper ---------- */
+  function buildPersistPayload(symbol, overrideSpot = null) {
+    if (!symbol) return null;
+    return {
+      symbol,
+      name: picked?.name || "",
+      exchange: picked?.exchange || "",
+      currency: currency || "",
+      spot: Number.isFinite(overrideSpot) ? overrideSpot : (Number.isFinite(spot) ? spot : null),
+      days,
+      volSrc,
+      sigma: typeof sigma === "number" ? sigma : null,
+    };
+  }
+  function saveSelection(symbol, overrideSpot = null) {
+    try {
+      const p = buildPersistPayload(symbol, overrideSpot);
+      if (!p) return;
+      writeSaved(p);
+    } catch { /* ignore */ }
+  }
+
+  /* ---------- Clear helper ---------- */
+  function clearSaved() {
+    try { if (typeof window !== "undefined") localStorage.removeItem(STORAGE_KEY); } catch {}
+    // abort any in-flight work
+    abortIfAny(companyCtrlRef); abortIfAny(volCtrlRef); abortIfAny(pollCtrlRef);
+    // reset UI (keep layout intact)
+    setTyped("");
+    setPicked(null);
+    setCurrency("");
+    setSpot(null);
+    setExchangeLabel("");
+    setDays(30);
+    setVolSrc("iv");
+    setSigma(null);
+    setVolMeta(null);
+    setMsg("");
+    onConfirm?.(null);
+  }
 
   return (
     <section className="company-block">
@@ -428,9 +555,18 @@ export default function CompanyCard({
       {/* Selected line */}
       {selSymbol && (
         <div className="company-selected small">
-          <span className="muted">Selected:</span> <strong>{selSymbol}</strong>
+          <span className="muted">Selected:</span>{" "}
+          <strong>{selSymbol}</strong>
           {picked?.name ? ` — ${picked.name}` : ""}
-          {exchangeLabel ? ` • ${exchangeLabel}` : ""}
+          {exchangeLabel ? ` • ${exchangeLabel}` : ""}{" "}
+          <button
+            type="button"
+            className="link-muted"
+            onClick={clearSaved}
+            title="Clear saved selection"
+          >
+            Clear
+          </button>
         </div>
       )}
       {msg && <div className="small" style={{ color: "#ef4444" }}>{msg}</div>}
@@ -516,7 +652,7 @@ export default function CompanyCard({
         </div>
       </div>
 
-      {/* Minimal, scoped styles only for the tiny spinner */}
+      {/* Minimal, scoped styles only for the tiny spinner + clear link */}
       <style jsx>{`
         .vol-wrap{ position:relative; display:flex; gap:10px; }
         .vol-spin{
@@ -528,6 +664,19 @@ export default function CompanyCard({
           pointer-events:none;
         }
         @keyframes vol-rot{ to { transform: translateY(-50%) rotate(360deg); } }
+
+        .link-muted{
+          margin-left:8px;
+          background:none; border:0; padding:0;
+          font-weight:700; font-size:12.5px;
+          color: color-mix(in srgb, var(--text, #0f172a) 55%, transparent);
+          cursor:pointer;
+        }
+        .link-muted:hover{
+          color: var(--text, #0f172a);
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
       `}</style>
     </section>
   );
