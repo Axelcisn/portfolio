@@ -10,7 +10,7 @@ export default function ChainTable({
   groupBy,
   expiry,
   settings,        // row count / sort controls from the popover
-  onToggleSort,    // ← NEW: header click toggles sort
+  onToggleSort,    // header click toggles sort
 }) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
@@ -130,15 +130,7 @@ export default function ChainTable({
     return () => { cancelled = true; };
   }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
 
-  // Apply sort + row limit
-  const visible = useMemo(() => {
-    if (!rows?.length) return [];
-    const sorted = (sortDir === "desc") ? [...rows].reverse() : rows;
-    const limit = rowLimit === Infinity ? sorted.length : rowLimit;
-    return sorted.slice(0, limit);
-  }, [rows, sortDir, rowLimit]);
-
-  // Find the strike closest to spot (to highlight that row)
+  // Find the strike closest to spot (for highlight & centering)
   const closestStrike = useMemo(() => {
     const spot = Number(meta?.spot);
     if (!rows?.length || !Number.isFinite(spot)) return null;
@@ -153,6 +145,77 @@ export default function ChainTable({
     }
     return best;
   }, [rows, meta?.spot]);
+
+  // --- ATM-centered window helper
+  function selectAroundATM(sortedAsc, atmIndex, N) {
+    if (!Number.isFinite(atmIndex) || atmIndex < 0) {
+      // Fallback: just take the first N
+      return Number.isFinite(N) ? sortedAsc.slice(0, N) : sortedAsc;
+    }
+    if (!Number.isFinite(N) || N === Infinity) return sortedAsc;
+    const len = sortedAsc.length;
+    if (N >= len) return sortedAsc;
+
+    const isEven = (N % 2 === 0);
+    const half = Math.floor(N / 2);
+
+    // For even N: exact symmetry without ATM (e.g., 10 => 5 below + 5 above)
+    // For odd N: include ATM in the center (e.g., 15 => 7 below + ATM + 7 above)
+    let wantBelow = isEven ? half : half;
+    let wantAbove = isEven ? half : (N - half - 1);
+    const includeATM = !isEven;
+
+    // Collect primary slices
+    const below = [];
+    for (let i = atmIndex - 1; i >= 0 && below.length < wantBelow; i--) below.push(sortedAsc[i]);
+    below.reverse();
+
+    const center = includeATM ? [sortedAsc[atmIndex]] : [];
+
+    const above = [];
+    for (let i = atmIndex + 1; i < len && above.length < wantAbove; i++) above.push(sortedAsc[i]);
+
+    // If edges clipped, fill remaining from the opposite side
+    let deficit = N - (below.length + center.length + above.length);
+    let leftPtr = atmIndex - 1 - (wantBelow - below.length);
+    let rightPtr = atmIndex + 1 + (wantAbove - above.length);
+
+    while (deficit > 0 && (leftPtr >= 0 || rightPtr < len)) {
+      if (rightPtr < len) { above.push(sortedAsc[rightPtr++]); deficit--; if (deficit <= 0) break; }
+      if (leftPtr >= 0)   { below.unshift(sortedAsc[leftPtr--]); deficit--; }
+    }
+
+    let out = [...below, ...center, ...above];
+
+    // Final safety trim if we somehow exceeded N
+    if (out.length > N) {
+      const extra = out.length - N;
+      out = out.slice(Math.floor(extra / 2), out.length - Math.ceil(extra / 2));
+    }
+    return out;
+  }
+
+  // Apply ATM-centered selection + sort direction
+  const visible = useMemo(() => {
+    if (!rows?.length) return [];
+
+    // Ascending base (rows are already asc by strike)
+    const baseAsc = rows;
+
+    if (rowLimit === Infinity) {
+      return sortDir === "desc" ? [...baseAsc].reverse() : baseAsc;
+    }
+
+    // Find ATM index
+    let atmIdx = -1;
+    if (closestStrike != null) {
+      atmIdx = baseAsc.findIndex((r) => Number(r?.strike) === Number(closestStrike));
+    }
+    if (atmIdx < 0) atmIdx = Math.max(0, Math.floor(baseAsc.length / 2)); // graceful fallback
+
+    const centeredAsc = selectAroundATM(baseAsc, atmIdx, Math.max(1, rowLimit));
+    return sortDir === "desc" ? [...centeredAsc].reverse() : centeredAsc;
+  }, [rows, sortDir, rowLimit, closestStrike]);
 
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
