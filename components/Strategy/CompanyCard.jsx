@@ -147,6 +147,10 @@ export default function CompanyCard({
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
+  /* -------- NEW: cancel-safe sigma fetch -------- */
+  const sigmaAbortRef = useRef(null);
+  const [volLoading, setVolLoading] = useState(false);
+
   /* =========================
      API helpers (robust, with fallbacks)
      ========================= */
@@ -232,16 +236,26 @@ export default function CompanyCard({
    * Try to obtain annualized sigma from:
    *  1) /api/volatility using either ?source=live|historical or ?volSource=...
    *  2) fallback: /api/company/autoFields (it returns sigma too)
+   * Cancel-safe via AbortController to prevent stale writes.
    */
   async function fetchSigma(sym, uiSource, d) {
+    if (!sym || uiSource === "manual") return;
+
+    // cancel any in-flight request
+    try { sigmaAbortRef.current?.abort(); } catch {}
+    const ctrl = new AbortController();
+    sigmaAbortRef.current = ctrl;
+
+    setVolLoading(true);
+    setMsg("");
+
     const mapped = uiSource === "hist" ? "historical" : "live";
 
-    // attempt A: /api/volatility?source=live|historical
     const tryVol = async (paramName) => {
       const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${paramName}=${encodeURIComponent(
         mapped
       )}&days=${encodeURIComponent(d)}`;
-      const r = await fetch(u, { cache: "no-store" });
+      const r = await fetch(u, { cache: "no-store", signal: ctrl.signal });
       const j = await r.json();
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
       return j;
@@ -251,34 +265,39 @@ export default function CompanyCard({
       let j;
       try {
         j = await tryVol("source");
-      } catch {
+      } catch (e1) {
+        if (ctrl.signal.aborted || e1?.name === "AbortError") throw e1;
         // some deployments used volSource instead of source
         j = await tryVol("volSource");
       }
-      setSigma(j?.sigmaAnnual ?? null);
+      if (ctrl.signal.aborted) return;
+      const s = j?.sigmaAnnual ?? null;
+      setSigma(s);
       setVolMeta(j?.meta || null);
       onIvSourceChange?.(mapped === "live" ? "live" : "historical");
-      onIvValueChange?.(j?.sigmaAnnual ?? null);
-      return;
-    } catch (e1) {
+      onIvValueChange?.(s);
+    } catch (e2) {
+      if (ctrl.signal.aborted || e2?.name === "AbortError") return;
       // attempt B: /api/company/autoFields
       try {
         const url = `/api/company/autoFields?symbol=${encodeURIComponent(
           sym
         )}&days=${encodeURIComponent(d)}&volSource=${encodeURIComponent(mapped)}`;
-        const r = await fetch(url, { cache: "no-store" });
+        const r = await fetch(url, { cache: "no-store", signal: ctrl.signal });
         const j = await r.json();
         if (!r.ok || j?.ok === false) throw new Error(j?.error || `AutoFields ${r.status}`);
-
+        if (ctrl.signal.aborted) return;
         const s = j?.sigmaAnnual ?? j?.sigma ?? null;
         setSigma(s);
         setVolMeta(j?.meta || null);
         onIvSourceChange?.(mapped === "live" ? "live" : "historical");
         onIvValueChange?.(s);
-        return;
-      } catch (e2) {
-        throw e2;
+      } catch (e3) {
+        if (ctrl.signal.aborted || e3?.name === "AbortError") return;
+        setMsg(String(e3?.message || e3));
       }
+    } finally {
+      if (!ctrl.signal.aborted) setVolLoading(false);
     }
   }
 
@@ -302,19 +321,34 @@ export default function CompanyCard({
   }
   function confirm(){ return confirmSymbol(selSymbol); }
 
-  /* Re-fetch sigma when source or days change (debounced) */
+  /* Re-fetch sigma when source or days change — cancel-safe + 350ms debounce */
   const daysTimer = useRef(null);
   useEffect(() => {
     if (!selSymbol || volSrc === "manual") return;
+    // abort any in-flight before scheduling the next one
+    try { sigmaAbortRef.current?.abort(); } catch {}
     clearTimeout(daysTimer.current);
     daysTimer.current = setTimeout(() => {
       fetchSigma(selSymbol, volSrc, days).catch((e) =>
         setMsg(String(e?.message || e))
       );
-    }, 400);
+    }, 350);
     return () => clearTimeout(daysTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, volSrc, selSymbol]);
+
+  // If source switches to manual, stop any loading immediately
+  useEffect(() => {
+    if (volSrc === "manual") {
+      try { sigmaAbortRef.current?.abort(); } catch {}
+      setVolLoading(false);
+    }
+  }, [volSrc]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { try { sigmaAbortRef.current?.abort(); } catch {} };
+  }, []);
 
   /* Lightweight live price poll (15s). Uses chart endpoint only; safe for 401s. */
   useEffect(() => {
@@ -416,7 +450,7 @@ export default function CompanyCard({
         {/* Volatility */}
         <div className="fg">
           <label>Volatility</label>
-          <div className="vol-wrap">
+          <div className="vol-wrap" aria-busy={volLoading ? "true" : "false"}>
             <select
               className="field"
               value={volSrc}
@@ -443,12 +477,12 @@ export default function CompanyCard({
                 className="field"
                 readOnly
                 value={
-                  Number.isFinite(sigma)
-                    ? `${(sigma * 100).toFixed(0)}%`
-                    : ""
+                  Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : ""
                 }
               />
             )}
+            {/* tiny inline spinner (Apple-style, no layout shift) */}
+            <span className={`sigma-spin ${volLoading ? "on" : ""}`} aria-hidden="true" />
           </div>
           <div className="small muted">
             {volSrc === "iv" && volMeta?.expiry
@@ -459,6 +493,24 @@ export default function CompanyCard({
           </div>
         </div>
       </div>
+
+      {/* Local, scoped spinner styles only; preserves your design */}
+      <style jsx>{`
+        .vol-wrap{ position: relative; }
+        .sigma-spin{
+          position:absolute;
+          right:10px; top:50%;
+          width:14px; height:14px; margin-top:-7px;
+          border-radius:50%;
+          border:2px solid transparent;
+          border-top-color: color-mix(in srgb, var(--text, #0f172a) 74%, transparent);
+          opacity:0; pointer-events:none;
+          animation: cc-spin .9s linear infinite;
+          transition: opacity .12s ease;
+        }
+        .sigma-spin.on{ opacity:.85; }
+        @keyframes cc-spin{ to { transform: rotate(360deg); } }
+      `}</style>
     </section>
   );
 }
