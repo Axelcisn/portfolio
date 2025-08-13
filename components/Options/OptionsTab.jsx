@@ -7,18 +7,42 @@ import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton"; // keep
 
+const LS_KEY_SETTINGS = "opts:chainSettings:v1";
+
 export default function OptionsTab({ symbol = "", currency = "USD" }) {
   // Provider + grouping
   const [provider, setProvider] = useState("api"); // 'api' | 'upload'
   const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
-  // Chain table settings (NEW — wired to popover & table)
+  // Chain table settings (persisted)
   const [chainSettings, setChainSettings] = useState({
     showBy: "20",       // "10" | "20" | "all" | "custom"
     customRows: 25,
     sort: "asc",        // "asc" | "desc"
     cols: { bid: true, ask: true, price: true },
   });
+
+  // Restore settings from localStorage once on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY_SETTINGS);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      // Merge safely so new defaults survive
+      setChainSettings((prev) => ({
+        ...prev,
+        ...saved,
+        cols: { ...(prev.cols || {}), ...((saved && saved.cols) || {}) },
+      }));
+    } catch {}
+  }, []);
+
+  // Persist settings on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_KEY_SETTINGS, JSON.stringify(chainSettings));
+    } catch {}
+  }, [chainSettings]);
 
   // Settings popover
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -49,7 +73,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (gearRef.current?.contains(e.target)) return;
       setSettingsOpen(false);
     };
-    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
+    const onKey = (e) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -92,7 +118,10 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!symbol) { setApiExpiries(null); return; }
+      if (!symbol) {
+        setApiExpiries(null);
+        return;
+      }
       try {
         setLoadingExp(true);
         const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
@@ -105,7 +134,9 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [symbol]);
 
   // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }]
@@ -135,7 +166,6 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       }
       g.items.push({ day: d.getDate(), iso });
     }
-    // unique + sort days inside month
     for (const g of out) {
       const seen = new Set();
       g.items = g.items
@@ -157,13 +187,11 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       const it0 = g0.items[0];
       setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
     } else if (!sel.iso) {
-      // enrich current selection with iso if we now have it
       const g = groups.find((g) => g.m === sel.m);
       const it = g?.items.find((it) => it.day === sel.d);
       if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups]);
+  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ------------------------- Settings portal ------------------------ */
 
@@ -177,17 +205,13 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
               position: "fixed",
               zIndex: 1000,
               top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(
-                Math.max(12, anchorRect.right - 360),
-                window.innerWidth - 360 - 12
-              ),
+              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
               width: 360,
             }}
             role="dialog"
             aria-modal="true"
             aria-label="Chain table settings"
           >
-            {/* WIRE SETTINGS → panel controls table */}
             <ChainSettings
               settings={chainSettings}
               onChange={setChainSettings}
@@ -293,7 +317,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         provider={provider}
         groupBy={groupBy}
         expiry={sel}                 // includes ISO when available
-        settings={chainSettings}     // ← NEW: table reacts to panel
+        settings={chainSettings}     // persisted
       />
 
       {/* Settings portal */}
