@@ -284,7 +284,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="currentColor"
-                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l-2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c-.06.42-.1.85-.1 1.28s.04.86.1 1.28l-2.07 1.61l2 3.46l2.48-.98c.69.58 1.43 1 2.22 1.28L9.2 23h5.6l.37-3.35c.79-.28 1.53-.7 2.22-1.28l2.48.98l2-3.46l-2.07-1.61c.1-.42.14-.85.14-1.28"
               />
             </svg>
           </button>
@@ -293,25 +293,39 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
-        {/* NEW: tiny refresh control */}
+        {/* Premium refresh control */}
         <div className="exp-bar">
           <div className="fill" />
           <button
             type="button"
-            className={`refresh ${loadingExp ? "is-busy" : ""}`}
+            className={`refreshPro ${loadingExp ? "is-busy" : ""}`}
             onClick={refreshExpiries}
             disabled={loadingExp}
             aria-busy={loadingExp}
             aria-label="Refresh expiries"
             title="Refresh expiries"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            <svg className="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              {/* circular arc (clean stroke) */}
               <path
-                fill="currentColor"
-                d="M12 5a7 7 0 1 1-6.71 9h2.1A5 5 0 1 0 12 7V4l4 3l-4 3V8a4 4 0 1 1-3.87 5H4.01A7 7 0 0 1 12 5"
+                d="M20 12a8 8 0 1 1-2.34-5.66"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {/* corner arrow (clockwise) */}
+              <path
+                d="M20 4v6h-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
             </svg>
-            <span>{loadingExp ? "Refreshing…" : "Refresh"}</span>
+            <span className="txt">{loadingExp ? "Refreshing…" : "Refresh"}</span>
           </button>
         </div>
 
@@ -397,27 +411,48 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           border-bottom: 2px solid var(--border);
         }
 
-        /* NEW: refresh bar */
+        /* Premium refresh button */
         .exp-bar{
           display:flex; align-items:center; gap:10px;
           margin-bottom:8px;
         }
         .exp-bar .fill{ flex:1; }
-        .refresh{
-          height:30px; padding:0 10px; border-radius:10px;
-          border:1px solid var(--border);
+
+        .refreshPro{
+          height:30px; padding:0 12px; border-radius:12px;
+          border:1px solid color-mix(in srgb, var(--border, #E6E9EF) 90%, transparent);
           background: var(--card);
           color: var(--text);
           font-weight:700; font-size:13px; line-height:1;
           display:inline-flex; align-items:center; gap:8px;
-          transition: border-color .15s ease, background .15s ease, transform .12s ease;
+          transition: border-color .15s ease, background .15s ease, transform .12s ease, box-shadow .15s ease;
+          box-shadow: 0 0 0 0 rgba(0,0,0,0);
         }
-        .refresh:hover{ background: color-mix(in srgb, var(--text) 6%, var(--card)); transform: translateY(-1px); }
-        .refresh:disabled{ opacity:.65; cursor:not-allowed; transform:none; }
-        .refresh.is-busy svg{ animation: spin .9s linear infinite; }
+        .refreshPro:hover{
+          background: color-mix(in srgb, var(--text) 6%, var(--card));
+          transform: translateY(-1px);
+          box-shadow: 0 6px 16px rgba(0,0,0,.06);
+        }
+        .refreshPro:focus{
+          outline: none;
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #3b82f6) 50%, transparent);
+        }
+        .refreshPro:disabled{
+          opacity:.65; cursor:not-allowed; transform:none; box-shadow:none;
+        }
+
+        .refreshPro .icon{
+          display:block;
+        }
+        .refreshPro.is-busy .icon{
+          animation: spin .9s linear infinite;
+        }
         @keyframes spin {
           from { transform: rotate(0deg); }
           to   { transform: rotate(360deg); }
+        }
+        .refreshPro .txt{
+          letter-spacing:.01em;
         }
 
         .expiry{
