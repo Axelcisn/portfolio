@@ -1,55 +1,52 @@
-// components/Options/YahooHealthToaster.jsx
+// components/Options/YahooHealthButton.jsx
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
-export default function YahooHealthToaster() {
-  const [mode, setMode] = useState("hidden"); // hidden | bad | repairing | ok
-  const [open, setOpen] = useState(false);
-  const hideT = useRef(null);
-  const justRepaired = useRef(false);
+/**
+ * Apple-style health button for Yahoo session.
+ * - Blue (ok), Red (bad), neutral while checking/repairing.
+ * - Click to repair when in "bad" state.
+ * - Inner ring matches background (not tinted).
+ * - NOW emits CustomEvents so YahooHealthToaster can react immediately.
+ */
+export default function YahooHealthButton() {
+  const [state, setState] = useState("checking"); // checking | ok | bad | repairing
 
-  const clearHideTimer = () => { if (hideT.current) { clearTimeout(hideT.current); hideT.current = null; } };
+  const emit = (next) => {
+    try {
+      window.dispatchEvent(new CustomEvent("yahoo-health", { detail: { state: next } }));
+    } catch { /* no-op */ }
+  };
 
   const check = useCallback(async () => {
     try {
+      setState((s) => {
+        const next = s === "repairing" ? s : "checking";
+        if (next !== s) emit(next);
+        return next;
+      });
+
       const r = await fetch("/api/yahoo/session", { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       const healthy = !!(j?.data?.ok && j?.data?.hasCookie);
 
-      if (!healthy) {
-        clearHideTimer();
-        setMode("bad");
-        setOpen(true);
-      } else {
-        // Only show the blue "OK" toast if this came right after a repair
-        if (justRepaired.current) {
-          setMode("ok");
-          setOpen(true);
-          clearHideTimer();
-          hideT.current = setTimeout(() => setOpen(false), 2200);
-          justRepaired.current = false;
-        } else {
-          setOpen(false);
-          setMode("hidden");
-        }
-      }
+      const next = healthy ? "ok" : "bad";
+      setState(next);
+      emit(next);
     } catch {
-      // Network/parse error → treat as bad to surface action
-      setMode("bad");
-      setOpen(true);
+      setState("bad");
+      emit("bad");
     }
   }, []);
 
   const repair = useCallback(async () => {
     try {
-      clearHideTimer();
-      setMode("repairing");
-      setOpen(true);
+      setState("repairing");
+      emit("repairing");
       await fetch("/api/yahoo/session", { method: "POST" });
-      justRepaired.current = true;
     } catch {
-      // fall through; we'll re-check and surface "bad" again if needed
+      // ignore; we'll re-check below
     } finally {
       await check();
     }
@@ -57,94 +54,128 @@ export default function YahooHealthToaster() {
 
   useEffect(() => {
     check();
-    const id = setInterval(check, 10 * 60 * 1000); // align with button cadence
-    const onVis = () => { if (document.visibilityState === "visible") check(); };
-    window.addEventListener("visibilitychange", onVis);
-    return () => { clearInterval(id); window.removeEventListener("visibilitychange", onVis); clearHideTimer(); };
+    const id = setInterval(check, 10 * 60 * 1000);
+    return () => clearInterval(id);
   }, [check]);
 
-  if (!open) return null;
+  const cls =
+    "yhb " +
+    (state === "ok"
+      ? "is-ok"
+      : state === "bad"
+      ? "is-bad"
+      : state === "repairing"
+      ? "is-repairing"
+      : "is-checking");
+
+  const aria =
+    state === "ok"
+      ? "Yahoo connection healthy"
+      : state === "bad"
+      ? "Yahoo connection needs repair"
+      : state === "repairing"
+      ? "Repairing Yahoo connection"
+      : "Checking Yahoo connection";
 
   return (
     <>
-      <div className={`ytoast ${mode === "bad" ? "is-bad" : mode === "ok" ? "is-ok" : "is-busy"}`} role="status" aria-live="polite">
-        <div className="ico" aria-hidden="true">
-          {mode === "bad" && (
-            <svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5Z" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="M8 12l4 4l4-8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          )}
-          {mode === "ok" && (
-            <svg width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6"/><path d="M8.5 12.2l2.5 2.5l4.5-4.8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          )}
-          {mode === "repairing" && (
-            <svg className="spin" width="18" height="18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" opacity=".3"/><path d="M20 12a8 8 0 0 0-8-8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
-          )}
-        </div>
+      <button
+        type="button"
+        className={cls}
+        aria-label={aria}
+        title={state === "ok" ? "Yahoo OK" : state === "bad" ? "Repair Yahoo" : "Checking Yahoo"}
+        onClick={state === "bad" ? repair : undefined}
+        disabled={state === "checking" || state === "repairing" || state === "ok"}
+      >
+        {/* Minimal shield/check icon */}
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 2.2l7 3v6.1c0 5-3.8 9.2-7 10.9C8.8 20.5 5 16.3 5 11.3V5.2l7-3z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M8.8 12.3l2.3 2.3l4.1-4.1"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
 
-        <div className="txt">
-          {mode === "bad" && <><b>Yahoo blocked.</b> Repair the session to fetch options.</>}
-          {mode === "repairing" && <>Repairing Yahoo session…</>}
-          {mode === "ok" && <>Yahoo connection restored.</>}
-        </div>
-
-        <div className="actions">
-          {mode === "bad" && (
-            <button type="button" className="pill primary" onClick={repair}>Repair</button>
-          )}
-          <button type="button" className="pill ghost" onClick={() => setOpen(false)}>Dismiss</button>
-        </div>
-      </div>
+        {/* Spinner for checking/repairing */}
+        <span className="spin" aria-hidden="true" />
+      </button>
 
       <style jsx>{`
-        .ytoast{
-          position: fixed;
-          right: 16px;
-          bottom: 16px;
-          max-width: min(560px, calc(100vw - 24px));
-          display: flex; align-items: center; gap: 12px;
-          padding: 10px 12px;
+        .yhb {
+          position: relative;
+          height: 38px;
+          width: 42px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           border-radius: 14px;
-          border: 1px solid var(--border, #E6E9EF);
-          background: color-mix(in srgb, var(--card, #fff) 86%, transparent);
-          -webkit-backdrop-filter: saturate(1.8) blur(10px);
-          backdrop-filter: saturate(1.8) blur(10px);
-          color: var(--text, #0f172a);
-          box-shadow: 0 6px 24px rgba(0,0,0,.10);
-          z-index: 1200;
-        }
-        .ico{ display:flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:9px; }
-        .ytoast.is-bad .ico{ color:#ef4444; }
-        .ytoast.is-ok  .ico{ color:var(--accent, #3b82f6); }
-        .ytoast.is-busy .ico{ color: color-mix(in srgb, var(--text) 65%, var(--card)); }
-
-        .txt{ font-size:13.5px; line-height:1.25; }
-        .txt b{ font-weight:800; margin-right:6px; }
-
-        .actions{ display:flex; gap:8px; margin-left:auto; }
-
-        .pill{
-          height:32px; padding:0 12px; border-radius:12px;
-          border:1px solid var(--border); background:var(--card);
-          color: var(--text); font-weight:700; font-size:13px; line-height:1;
-          display:inline-flex; align-items:center; justify-content:center;
-          transition: background .15s ease, border-color .15s ease, opacity .15s ease;
-        }
-        .pill.primary{
-          background: color-mix(in srgb, #ef4444 14%, var(--card));
-          border-color: color-mix(in srgb, #ef4444 45%, var(--border));
-          color:#ef4444;
-        }
-        .pill.ghost{
-          background: color-mix(in srgb, var(--text) 6%, var(--card));
-          border-color: color-mix(in srgb, var(--text) 18%, var(--border));
+          border: 1px solid var(--border);
+          background: var(--card);
+          color: var(--text);
+          transition: border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease, opacity 0.18s ease;
+          outline: none;
         }
 
-        .spin{ animation: spin 0.9s linear infinite; transform-origin:center; }
-        @keyframes spin{ to { transform: rotate(360deg); } }
+        /* Inner ring → match background (no tint) */
+        .yhb::after {
+          content: "";
+          position: absolute;
+          inset: 6px;
+          border-radius: 10px;
+          border: 2px solid var(--card); /* background color, not currentColor */
+          opacity: 1;
+          pointer-events: none;
+          transition: opacity 0.18s ease;
+        }
 
-        @media (max-width: 520px){
-          .ytoast{ right: 10px; bottom: 10px; }
-          .actions{ gap:6px; }
-          .pill{ height:30px; padding:0 10px; font-size:12.5px; }
+        .yhb:hover {
+          box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        /* State colors affect only outer border + icon */
+        .yhb.is-ok {
+          border-color: color-mix(in srgb, var(--accent, #3b82f6) 60%, var(--border));
+          color: var(--accent, #3b82f6);
+        }
+        .yhb.is-bad {
+          border-color: color-mix(in srgb, #ef4444 70%, var(--border));
+          color: #ef4444;
+        }
+        .yhb.is-checking,
+        .yhb.is-repairing {
+          color: color-mix(in srgb, var(--text) 65%, var(--card));
+        }
+
+        .yhb.is-checking .spin,
+        .yhb.is-repairing .spin {
+          opacity: 1;
+        }
+
+        .spin {
+          position: absolute;
+          inset: 5px;
+          border-radius: 12px;
+          border: 2px solid transparent;
+          border-top-color: currentColor;
+          opacity: 0;
+          transition: opacity 0.12s ease;
+          animation: yhb-spin 0.9s linear infinite;
+        }
+
+        @keyframes yhb-spin {
+          to {
+            transform: rotate(360deg);
+          }
         }
       `}</style>
     </>
