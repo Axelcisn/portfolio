@@ -369,6 +369,9 @@ export default function CompanyCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selSymbol]);
 
+  const showVolSkeleton =
+    volSrc !== "manual" && (!!selSymbol) && (volLoading || !Number.isFinite(sigma));
+
   return (
     <section className="company-block">
       {/* Selected line with single source-of-truth price + last updated */}
@@ -415,7 +418,10 @@ export default function CompanyCard({
         {/* Volatility */}
         <div className="fg">
           <label>Volatility</label>
-          <div className="vol-wrap">
+          <div
+            className="vol-wrap"
+            aria-busy={showVolSkeleton ? "true" : "false"}
+          >
             <select
               className="field"
               value={volSrc}
@@ -425,6 +431,7 @@ export default function CompanyCard({
               <option value="hist">Historical Volatility</option>
               <option value="manual">Manual</option>
             </select>
+
             {volSrc === "manual" ? (
               <input
                 className="field"
@@ -439,15 +446,19 @@ export default function CompanyCard({
               />
             ) : (
               <input
-                className="field"
+                className={`field ${showVolSkeleton ? "is-pending" : ""}`}
                 readOnly
                 value={Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : ""}
               />
             )}
 
-            {/* subtle inline spinner (theme-aware) */}
+            {/* inline spinner */}
             <span className={`vol-spin ${volLoading ? "is-on" : ""}`} aria-hidden="true" />
+
+            {/* shimmer skeleton over value when loading/not ready */}
+            {showVolSkeleton && <span className="skl w-80" aria-hidden="true" />}
           </div>
+
           <div className="small muted">
             {volSrc === "iv" && volMeta?.expiry
               ? `IV @ ${volMeta.expiry}${volMeta?.fallback ? " · fallback used" : ""}`
@@ -461,6 +472,13 @@ export default function CompanyCard({
       {/* Local minimal styles (keeps Apple-style) */}
       <style jsx>{`
         .tiny{ font-size: 11.5px; opacity: .75; }
+
+        /* Focus rings (subtle, Apple-like) */
+        .field:focus-visible{
+          outline: 2px solid color-mix(in srgb, var(--text, #0f172a) 28%, transparent);
+          outline-offset: 2px;
+        }
+
         .vol-wrap{ position: relative; }
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
@@ -472,6 +490,26 @@ export default function CompanyCard({
         }
         .vol-spin.is-on{ opacity:1; }
         @keyframes vs-rot{ to { transform: rotate(360deg); } }
+
+        /* Shimmer skeleton */
+        .skl{
+          position:absolute; right:42px; top:50%; height:12px; width:100px;
+          transform: translateY(-50%);
+          border-radius: 8px;
+          background: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
+          overflow:hidden;
+        }
+        .skl::after{
+          content:""; position:absolute; inset:0; transform:translateX(-100%);
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
+          animation: shimmer 1.15s ease-in-out infinite;
+        }
+        .w-80{ width:120px; }
+
+        @keyframes shimmer{ 100% { transform: translateX(100%); } }
+
+        /* Pending value dims text slightly (when no skeleton is active it looks normal) */
+        .field.is-pending{ color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff)); }
       `}</style>
     </section>
   );
