@@ -1,5 +1,4 @@
 // components/Options/OptionsTab.jsx
-// components/Options/OptionsTab.jsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +12,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
   const [provider, setProvider] = useState("api"); // 'api' | 'upload'
   const [groupBy, setGroupBy] = useState("expiry"); // 'expiry' | 'strike'
 
-  // ---- Chain settings (NEW) ----
+  // ---- Chain settings (persisted) ----
   const SETTINGS_DEFAULT = useMemo(
     () => ({
       showBy: "20",          // "10" | "20" | "all" | "custom"
@@ -51,8 +50,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     } catch { /* ignore */ }
   }, [chainSettings]);
 
-  // Toggle sort direction (↑/↓) — passed to ChainTable
-  const onToggleSort = () =>
+  // Toggle sort handler (passed to ChainTable)
+  const handleToggleSort = () =>
     setChainSettings((s) => ({ ...s, sort: s.sort === "asc" ? "desc" : "asc" }));
 
   // Settings popover
@@ -84,9 +83,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       if (gearRef.current?.contains(e.target)) return;
       setSettingsOpen(false);
     };
-    const onKey = (e) => {
-      if (e.key === "Escape") setSettingsOpen(false);
-    };
+    const onKey = (e) => { if (e.key === "Escape") setSettingsOpen(false); };
     document.addEventListener("mousedown", onDocDown);
     document.addEventListener("touchstart", onDocDown);
     window.addEventListener("keydown", onKey);
@@ -328,8 +325,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         provider={provider}
         groupBy={groupBy}
         expiry={sel}                 // includes iso when available
-        settings={chainSettings}     // wire settings to the table
-        onToggleSort={onToggleSort}  // NEW: let Strike header toggle sort
+        settings={chainSettings}     // settings → table
+        onToggleSort={handleToggleSort} // ← NEW
       />
 
       {/* Settings portal */}
