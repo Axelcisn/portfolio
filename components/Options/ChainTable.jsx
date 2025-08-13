@@ -210,6 +210,12 @@ export default function ChainTable({
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleSort?.(); }
   };
 
+  // Shimmer row count (subtle, Apple-like)
+  const shimmerCount = useMemo(() => {
+    if (rowLimit === Infinity) return 12;
+    return Math.max(8, Math.min(14, rowLimit || 12));
+  }, [rowLimit]);
+
   return (
     <div className="wrap" aria-live="polite">
       <div className="heads">
@@ -245,21 +251,41 @@ export default function ChainTable({
       </div>
 
       {/* States */}
-      {status !== "ready" && (
+      {status === "idle" && (
         <div className="card">
-          <div className="title">
-            {status === "loading" ? "Loading options…" : status === "error" ? "Couldn’t load options" : "No options loaded"}
-          </div>
+          <div className="title">No options loaded</div>
           <div className="sub">
-            {status === "loading" && "Fetching the chain for the selected expiry."}
-            {status === "error" && (error || "Unknown error")}
-            {status === "idle" && (
-              <>
-                Pick a provider or upload a screenshot, then choose an expiry
-                {expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""}.
-              </>
-            )}
+            Pick a provider or upload a screenshot, then choose an expiry
+            {expiry?.m && expiry?.d ? ` (e.g., ${expiry.m} ${expiry.d})` : ""}.
           </div>
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="card">
+          <div className="title">Couldn’t load options</div>
+          <div className="sub">{error || "Unknown error"}</div>
+        </div>
+      )}
+
+      {/* Loading shimmer (D1) */}
+      {status === "loading" && (
+        <div className="body is-loading" aria-busy="true" aria-label="Loading options">
+          {Array.from({ length: shimmerCount }).map((_, i) => (
+            <div className="grid row" role="row" aria-hidden="true" key={i}>
+              {/* Calls (left) */}
+              <div className="c cell"><span className="skl w-70" /></div>
+              <div className="c cell"><span className="skl w-60" /></div>
+              <div className="c cell"><span className="skl w-60" /></div>
+              {/* Center */}
+              <div className="mid cell"><span className="skl w-50" /></div>
+              <div className="mid cell"><span className="skl w-45" /></div>
+              {/* Puts (right) */}
+              <div className="p cell"><span className="skl w-60" /></div>
+              <div className="p cell"><span className="skl w-60" /></div>
+              <div className="p cell"><span className="skl w-70" /></div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -296,6 +322,11 @@ export default function ChainTable({
           --ivCol:     #F27405; /* IV, %  */
           --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
           --spotOrange: #f59e0b;
+
+          /* shimmer palette (theme-aware, subtle) */
+          --sk-base: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
+          --sk-sheen: color-mix(in srgb, #ffffff 40%, transparent);
+
           margin-top:10px;
         }
 
@@ -385,6 +416,32 @@ export default function ChainTable({
 
         .val{
           font-weight:700; font-size:13.5px; color: var(--text, #0f172a);
+        }
+
+        /* ---------- Shimmer styles ---------- */
+        .is-loading .row:hover{ background: transparent; } /* keep calm during loading */
+
+        .skl{
+          display:inline-block;
+          height: 14px;
+          border-radius: 8px;
+          background: var(--sk-base);
+          position: relative;
+          overflow: hidden;
+        }
+        .skl::after{
+          content:"";
+          position:absolute; inset:0;
+          transform: translateX(-100%);
+          background: linear-gradient(90deg, transparent, var(--sk-sheen), transparent);
+          animation: shimmer 1.15s ease-in-out infinite;
+        }
+
+        .w-45{ width:45%; } .w-50{ width:50%; } .w-60{ width:60%; }
+        .w-70{ width:70%; }
+
+        @keyframes shimmer{
+          100% { transform: translateX(100%); }
         }
 
         @media (max-width: 980px){
