@@ -137,6 +137,22 @@ export default function ChainTable({
     return sorted.slice(0, limit);
   }, [rows, sortDir, rowLimit]);
 
+  // Find the strike closest to spot (to highlight that row)
+  const closestStrike = useMemo(() => {
+    const spot = Number(meta?.spot);
+    if (!rows?.length || !Number.isFinite(spot)) return null;
+    let best = null;
+    let bestDiff = Infinity;
+    for (const r of rows) {
+      const d = Math.abs(Number(r?.strike) - spot);
+      if (Number.isFinite(d) && d < bestDiff) {
+        bestDiff = d;
+        best = r?.strike ?? null;
+      }
+    }
+    return best;
+  }, [rows, meta?.spot]);
+
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
 
@@ -186,30 +202,36 @@ export default function ChainTable({
       {/* Rows */}
       {status === "ready" && (
         <div className="body">
-          {visible.map((r) => (
-            <div className="grid row" role="row" key={r.strike}>
-              {/* Calls (left) */}
-              <div className="c cell val">{fmt(r?.call?.price)}</div>
-              <div className="c cell val">{fmt(r?.call?.ask)}</div>
-              <div className="c cell val">{fmt(r?.call?.bid)}</div>
+          {visible.map((r) => {
+            const isSpot = closestStrike != null && Number(r.strike) === Number(closestStrike);
+            return (
+              <div className={`grid row ${isSpot ? "is-spot" : ""}`} role="row" key={r.strike}>
+                {/* Calls (left) */}
+                <div className="c cell val">{fmt(r?.call?.price)}</div>
+                <div className="c cell val">{fmt(r?.call?.ask)}</div>
+                <div className="c cell val">{fmt(r?.call?.bid)}</div>
 
-              {/* Center */}
-              <div className="mid cell val">{fmt(r.strike)}</div>
-              <div className="mid cell val">{fmt(r.ivPct, 2)}</div>
+                {/* Center */}
+                <div className="mid cell val">{fmt(r.strike)}</div>
+                <div className="mid cell val">{fmt(r.ivPct, 2)}</div>
 
-              {/* Puts (right) */}
-              <div className="p cell val">{fmt(r?.put?.bid)}</div>
-              <div className="p cell val">{fmt(r?.put?.ask)}</div>
-              <div className="p cell val">{fmt(r?.put?.price)}</div>
-            </div>
-          ))}
+                {/* Puts (right) */}
+                <div className="p cell val">{fmt(r?.put?.bid)}</div>
+                <div className="p cell val">{fmt(r?.put?.ask)}</div>
+                <div className="p cell val">{fmt(r?.put?.price)}</div>
+              </div>
+            );
+          })}
         </div>
       )}
 
       <style jsx>{`
         .wrap{
-          /* define a subtle header color used by “Strike” & “IV, %” */
+          /* refined header color used by “Strike” & “IV, %” */
           --midHead: color-mix(in srgb, var(--text, #0f172a) 62%, var(--surface, #f7f9fc));
+          /* hover and spot-highlight tones */
+          --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
+          --spotOrange: #f59e0b; /* warm, premium orange */
           margin-top:10px;
         }
 
@@ -242,7 +264,6 @@ export default function ChainTable({
           font-weight:700; font-size:13.5px;
           color: var(--text, #2b3442);
         }
-        /* Make “Strike” & “IV, %” refined and consistent */
         .head-row .mid.cell{
           color: var(--midHead);
           font-weight:800;
@@ -274,15 +295,19 @@ export default function ChainTable({
         .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
         .sub{ opacity:.75; font-size:13px; }
 
-        /* Body rows + hover */
+        /* Body rows + hover + spot highlight */
         .body .row{
           padding: 8px 0;
           border-bottom:1px solid color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
-          transition: background .18s ease;
+          transition: background-color .18s ease;
         }
         .body .row:last-child{ border-bottom:0; }
         .body .row:hover{
-          background: color-mix(in srgb, var(--text, #0f172a) 6%, var(--card, #fff));
+          background-color: var(--rowHover);
+        }
+        .body .row.is-spot{
+          background-color: color-mix(in srgb, var(--spotOrange) 20%, transparent);
+          border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
         }
 
         .val{
