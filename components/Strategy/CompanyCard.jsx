@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* Exchange pretty labels */
 const EX_NAMES = {
@@ -12,8 +13,6 @@ const EX_NAMES = {
 };
 
 const clamp = (x, a, b) => Math.min(Math.max(Number(x) || 0, a), b);
-const LS_KEY = "company.last.v1";
-
 function fmtMoney(v, ccy = "") {
   const n = Number(v);
   if (!Number.isFinite(n)) return "";
@@ -119,6 +118,9 @@ export default function CompanyCard({
 
   /* -------- horizon (days) -------- */
   const [days, setDays] = useState(30);
+
+  /* -------- global time basis (365/252) -------- */
+  const { basis, setBasis } = useTimeBasis(); // persisted, app-wide
 
   /* -------- volatility UI state -------- */
   const [volSrc, setVolSrc] = useState("iv");        // 'iv' | 'hist' | 'manual'
@@ -263,37 +265,6 @@ export default function CompanyCard({
     }
   }
 
-  /** Persist last state to localStorage */
-  const saveRef = useRef(0);
-  function persist() {
-    try {
-      if (!selSymbol) return;
-      const safeSigma = Number.isFinite(sigma) ? clamp(sigma, 0, 5) : null; // cap at 500%
-      const payload = {
-        symbol: selSymbol,
-        currency: currency || "",
-        days: clamp(days, 1, 365),
-        vol: { src: (["iv","hist","manual"].includes(volSrc) ? volSrc : "iv"), sigma: safeSigma },
-        savedAt: Date.now()
-      };
-      localStorage.setItem(LS_KEY, JSON.stringify(payload));
-      saveRef.current++;
-    } catch { /* ignore */ }
-  }
-
-  /** Clear saved state and reset local UI (does not touch the nav input) */
-  function clearSaved() {
-    try { localStorage.removeItem(LS_KEY); } catch {}
-    setPicked(null);
-    setCurrency("");
-    setSpot(null);
-    setDays(30);
-    setVolSrc("iv");
-    setSigma(null);
-    setVolMeta(null);
-    setMsg("");
-  }
-
   async function confirmSymbol(sym) {
     const s = (sym || "").toUpperCase();
     if (!s) return;
@@ -307,7 +278,6 @@ export default function CompanyCard({
       } else {
         await fetchSigma(s, volSrc, days);
       }
-      persist();
     } catch (e) {
       setMsg(String(e?.message || e));
     } finally {
@@ -327,41 +297,17 @@ export default function CompanyCard({
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc, days, sigma]);
+  }, [volSrc, days]);
 
-  /* Restore from localStorage once on mount (before any nav event) */
+  /* If a value was passed initially, confirm it once on mount */
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return;
-      const j = JSON.parse(raw);
-      if (!j || typeof j !== "object") return;
-
-      // restore fields (with validation) BEFORE confirming
-      const restoredDays = clamp(j.days ?? 30, 1, 365);
-      const src = (["iv","hist","manual"].includes(j?.vol?.src) ? j.vol.src : "iv");
-      const sgm = Number.isFinite(j?.vol?.sigma) ? clamp(j.vol.sigma, 0, 5) : null;
-      const sym = (j.symbol || "").toUpperCase();
-
-      setDays(restoredDays);
-      setVolSrc(src);
-      setSigma(src === "manual" ? sgm : null);
-      if (j.currency) setCurrency(j.currency);
-
-      if (sym) {
-        setPicked({ symbol: sym, name: "", exchange: "" });
-        // confirm with the restored parameters
-        confirmSymbol(sym);
-      }
-    } catch { /* ignore bad JSON */ }
+    if (value?.symbol) {
+      const sym = value.symbol.toUpperCase();
+      setPicked({ symbol: sym, name: value.name || "", exchange: value.exchange || "" });
+      confirmSymbol(sym);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /* Save whenever core params change (cheap & safe) */
-  useEffect(() => {
-    persist();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selSymbol, currency, days, volSrc, sigma]);
 
   /* Re-fetch sigma when source or days change (debounced ~350ms) */
   const daysTimer = useRef(null);
@@ -397,7 +343,6 @@ export default function CompanyCard({
           low52: value?.low52 ?? null,
           beta: value?.beta ?? null,
         });
-        persist();
       }
       id = setTimeout(tick, 15000);
     };
@@ -414,7 +359,6 @@ export default function CompanyCard({
           <span className="muted">Selected:</span> <strong>{selSymbol}</strong>
           {picked?.name ? ` — ${picked.name}` : ""}
           {exchangeLabel ? ` • ${exchangeLabel}` : ""}
-          <button type="button" className="clear-btn" onClick={clearSaved} title="Clear saved selection">Clear</button>
         </div>
       )}
       {msg && <div className="small" style={{ color: "#ef4444" }}>{msg}</div>}
@@ -433,21 +377,33 @@ export default function CompanyCard({
           <input className="field" value={fmtMoney(spot, currency)} readOnly />
         </div>
 
-        {/* Time (days) */}
+        {/* Time (days + basis) */}
         <div className="fg">
           <label>Time</label>
-          <input
-            className="field"
-            type="number"
-            min={1}
-            max={365}
-            value={days}
-            onChange={(e) => {
-              const v = clamp(e.target.value, 1, 365);
-              setDays(v);
-              onHorizonChange?.(v);
-            }}
-          />
+          <div className="time-wrap">
+            <input
+              className="field"
+              type="number"
+              min={1}
+              max={365}
+              value={days}
+              onChange={(e) => {
+                const v = clamp(e.target.value, 1, 365);
+                setDays(v);
+                onHorizonChange?.(v);
+              }}
+            />
+            <select
+              className="field basis"
+              aria-label="Time basis"
+              value={basis}
+              onChange={(e) => setBasis(Number(e.target.value))}
+            >
+              <option value={365}>365</option>
+              <option value={252}>252</option>
+            </select>
+          </div>
+          <div className="small muted">Basis applies app-wide (Options & metrics)</div>
         </div>
 
         {/* Volatility */}
@@ -496,8 +452,11 @@ export default function CompanyCard({
         </div>
       </div>
 
-      {/* Local minimal styles (spinner + tiny clear link) */}
+      {/* Local minimal styles (keeps Apple-style) */}
       <style jsx>{`
+        .time-wrap{ display:flex; gap:10px; align-items:center; }
+        .field.basis{ width:96px; text-align:center; }
+
         .vol-wrap{ position: relative; }
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
@@ -509,14 +468,6 @@ export default function CompanyCard({
         }
         .vol-spin.is-on{ opacity:1; }
         @keyframes vs-rot{ to { transform: rotate(360deg); } }
-
-        .company-selected{ display:flex; align-items:center; gap:8px; }
-        .clear-btn{
-          border:0; background:transparent; padding:0; margin-left:8px;
-          font-size:12.5px; font-weight:700; color: color-mix(in srgb, var(--text) 55%, var(--bg));
-          cursor:pointer; border-radius:8px;
-        }
-        .clear-btn:hover{ color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
       `}</style>
     </section>
   );
