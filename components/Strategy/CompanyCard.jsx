@@ -105,9 +105,65 @@ function fmtLast(ts) {
   }
 }
 
+/* ========= New helpers for Beta / Market / CAPM ========= */
+
+/** Pull market stats for ERP & r_f (annual, decimals). */
+async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
+  try {
+    const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(
+      currency
+    )}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error || `Market ${r.status}`);
+    return {
+      rAnnual: typeof j?.riskFree?.r === "number" ? j.riskFree.r : null,
+      erp: typeof j?.mrp === "number" ? j.mrp : null,
+    };
+  } catch {
+    return { rAnnual: null, erp: null };
+  }
+}
+
+/** Fetch computed beta with diagnostics; fallback to vendor beta via /api/company. */
+async function fetchBetaStats(sym, benchmark = "^GSPC") {
+  try {
+    const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(
+      benchmark
+    )}&range=5y&interval=1mo`;
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error || `Beta ${r.status}`);
+    const b = typeof j?.beta === "number" ? j.beta : null;
+    if (b == null) throw new Error("no_beta");
+    return b;
+  } catch {
+    try {
+      const rc = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+      const jc = await rc.json();
+      if (!rc.ok) throw new Error(jc?.error || `Company ${rc.status}`);
+      const b2 = typeof jc?.beta === "number" ? jc.beta : null;
+      return b2;
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** CAPM drift (annual): μ = r_f + β·ERP − q */
+function capmMu(rAnnual, beta, erp, q = 0) {
+  const r = Number(rAnnual) || 0;
+  const b = Number(beta) || 0;
+  const e = Number(erp) || 0;
+  const div = Number(q) || 0;
+  return r + b * e - div;
+}
+
+/* ======================================================== */
+
 export default function CompanyCard({
   value = null,
-  market = null,
+  market = null,              // optional: { riskFree, mrp, benchmark }
   onConfirm,
   onHorizonChange,
   onIvSourceChange,
@@ -143,6 +199,21 @@ export default function CompanyCard({
   /* -------- status -------- */
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+
+  /* -------- new market + beta + capm state -------- */
+  const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
+  const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
+  const [benchmark, setBenchmark] = useState(market?.benchmark || "^GSPC");
+  const [beta, setBeta] = useState(typeof value?.beta === "number" ? value.beta : null);
+  const [divPct, setDivPct] = useState("0.00"); // display as percent (e.g., "0.50")
+  const [driftMode, setDriftMode] = useState("CAPM"); // "CAPM" | "RF"
+
+  const qDec = useMemo(() => {
+    const n = parsePctInput(divPct);
+    return Number.isFinite(n) ? n : 0;
+  }, [divPct]);
+
+  const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
 
   /* Abort/stale guards for volatility fetches */
   const volAbortRef = useRef(null);
@@ -207,6 +278,9 @@ export default function CompanyCard({
       (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) ||
       j.exchange || j.exchangeName || ""
     );
+
+    // populate vendor beta if present (fallback)
+    if (typeof j.beta === "number") setBeta(j.beta);
 
     onConfirm?.({
       symbol: j.symbol || sym,
@@ -288,6 +362,12 @@ export default function CompanyCard({
     setLoading(true); setMsg("");
     try {
       await fetchCompany(s);
+
+      // beta for current benchmark (default ^GSPC if none provided)
+      const bench = (market?.benchmark || benchmark || "^GSPC");
+      const b = await fetchBetaStats(s, bench);
+      if (b != null) setBeta(b);
+
       if (volSrc === "manual") {
         cancelVol();
         onIvSourceChange?.("manual");
@@ -314,7 +394,7 @@ export default function CompanyCard({
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc, days]);
+  }, [volSrc, days, benchmark, market?.benchmark]);
 
   /* If a value was passed initially, confirm it once on mount */
   useEffect(() => {
@@ -325,6 +405,32 @@ export default function CompanyCard({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* Refresh beta if benchmark changes (when provided through prop) */
+  useEffect(() => {
+    const bench = market?.benchmark;
+    if (!selSymbol || !bench) return;
+    fetchBetaStats(selSymbol, bench).then((b) => { if (b != null) setBeta(b); });
+  }, [selSymbol, market?.benchmark]);
+
+  /* If Market values come via prop, accept them; otherwise self-fill once. */
+  useEffect(() => {
+    if (typeof market?.riskFree === "number") setRf(market.riskFree);
+    if (typeof market?.mrp === "number") setErp(market.mrp);
+    if (market?.benchmark) setBenchmark(market.benchmark);
+  }, [market?.riskFree, market?.mrp, market?.benchmark]);
+
+  useEffect(() => {
+    // Self-fill if not provided by parent
+    if (rf == null || erp == null) {
+      fetchMarketBasics({ index: "^GSPC", currency: currency || "USD", lookback: "2y" })
+        .then(({ rAnnual, erp }) => {
+          if (rAnnual != null) setRf(rAnnual);
+          if (erp != null) setErp(erp);
+        })
+        .catch(() => {});
+    }
+  }, [rf, erp, currency]);
 
   /* Re-fetch sigma when source or days change (debounced ~350ms) */
   const daysTimer = useRef(null);
@@ -467,6 +573,65 @@ export default function CompanyCard({
               : ""}
           </div>
         </div>
+
+        {/* -------- NEW: Beta (display-only) -------- */}
+        <div className="fg">
+          <label>Beta</label>
+          <input
+            className="field"
+            value={Number.isFinite(beta) ? beta.toFixed(2) : ""}
+            readOnly
+          />
+        </div>
+
+        {/* -------- NEW: Dividend (q) input -------- */}
+        <div className="fg">
+          <label>Dividend (q)</label>
+          <input
+            className="field"
+            placeholder="0.00"
+            value={divPct}
+            onChange={(e) => {
+              // allow digits + dot; format on blur
+              const raw = e.target.value.replace(/[^\d.]/g, "");
+              if (raw === "" || /^\d{0,3}(\.\d{0,2})?$/.test(raw)) {
+                setDivPct(raw);
+              }
+            }}
+            onBlur={() => {
+              const v = parsePctInput(divPct);
+              setDivPct(Number.isFinite(v) ? (v * 100).toFixed(2) : "0.00");
+            }}
+          />
+          <div className="small muted">Enter as percent (e.g., 1.25 = 1.25%).</div>
+        </div>
+
+        {/* -------- NEW: CAPM μ (display-only) -------- */}
+        <div className="fg">
+          <label>CAPM μ</label>
+          <input
+            className="field"
+            value={Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : ""}
+            readOnly
+          />
+          <div className="small muted">
+            μ = r_f + β·ERP − q
+          </div>
+        </div>
+
+        {/* -------- NEW: Drift selector -------- */}
+        <div className="fg">
+          <label>Drift</label>
+          <select
+            className="field"
+            value={driftMode}
+            onChange={(e) => setDriftMode(e.target.value)}
+            title="Choose which drift to apply elsewhere (wiring added later)"
+          >
+            <option value="CAPM">CAPM</option>
+            <option value="RF">Risk-Free Rate</option>
+          </select>
+        </div>
       </div>
 
       {/* Local minimal styles (keeps Apple-style) */}
@@ -487,6 +652,7 @@ export default function CompanyCard({
           border-top-color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff));
           opacity:0; pointer-events:none;
           animation: vs-rot 0.9s linear infinite;
+          transition: opacity 120ms ease;
         }
         .vol-spin.is-on{ opacity:1; }
         @keyframes vs-rot{ to { transform: rotate(360deg); } }
