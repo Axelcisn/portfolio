@@ -1,144 +1,118 @@
-// components/Strategy/BreakevenKpiCell.jsx
+// components/Strategy/BreakEvenKpiCell.jsx
 "use client";
 
 import { useMemo } from "react";
+import { computeBreakEvens } from "../../lib/strategy/breakeven.js";
 
-// Try to consume whatever the lib exposes without hard-coupling a single name.
-import * as be from "../../lib/strategy/breakeven.js";
+const isNum = (x) => Number.isFinite(x);
 
-// --- helpers ---------------------------------------------------------------
-const moneySign = (ccy) =>
-  ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
-const isNum = (x) => Number.isFinite(Number(x));
-const fmt = (v, ccy) =>
-  isNum(v) ? `${moneySign(ccy)}${Number(v).toFixed(2)}` : "—";
-
-// Some lib variants accept rows directly; others want simplified legs.
-// Keep a light adapter in case the lib expects {lc,sc,lp,sp}.
-function rowsToLegsObject(rows) {
-  const out = {
-    lc: { enabled: false, K: null, qty: 0, premium: null },
-    sc: { enabled: false, K: null, qty: 0, premium: null },
-    lp: { enabled: false, K: null, qty: 0, premium: null },
-    sp: { enabled: false, K: null, qty: 0, premium: null },
-  };
+/* Convert Builder rows -> normalized legs for the BE engine */
+function rowsToLegs(rows) {
+  const out = [];
   for (const r of rows || []) {
-    if (!r?.type || !(r.type in out)) continue;
+    if (!r?.enabled) continue;
+
     const K = Number(r.K);
-    const qty = Number(r.qty || 0);
-    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : null;
-    out[r.type] = {
-      enabled: qty !== 0 && Number.isFinite(K),
-      K: Number.isFinite(K) ? K : null,
-      qty,
-      premium: prem,
-    };
+    const qty = Math.abs(Number(r.qty || 0));
+    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : 0;
+
+    if (!qty) continue;
+
+    if (r.type === "lc" || r.type === "sc" || r.type === "lp" || r.type === "sp") {
+      if (!isNum(K)) continue;
+      const kind = r.type[1] === "c" ? "call" : "put";
+      const side = r.type[0] === "l" ? "long" : "short";
+      out.push({ kind, side, strike: K, qty, premium: prem });
+    } else if (r.type === "ls" || r.type === "ss") {
+      // Stock: we store the **basis** in `premium` for the BE library.
+      if (!isNum(K)) continue;
+      const side = r.type === "ls" ? "long" : "short";
+      out.push({ kind: "stock", side, qty, premium: K });
+    }
   }
   return out;
 }
 
-// Pick whichever function the lib exports
-function pickLibFn() {
-  return (
-    be.computeBreakEvenFromRows ||
-    be.computeBreakEven ||
-    be.calcBreakEven ||
-    be.breakEvenFromRows ||
-    be.breakEven ||
-    null
-  );
+/* Also accept the legacy legs-object shape (lc/sc/lp/sp keys) if passed */
+function legsObjectToLegs(obj) {
+  if (!obj || Array.isArray(obj)) return Array.isArray(obj) ? obj : [];
+  const out = [];
+  const map = {
+    lc: { kind: "call", side: "long" },
+    sc: { kind: "call", side: "short" },
+    lp: { kind: "put",  side: "long" },
+    sp: { kind: "put",  side: "short" },
+    ls: { kind: "stock", side: "long" },
+    ss: { kind: "stock", side: "short" },
+  };
+  for (const [k, v] of Object.entries(obj)) {
+    if (!v) continue;
+    const m = map[k]; if (!m) continue;
+    const K = Number(v.K);
+    const qty = Math.abs(Number(v.qty || 0));
+    const prem = Number.isFinite(Number(v.premium)) ? Number(v.premium) : 0;
+    if (!qty) continue;
+    if (m.kind === "stock") {
+      if (!isNum(K)) continue;
+      out.push({ kind: "stock", side: m.side, qty, premium: K });
+    } else {
+      if (!isNum(K)) continue;
+      out.push({ kind: m.kind, side: m.side, strike: K, qty, premium: prem });
+    }
+  }
+  return out;
 }
 
-/**
- * Props:
- *  - rows: PositionBuilder rows
- *  - currency: "USD" | "EUR" | ...
- *  - className: optional to blend with your KPI grid
- */
-export default function BreakevenKpiCell({ rows, currency = "USD", className = "" }) {
+export default function BreakEvenKpiCell({ rows, legs, currency = "USD", inline = false }) {
+  const legsNorm = useMemo(() => {
+    if (Array.isArray(rows)) return rowsToLegs(rows);
+    if (legs && !Array.isArray(legs)) return legsObjectToLegs(legs);
+    return Array.isArray(legs) ? legs : [];
+  }, [rows, legs]);
+
   const result = useMemo(() => {
-    const fn = pickLibFn();
-    if (!rows || !rows.length) {
-      return { kind: "empty" }; // show "—"
-    }
-    if (!fn) {
-      return { kind: "unavailable", reason: "No break-even calculator found in lib." };
-    }
+    try { return computeBreakEvens({ legs: legsNorm }); }
+    catch { return { be: [] }; }
+  }, [legsNorm]);
 
-    try {
-      // Most implementations return either:
-      //  - { be: [number, ...], meta?, error? }
-      //  - [number, ...]
-      //  - { value: [...], ... }
-      const maybe = fn(rows, { allowApprox: true, tolerateMissing: true }) 
-        ?? fn(rowsToLegsObject(rows), { allowApprox: true, tolerateMissing: true });
+  const be = result?.be || [];
 
-      const beArr =
-        Array.isArray(maybe)
-          ? maybe
-          : Array.isArray(maybe?.be)
-          ? maybe.be
-          : Array.isArray(maybe?.value)
-          ? maybe.value
-          : null;
-
-      if (maybe?.error) {
-        return { kind: "error", reason: String(maybe.error) };
-      }
-      if (!beArr || beArr.length === 0 || !beArr.some(isNum)) {
-        return { kind: "unavailable", reason: "Insufficient or incompatible legs." };
-      }
-      const clean = beArr.filter(isNum).slice(0, 2); // we only show up to two BEs in KPI
-      return { kind: "ok", be: clean };
-    } catch (e) {
-      return { kind: "error", reason: String(e?.message || e) };
-    }
-  }, [rows]);
-
-  if (result.kind === "ok") {
-    const [a, b] = result.be;
+  // Inline KPI for the Chart’s “Breakeven” cell
+  if (inline) {
     return (
-      <div className={`be-kpi ${className}`}>
-        {isNum(a) && !isNum(b) && <span className="v">{fmt(a, currency)}</span>}
-        {isNum(a) && isNum(b) && (
-          <span className="v">
-            {fmt(a, currency)} <span className="sep">|</span> {fmt(b, currency)}
-          </span>
-        )}
-      </div>
+      <span
+        className="be-inline"
+        title={be.length ? "" : "Break-even unavailable for current legs"}
+      >
+        {be.length === 0
+          ? "—"
+          : be.length === 1
+          ? be[0].toFixed(2)
+          : `${be[0].toFixed(2)} | ${be[1].toFixed(2)}`}
+      </span>
     );
   }
 
-  if (result.kind === "unavailable" || result.kind === "error") {
-    // Explicit red message when unavailable
-    return (
-      <div className={`be-kpi ${className}`}>
-        <span className="be-err">Break-even unavailable for current legs.</span>
-      </div>
-    );
-  }
-
-  // Empty → show "—" with a tooltip for clarity
+  // Optional mini-panel (not used by Chart, available for reuse)
   return (
-    <div className={`be-kpi ${className}`}>
-      <span className="muted" title="Add valid legs to compute break-even.">—</span>
+    <div className="be-panel">
+      <div className="be-title">Break-even</div>
+      {be.length ? (
+        <div className="be-values">
+          {be.map((v, i) => (
+            <span key={i} className="chip">{v.toFixed(2)}</span>
+          ))}
+        </div>
+      ) : (
+        <div className="be-error">Break-even unavailable for current legs.</div>
+      )}
 
       <style jsx>{`
-        .be-kpi { min-width: 0; }
-        .v {
-          font-variant-numeric: tabular-nums;
-          font-weight: 600;
-          white-space: nowrap;
-        }
-        .sep { opacity: .55; padding: 0 4px; }
-        .be-err {
-          color: #ef4444;
-          font-weight: 600;
-          font-size: 0.95rem;
-          white-space: nowrap;
-        }
-        .muted { color: var(--muted); }
+        .be-panel{ border:1px solid var(--border); border-radius:12px; padding:10px; background:var(--card); }
+        .be-title{ font-weight:700; margin-bottom:6px; }
+        .be-values{ display:flex; gap:8px; }
+        .chip{ border:1px solid var(--border); border-radius:9999px; padding:2px 8px; font-weight:600; }
+        .be-error{ color:#ef4444; }
       `}</style>
     </div>
   );
