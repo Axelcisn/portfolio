@@ -2,9 +2,80 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { rowsToApiLegs } from "./hooks/rowsToApiLegs";
 
-/** Format currency */
+/** Convert PositionBuilder rows ➜ API legs */
+function rowsToApiLegs(rows = []) {
+  const legs = [];
+  for (const r of rows || []) {
+    if (!r) continue;
+    const t = String(r.type || "").toLowerCase();
+
+    // map builder codes -> (type, side)
+    let type = null, side = null;
+    if (t === "lc") { type = "call"; side = "long"; }
+    else if (t === "sc") { type = "call"; side = "short"; }
+    else if (t === "lp") { type = "put";  side = "long"; }
+    else if (t === "sp") { type = "put";  side = "short"; }
+    else if (t === "ls") { type = "stock"; side = "long"; }
+    else if (t === "ss") { type = "stock"; side = "short"; }
+    else continue;
+
+    const qty = Number.isFinite(Number(r.qty)) ? Math.max(0, Number(r.qty)) : 1;
+
+    if (type === "stock") {
+      const price = Number(r.price ?? r.premium);
+      legs.push({
+        type, side, qty,
+        ...(Number.isFinite(price) ? { price: Number(price) } : {}),
+      });
+    } else {
+      const strike  = Number(r.K ?? r.strike);
+      const premium = Number(r.premium);
+      legs.push({
+        type, side, qty,
+        strike: Number.isFinite(strike)  ? Number(strike)  : null,
+        ...(Number.isFinite(premium) ? { premium: Number(premium) } : {}),
+      });
+    }
+  }
+  return legs;
+}
+
+/** Minimal fallback guesser (used ONLY if parent did not pass a strategy) */
+function guessStrategyKey(rows = []) {
+  const has = (t) => rows.some(r => r?.type === t && Number(r?.qty || 0) !== 0);
+  const only = (t) => rows.filter(r => r?.type === t && Number(r?.qty || 0) !== 0);
+
+  // Single legs
+  if (only("lc").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "long_call";
+  if (only("lp").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "long_put";
+  if (only("sc").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "short_call";
+  if (only("sp").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "short_put";
+
+  // Simple 2-leg spreads (calls)
+  if (has("lc") && has("sc")) {
+    const Klong  = Number( rows.find(r=>r.type==="lc")?.K );
+    const Kshort = Number( rows.find(r=>r.type==="sc")?.K );
+    if (Number.isFinite(Klong) && Number.isFinite(Kshort)) {
+      if (Kshort > Klong) return "bull_call_spread";
+      if (Kshort < Klong) return "bear_call_spread";
+    }
+  }
+  // Simple 2-leg spreads (puts)
+  if (has("lp") && has("sp")) {
+    const Klong  = Number( rows.find(r=>r.type==="lp")?.K );
+    const Kshort = Number( rows.find(r=>r.type==="sp")?.K );
+    if (Number.isFinite(Klong) && Number.isFinite(Kshort)) {
+      if (Klong > Kshort) return "bear_put_spread";
+      if (Klong < Kshort) return "bull_put_spread";
+    }
+  }
+  // Short strangle
+  if (only("sc").length === 1 && only("sp").length === 1) return "short_strangle";
+
+  return null; // unknown → parent should pass explicit strategy
+}
+
 function fmtPrice(x, ccy = "USD") {
   if (!Number.isFinite(x)) return "—";
   try {
@@ -21,21 +92,30 @@ function fmtPrice(x, ccy = "USD") {
 
 export default function BreakevenPanel({
   rows,
-  /** NEW: pass the human strategy name shown in the UI, e.g. "Long Call" */
-  strategy,
-  spot = null,
+  strategy = null,     // NEW: explicit strategy key/name (preferred)
+  spot = null,         // if present, show distance from spot
   currency = "USD",
-  contractSize = 1,
+  contractSize = 1,    // reserved for futures/FX, 1 for equities
 }) {
   const [state, setState] = useState({ loading: false, be: null, error: null, meta: null });
   const acRef = useRef(null);
   const seqRef = useRef(0);
 
   const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
+  const strategyKey = useMemo(() => {
+    // prefer parent-provided value, else best-effort guess for common cases
+    if (strategy && String(strategy).trim()) return String(strategy);
+    return guessStrategyKey(rows);
+  }, [strategy, rows]);
 
   useEffect(() => {
     const run = async () => {
-      // cancel any in-flight
+      // If we still don't know the strategy, skip and show unavailable
+      if (!strategyKey) {
+        setState({ loading: false, be: null, error: "strategy_unavailable", meta: null });
+        return;
+      }
+
       try { acRef.current?.abort(); } catch {}
       const ac = new AbortController();
       acRef.current = ac;
@@ -43,7 +123,6 @@ export default function BreakevenPanel({
 
       setState((s) => ({ ...s, loading: true, error: null }));
 
-      // light debounce to avoid hammering while typing
       await new Promise((r) => setTimeout(r, 220));
       if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
@@ -53,13 +132,11 @@ export default function BreakevenPanel({
           cache: "no-store",
           signal: ac.signal,
           headers: { "Content-Type": "application/json" },
-          // IMPORTANT: send strategy along with legs
-          body: JSON.stringify({ strategy, legs, contractSize }),
+          body: JSON.stringify({ strategy: strategyKey, legs, contractSize }),
         });
         const j = await res.json();
         if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
-        // Accept both shapes: { be, meta } OR { data: { be, meta } }
         const be   = Array.isArray(j?.be) ? j.be : Array.isArray(j?.data?.be) ? j.data.be : null;
         const meta = j?.meta ?? j?.data?.meta ?? null;
 
@@ -75,15 +152,9 @@ export default function BreakevenPanel({
       }
     };
 
-    // only run if we have a strategy and at least one leg
-    if (strategy && Array.isArray(legs) && legs.length) {
-      run();
-    } else {
-      setState({ loading: false, be: null, error: "unavailable", meta: null });
-    }
-
+    run();
     return () => { try { acRef.current?.abort(); } catch {} };
-  }, [strategy, legs, contractSize]);
+  }, [legs, contractSize, strategyKey]);
 
   const isRange = Array.isArray(state.be) && state.be.length === 2;
   const isPoint = Array.isArray(state.be) && state.be.length === 1;
