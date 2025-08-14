@@ -26,12 +26,18 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
   const [riskFreePct, setRiskFreePct] = useState("");
   const [mrpPct, setMrpPct] = useState("");
 
+  // Index avg return controls
   const [indexKey, setIndexKey] = useState("STOXX");
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
 
-  // Auto/Manual
-  const [autoRF, setAutoRF]   = useState(true);
+  // Benchmark linkage (default: same as index)
+  const [sameBenchmark, setSameBenchmark] = useState(true);
+  const [benchmarkKey, setBenchmarkKey] = useState("STOXX");
+  const effectiveBenchmark = sameBenchmark ? indexKey : benchmarkKey;
+
+  // Auto/Manual for RF/MRP
+  const [autoRF, setAutoRF] = useState(true);
   const [autoMRP, setAutoMRP] = useState(true);
 
   // Loading states
@@ -54,7 +60,6 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
   }
 
   async function fetchStats({ index = indexKey, lb = lookback, ccy = currency } = {}) {
-    // Single endpoint for r_f, mrp, indexAnn
     const qs = new URLSearchParams({
       index, lookback: lb, currency: ccy, basis: "annual"
     }).toString();
@@ -70,7 +75,6 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
       const d = await r.json();
       if (!r.ok) throw new Error(d?.error || `Market ${r.status}`);
 
-      // Only overwrite fields that are in Auto mode
       if (autoRF && typeof d?.riskFree?.r === "number") {
         setRiskFreePct((d.riskFree.r * 100).toFixed(2));
       }
@@ -78,13 +82,14 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
         setMrpPct((d.mrp * 100).toFixed(2));
       }
       setIndexAnn(typeof d?.indexAnn === "number" ? d.indexAnn : null);
+
       emitRates({
         riskFree: autoRF ? d?.riskFree?.r ?? riskFreeDec ?? 0 : riskFreeDec ?? 0,
         mrp:      autoMRP ? d?.mrp ?? mrpDec ?? 0 : mrpDec ?? 0,
         indexAnn: d?.indexAnn ?? null
       });
     } catch {
-      /* leave previous values; UI remains responsive */
+      /* keep previous values */
     } finally {
       if (!ac.signal.aborted) {
         setLoadingStats(false);
@@ -99,7 +104,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch when index/lookback changes (debounced)
+  // Re-fetch when index/lookback/auto flags change (debounced)
   useEffect(() => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => fetchStats(), 250);
@@ -107,8 +112,13 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indexKey, lookback, currency, autoRF, autoMRP]);
 
-  // Commit after manual edits
-  const commitRF = () => emitRates();
+  // Emit effective benchmark to parent
+  useEffect(() => {
+    onBenchmarkChange?.(effectiveBenchmark);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveBenchmark]);
+
+  const commitRF  = () => emitRates();
   const commitMRP = () => emitRates();
 
   return (
@@ -200,7 +210,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
           </div>
         </div>
 
-        {/* Row 3 — Index Average Return (controls left; value right) */}
+        {/* Row 3 — Index Average Return */}
         <div className="vgroup">
           <label>Index Average Return</label>
           <div className="index-row">
@@ -208,10 +218,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
               <select
                 className="field"
                 value={indexKey}
-                onChange={(e) => {
-                  setIndexKey(e.target.value);
-                  onBenchmarkChange?.(e.target.value);
-                }}
+                onChange={(e) => setIndexKey(e.target.value)}
                 style={{ width: 200 }}
               >
                 {INDICES.map((i) => (
@@ -237,26 +244,39 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
               ) : indexAnn == null ? "—" : fmtPct(indexAnn)}
             </div>
           </div>
+
+          {/* Helper line for benchmark linkage */}
+          <div className="helper">
+            <span className="muted">
+              Also used as β benchmark
+              {sameBenchmark ? "" : " (overridden)"}
+              .
+            </span>
+            <button
+              className="ghost"
+              onClick={() => setSameBenchmark((s) => !s)}
+              aria-expanded={!sameBenchmark}
+            >
+              {sameBenchmark ? "Change" : "Use index"}
+            </button>
+          </div>
         </div>
 
-        {/* Row 4 — Benchmark (β) passthrough, if caller wants it here */}
-        <div className="vgroup">
-          <label>Benchmark (β)</label>
-          <select
-            className="field"
-            value={indexKey}
-            onChange={(e) => {
-              setIndexKey(e.target.value);
-              onBenchmarkChange?.(e.target.value);
-              // keep index return in sync with benchmark by also refetching
-              fetchStats({ index: e.target.value });
-            }}
-          >
-            <option value="SPX">S&P 500 (SPX)</option>
-            <option value="STOXX">STOXX Europe 600 (STOXX)</option>
-            <option value="NDX">NASDAQ 100 (NDX)</option>
-          </select>
-        </div>
+        {/* Optional — separate Benchmark only when user chooses to override */}
+        {!sameBenchmark && (
+          <div className="vgroup">
+            <label>Benchmark (β)</label>
+            <select
+              className="field"
+              value={benchmarkKey}
+              onChange={(e) => setBenchmarkKey(e.target.value)}
+            >
+              {INDICES.map((i) => (
+                <option key={i.key} value={i.key}>{i.label} ({i.key})</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <style jsx>{`
@@ -322,15 +342,26 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
         }
         @keyframes shimmer{ 100% { transform: translateX(100%); } }
 
+        .helper{
+          display:flex; align-items:center; justify-content:space-between;
+          margin-top:4px;
+        }
+        .muted{ opacity:.65; font-size:12.5px; }
+        .ghost{
+          height: 28px; padding: 0 10px; border-radius: 8px;
+          border: 1px solid transparent; background: transparent; color: inherit;
+          opacity:.85; cursor:pointer;
+          transition: background 140ms ease, border-color 140ms ease, opacity 120ms ease;
+        }
+        .ghost:hover{
+          opacity:1;
+          background: color-mix(in srgb, var(--text, #e5e7eb) 10%, transparent);
+          border-color: color-mix(in srgb, var(--text, #e5e7eb) 14%, transparent);
+        }
+
         @media (prefers-color-scheme: light){
-          .field, .pill, .icon{
-            border: 1px solid var(--border, #e5e7eb);
-            background: #ffffff; color: #111827;
-          }
-          .pill.on{
-            background: color-mix(in srgb, #111827 6%, #ffffff);
-            border-color: #a3a3a3;
-          }
+          .field, .pill, .icon{ border: 1px solid var(--border, #e5e7eb); background: #fff; color: #111827; }
+          .pill.on{ background: color-mix(in srgb, #111827 6%, #ffffff); border-color: #a3a3a3; }
         }
       `}</style>
     </section>
