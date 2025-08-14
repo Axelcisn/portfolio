@@ -59,41 +59,57 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
       riskFree: riskFreeDec ?? 0,
       mrp:      mrpDec ?? 0,
       indexAnn,
-      ...next
+      ...next,
     });
   }
 
   async function fetchStats({ index = indexKey, lb = lookback, ccy = currency } = {}) {
     const qs = new URLSearchParams({
-      index, lookback: lb, currency: ccy, basis: "annual"
+      index,
+      lookback: lb,
+      currency: ccy,
+      basis: "annual",
     }).toString();
 
-    abortRef.current?.abort?.();
+    // cancel in-flight
+    try { abortRef.current?.abort(); } catch {}
     const ac = new AbortController();
     abortRef.current = ac;
 
+    // set loading flags
     setLoadingStats(true);
     setLoadingIndex(true);
+
     try {
       const r = await fetch(`/api/market/stats?${qs}`, { cache: "no-store", signal: ac.signal });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.error || `Market ${r.status}`);
 
+      // auto-fill RF / ERP if toggled
       if (autoRF && typeof d?.riskFree?.r === "number") {
         setRiskFreePct((d.riskFree.r * 100).toFixed(2));
       }
       if (autoMRP && typeof d?.mrp === "number") {
         setMrpPct((d.mrp * 100).toFixed(2));
       }
-      setIndexAnn(typeof d?.indexAnn === "number" ? d.indexAnn : null);
 
+      // index annualized mean: prefer top-level, fallback to stats.mu_geom
+      const ix =
+        typeof d?.indexAnn === "number"
+          ? d.indexAnn
+          : typeof d?.stats?.mu_geom === "number"
+          ? d.stats.mu_geom
+          : null;
+      setIndexAnn(ix);
+
+      // emit snapshot (decimals)
       emitRates({
         riskFree: autoRF ? d?.riskFree?.r ?? riskFreeDec ?? 0 : riskFreeDec ?? 0,
         mrp:      autoMRP ? d?.mrp ?? mrpDec ?? 0 : mrpDec ?? 0,
-        indexAnn: d?.indexAnn ?? null
+        indexAnn: ix,
       });
     } catch {
-      /* keep previous values */
+      /* keep previous values on error */
     } finally {
       if (!ac.signal.aborted) {
         setLoadingStats(false);
@@ -108,7 +124,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch when index/lookback/auto flags change (debounced)
+  // Re-fetch when index/lookback/auto flags/currency change (debounced)
   useEffect(() => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => fetchStats(), 250);
@@ -322,6 +338,16 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
             border-color: #a3a3a3;
           }
         }
+
+        /* Layout helpers already in your global.css */
+        .index-row{
+          display:grid;
+          grid-template-columns: minmax(0,1fr) auto;
+          align-items:center;
+          gap:var(--col-gap);
+        }
+        .index-row > *{ min-width:0; }
+        .value{ font-weight:600; font-variant-numeric: tabular-nums; }
       `}</style>
     </section>
   );
