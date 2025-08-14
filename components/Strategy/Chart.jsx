@@ -514,7 +514,7 @@ export default function Chart({
         .metrics{
           display:grid; grid-template-columns: repeat(6, minmax(140px, 1fr));
           gap:10px; padding:10px 6px 12px;
-          min-width: 840px; /* ensures overflow on small screens */
+          min-width: 840px;
         }
         .m .k{ font-size:12px; opacity:.7; } .m .v{ font-weight:700; }
         @media (max-width:920px){ .metrics{ grid-template-columns: repeat(6, minmax(160px, 1fr)); } }
