@@ -75,6 +75,27 @@ function fmtPrice(x, ccy = "USD") {
   }
 }
 
+/** If a straddle was chosen but strikes differ, use the correct *strangle* key. */
+function disambiguateStraddle(key, legs) {
+  if (key !== "short_straddle" && key !== "long_straddle") return key;
+
+  const side = key.startsWith("short") ? "short" : "long";
+  const callK = legs
+    .filter((l) => l.type === "call" && l.side === side && Number.isFinite(l?.strike))
+    .map((l) => Number(l.strike));
+  const putK = legs
+    .filter((l) => l.type === "put" && l.side === side && Number.isFinite(l?.strike))
+    .map((l) => Number(l.strike));
+
+  if (callK.length && putK.length) {
+    const diff = Math.abs(callK[0] - putK[0]);
+    if (diff > 1e-6) {
+      return side === "short" ? "short_strangle" : "long_strangle";
+    }
+  }
+  return key;
+}
+
 export default function BreakevenPanel({
   rows,
   strategy = null,     // explicit strategy id/name (optional)
@@ -89,8 +110,14 @@ export default function BreakevenPanel({
   // single source of truth for leg mapping
   const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
 
-  // normalize strategy; if unknown, we will omit it to allow server inference
+  // normalize strategy; if unknown we'll omit it (server will infer)
   const normalizedStrategy = useMemo(() => normalizeStrategyKey(strategy), [strategy]);
+
+  // NEW: if "straddle" but strikes mismatch, switch to "strangle"
+  const effectiveStrategy = useMemo(
+    () => (normalizedStrategy ? disambiguateStraddle(normalizedStrategy, legs) : null),
+    [normalizedStrategy, legs]
+  );
 
   useEffect(() => {
     const run = async () => {
@@ -113,7 +140,7 @@ export default function BreakevenPanel({
 
       try {
         const payload = { legs, contractSize };
-        if (normalizedStrategy) payload.strategy = normalizedStrategy;
+        if (effectiveStrategy) payload.strategy = effectiveStrategy;
 
         const res = await fetch("/api/strategy/breakeven", {
           method: "POST",
@@ -143,16 +170,16 @@ export default function BreakevenPanel({
 
     run();
     return () => { try { acRef.current?.abort(); } catch {} };
-  }, [legs, contractSize, normalizedStrategy]);
+  }, [legs, contractSize, effectiveStrategy]);
 
   const isRange = Array.isArray(state.be) && state.be.length === 2;
   const isPoint = Array.isArray(state.be) && state.be.length === 1;
 
-  // Prefer resolved_by label if the backend provides it; otherwise show normalized key
+  // Prefer resolved_by label if the backend provides it; otherwise show effective key
   const resolvedLabel =
     state.meta?.resolved_by ||
     state.meta?.used ||
-    (normalizedStrategy ? normalizedStrategy.replace(/_/g, " ") : "—");
+    (effectiveStrategy ? effectiveStrategy.replace(/_/g, " ") : "—");
 
   return (
     <section className="card dense">
