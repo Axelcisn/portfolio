@@ -191,13 +191,14 @@ async function fetchRiskFreeAnnual(ccy) {
   return { rAnnual: RF_FALLBACK[ccy] ?? RF_FALLBACK.USD, asOf: new Date().toISOString(), source: 'fallback' };
 }
 
-// Map lookback → Yahoo range/interval
+// Map lookback → Yahoo range/interval  (now includes "2y")
 function rangeParams(lookback) {
   const lb = (lookback || '5y').toLowerCase();
   switch (lb) {
     case '3m': return { range: '3mo', interval: '1d', window: '3m' };
     case '6m': return { range: '6mo', interval: '1d', window: '6m' };
     case '1y': return { range: '1y', interval: '1d', window: '1y' };
+    case '2y': return { range: '2y', interval: '1d', window: '2y' }; // NEW
     case '3y': return { range: '3y', interval: '1d', window: '3y' };
     case '5y': return { range: '5y', interval: '1d', window: '5y' };
     case 'ytd': return { range: 'ytd', interval: '1d', window: 'ytd' };
