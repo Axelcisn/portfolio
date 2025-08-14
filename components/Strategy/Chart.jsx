@@ -48,7 +48,19 @@ function lin([d0,d1],[r0,r1]){ const m=(r1-r0)/(d1-d0), b=r0-m*d0; const f=(x)=>
 function tickStep(min,max,count){ const span=Math.max(1e-9,max-min); const step=Math.pow(10,Math.floor(Math.log10(span/count))); const err=span/(count*step); return step*(err>=7.5?10:err>=3?5:err>=1.5?2:1); }
 function ticks(min,max,count=6){ const st=tickStep(min,max,count), start=Math.ceil(min/st)*st, out=[]; for(let v=start; v<=max+1e-9; v+=st) out.push(v); return out; }
 const fmtNum=(x,d=2)=>Number.isFinite(x)?Number(x).toFixed(d):"—";
-const fmtCur=(x,ccy="USD")=>Number.isFinite(x)?`${Number(x).toFixed(2)} ${ccy}`:"—";
+const fmtCur = (x, ccy = "USD") => {
+  if (!Number.isFinite(Number(x))) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: ccy,
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+    }).format(Number(x));
+  } catch {
+    return `${Number(x).toFixed(2)} ${ccy}`;
+  }
+};
 
 /* ---------- position definitions ---------- */
 const TYPE_INFO = {
@@ -464,7 +476,10 @@ export default function Chart({
       {/* KPI row (scrollable, hidden scrollbar) */}
       <div className="kpi-scroll" ref={kpiRef} aria-label="Strategy metrics">
         <div className="metrics">
-          <div className="m"><div className="k">Underlying price</div><div className="v">{Number.isFinite(spot)?Number(spot).toFixed(2):"—"}</div></div>
+          <div className="m">
+            <div className="k">Underlying price</div>
+            <div className="v">{Number.isFinite(Number(spot)) ? fmtCur(spot, currency) : "—"}</div>
+          </div>
           <div className="m"><div className="k">Max profit</div><div className="v">{fmtNum(Math.max(...yExp),2)}</div></div>
           <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
           <div className="m">
