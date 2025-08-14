@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import BreakevenKpiCell from "./BreakevenKpiCell";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -211,6 +212,7 @@ export default function Chart({
   const greekWhich=(greekProp||"vega").toLowerCase();
   const gVals = useMemo(()=>xs.map(S=>greekTotal(greekWhich, S, rowsEff, env, contractSize)), [xs, rowsEff, env, contractSize, greekWhich]);
 
+  // For chart vertical BE markers we keep zero-crossings of expiration P&L
   const be = useMemo(()=>{
     const out=[]; for(let i=1;i<xs.length;i++){ const y0=yExp[i-1], y1=yExp[i];
       if((y0>0&&y1<0)||(y0<0&&y1>0)){ const t=(-y0)/(y1-y0); out.push(xs[i-1]+t*(xs[i]-xs[i-1])); }
@@ -294,6 +296,20 @@ export default function Chart({
   const onLeave = () => setHover(null);
 
   const Wrapper=frameless?"div":"section"; const wrapClass=frameless?"chart-wrap":"card chart-wrap";
+
+  // KPI row: make horizontally scrollable & anchor to right if overflow
+  const metricsRef = useRef(null);
+  useEffect(() => {
+    const el = metricsRef.current;
+    if (!el) return;
+    const sync = () => {
+      if (el.scrollWidth > el.clientWidth) el.scrollLeft = el.scrollWidth; // show right side first
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [w, rowsEff]);
 
   return (
     <Wrapper className={wrapClass} ref={ref} style={{ position: "relative" }}>
@@ -448,7 +464,7 @@ export default function Chart({
       })()}
 
       {/* metrics */}
-      <div className="metrics">
+      <div className="metrics" ref={metricsRef}>
         <div className="m"><div className="k">Underlying price</div><div className="v">{Number.isFinite(spot)?Number(spot).toFixed(2):"—"}</div></div>
         <div className="m"><div className="k">Max profit</div><div className="v">{fmtNum(Math.max(...yExp),2)}</div></div>
         <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
@@ -456,7 +472,10 @@ export default function Chart({
           let m=0,t=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; t+=p*dx; if(y>0)m+=p*dx; }
           return t>0?`${(m/t*100).toFixed(2)}%`:"—";
         })()}</div></div>
-        <div className="m"><div className="k">Breakeven</div><div className="v">{be.length===0?"—":be.length===1?fmtNum(be[0],2):`${fmtNum(be[0],0)} | ${fmtNum(be[1],0)}`}</div></div>
+        <div className="m">
+          <div className="k">Breakeven</div>
+          <BreakevenKpiCell rows={rowsEff} currency={currency} />
+        </div>
         <div className="m"><div className="k">Lot size</div><div className="v">{lotSize}</div></div>
       </div>
 
@@ -480,9 +499,27 @@ export default function Chart({
         .tick{ font-size:11px; fill:var(--text); opacity:.75; }
         .axis{ font-size:12px; fill:var(--text); opacity:.7; }
 
-        .metrics{ display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:10px; padding:10px 6px 12px; border-top:1px solid var(--border); }
-        .m .k{ font-size:12px; opacity:.7; } .m .v{ font-weight:700; }
-        @media (max-width:920px){ .metrics{ grid-template-columns: repeat(3, minmax(0,1fr)); } }
+        /* KPI row: horizontal scroll when narrow, hidden scrollbar */
+        .metrics{
+          display:grid;
+          grid-template-columns: repeat(6, minmax(140px, 1fr));
+          gap:10px;
+          padding:10px 6px 12px;
+          border-top:1px solid var(--border);
+          overflow-x:auto;
+          overscroll-behavior-x: contain;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;   /* Firefox */
+          -ms-overflow-style: none;/* IE/Edge */
+        }
+        .metrics::-webkit-scrollbar{ display:none; } /* WebKit */
+        .m .k{ font-size:12px; opacity:.7; }
+        .m .v{ font-weight:700; }
+
+        /* On very small widths, fix column widths so the row can scroll */
+        @media (max-width:920px){
+          .metrics{ grid-template-columns: repeat(6, minmax(150px, 150px)); }
+        }
 
         .tip{
           position:absolute;
