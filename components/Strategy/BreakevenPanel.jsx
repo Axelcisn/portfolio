@@ -92,7 +92,7 @@ function fmtPrice(x, ccy = "USD") {
 
 export default function BreakevenPanel({
   rows,
-  strategy = null,     // NEW: explicit strategy key/name (preferred)
+  strategy = null,     // explicit strategy key/name (preferred)
   spot = null,         // if present, show distance from spot
   currency = "USD",
   contractSize = 1,    // reserved for futures/FX, 1 for equities
@@ -103,7 +103,6 @@ export default function BreakevenPanel({
 
   const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
   const strategyKey = useMemo(() => {
-    // prefer parent-provided value, else best-effort guess for common cases
     if (strategy && String(strategy).trim()) return String(strategy);
     return guessStrategyKey(rows);
   }, [strategy, rows]);
