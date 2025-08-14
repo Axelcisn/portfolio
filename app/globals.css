@@ -819,3 +819,12 @@ html:not(.dark) .ch-avatar{
   opacity: .92;
   transition: opacity .12s ease;
 }
+
+/* Equal columns for the overview layout */
+.tv-layout{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width:1100px){
+  .tv-layout{ grid-template-columns: 1fr; }
+}
