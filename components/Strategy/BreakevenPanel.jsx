@@ -3,17 +3,41 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/** Convert PositionBuilder rows ➜ legs for the BE API. */
-function rowsToLegs(rows = []) {
-  const VALID = new Set(["lc", "sc", "lp", "sp"]); // long/short call/put
+/** Convert PositionBuilder rows ➜ legs expected by the BE API. */
+function rowsToApiLegs(rows = []) {
   const legs = [];
-  for (const r of rows) {
-    if (!VALID.has(r?.type)) continue;    // ignore stock legs here
-    const qty = Number(r?.qty ?? 0);
-    const K = Number(r?.K);
-    const premium = r?.premium != null ? Number(r.premium) : undefined;
-    if (!Number.isFinite(qty) || qty === 0) continue;
-    legs.push({ type: r.type, qty, K: Number.isFinite(K) ? K : null, premium });
+  for (const r of rows || []) {
+    if (!r) continue;
+    const t = String(r.type || "").toLowerCase();
+
+    // map builder codes -> (type, side)
+    let type = null, side = null;
+    if (t === "lc") { type = "call"; side = "long"; }
+    else if (t === "sc") { type = "call"; side = "short"; }
+    else if (t === "lp") { type = "put";  side = "long"; }
+    else if (t === "sp") { type = "put";  side = "short"; }
+    else if (t === "ls") { type = "stock"; side = "long"; }
+    else if (t === "ss") { type = "stock"; side = "short"; }
+    else continue; // ignore unknowns
+
+    const qty = Number.isFinite(Number(r.qty)) ? Math.max(0, Number(r.qty)) : 1;
+
+    if (type === "stock") {
+      // For covered/protective structures. UI may carry a price in r.price or r.premium.
+      const price = Number(r.price ?? r.premium);
+      legs.push({
+        type, side, qty,
+        ...(Number.isFinite(price) ? { price: Number(price) } : {}),
+      });
+    } else {
+      const strike  = Number(r.K ?? r.strike);
+      const premium = Number(r.premium);
+      legs.push({
+        type, side, qty,
+        strike: Number.isFinite(strike)  ? Number(strike)  : null,
+        ...(Number.isFinite(premium) ? { premium: Number(premium) } : {}),
+      });
+    }
   }
   return legs;
 }
@@ -28,13 +52,13 @@ function fmtPrice(x, ccy = "USD") {
       minimumFractionDigits: 2,
     }).format(x);
   } catch {
-    return x.toFixed(2);
+    return Number(x).toFixed(2);
   }
 }
 
 export default function BreakevenPanel({
   rows,
-  spot = null,          // optional: if present we show distance from spot
+  spot = null,          // if present, show distance from spot
   currency = "USD",
   contractSize = 1,     // reserved for futures/FX, 1 for equities
 }) {
@@ -42,19 +66,19 @@ export default function BreakevenPanel({
   const acRef = useRef(null);
   const seqRef = useRef(0);
 
-  const legs = useMemo(() => rowsToLegs(rows), [rows]);
+  const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
 
   useEffect(() => {
-    // fetch BE whenever legs change
     const run = async () => {
-      // cancel in-flight
+      // cancel any in-flight
       try { acRef.current?.abort(); } catch {}
       const ac = new AbortController();
       acRef.current = ac;
       const mySeq = ++seqRef.current;
+
       setState((s) => ({ ...s, loading: true, error: null }));
 
-      // debounce a touch to avoid hammering while editing
+      // light debounce to avoid hammering while typing
       await new Promise((r) => setTimeout(r, 220));
       if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
@@ -69,20 +93,24 @@ export default function BreakevenPanel({
         const j = await res.json();
         if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
-        if (!res.ok || j?.ok === false || !j?.data?.be) {
-          setState({ loading: false, be: null, error: j?.error || "unavailable", meta: j?.meta || null });
+        // Accept both shapes: { be, meta } OR { data: { be, meta } }
+        const be   = Array.isArray(j?.be) ? j.be : Array.isArray(j?.data?.be) ? j.data.be : null;
+        const meta = j?.meta ?? j?.data?.meta ?? null;
+
+        if (!res.ok || j?.ok === false || !Array.isArray(be) || be.length === 0) {
+          setState({ loading: false, be: null, error: j?.error || "unavailable", meta });
           return;
         }
-        setState({ loading: false, be: j.data.be, error: null, meta: j.data.meta || j.meta || null });
+        setState({ loading: false, be, error: null, meta });
       } catch (e) {
-        if (!ac.signal.aborted) setState({ loading: false, be: null, error: String(e?.message || e), meta: null });
+        if (!ac.signal.aborted) {
+          setState({ loading: false, be: null, error: String(e?.message || e), meta: null });
+        }
       }
     };
 
     run();
-    return () => {
-      try { acRef.current?.abort(); } catch {}
-    };
+    return () => { try { acRef.current?.abort(); } catch {} };
   }, [legs, contractSize]);
 
   const isRange = Array.isArray(state.be) && state.be.length === 2;
@@ -92,10 +120,9 @@ export default function BreakevenPanel({
     <section className="card dense">
       <div className="be-head">
         <div className="be-title">Break-even</div>
-        <div className="be-aside">{state.meta?.used ? state.meta.used.replace(/_/g, " ") : "—"}</div>
+        <div className="be-aside">{state.meta?.used ? String(state.meta.used).replace(/_/g, " ") : "—"}</div>
       </div>
 
-      {/* Values */}
       {state.loading ? (
         <div className="be-skel" aria-hidden="true">
           <span className="sk"></span>
@@ -109,14 +136,14 @@ export default function BreakevenPanel({
             <div className="k">Lower</div>
             <div className="v">{fmtPrice(state.be[0], currency)}</div>
             {Number.isFinite(spot) && Number.isFinite(state.be[0]) && (
-              <div className="hint">Δ {((state.be[0] - spot) / spot * 100).toFixed(2)}%</div>
+              <div className="hint">Δ {(((state.be[0] - spot) / spot) * 100).toFixed(2)}%</div>
             )}
           </div>
           <div className="be-col">
             <div className="k">Upper</div>
             <div className="v">{fmtPrice(state.be[1], currency)}</div>
             {Number.isFinite(spot) && Number.isFinite(state.be[1]) && (
-              <div className="hint">Δ {((state.be[1] - spot) / spot * 100).toFixed(2)}%</div>
+              <div className="hint">Δ {(((state.be[1] - spot) / spot) * 100).toFixed(2)}%</div>
             )}
           </div>
         </div>
@@ -126,7 +153,7 @@ export default function BreakevenPanel({
             <div className="k">Price</div>
             <div className="v">{fmtPrice(state.be[0], currency)}</div>
             {Number.isFinite(spot) && Number.isFinite(state.be[0]) && (
-              <div className="hint">Δ {((state.be[0] - spot) / spot * 100).toFixed(2)}%</div>
+              <div className="hint">Δ {(((state.be[0] - spot) / spot) * 100).toFixed(2)}%</div>
             )}
           </div>
         </div>
