@@ -2,9 +2,9 @@
 "use client";
 
 /**
- * Key Stats — line layout.
- * Boxes only for dropdowns (Time, Volatility source, Drift).
- * Dividend (q) stays as an input. All other values are clean text.
+ * Key Stats — line layout with robust right column.
+ * Boxes only for dropdowns (Time, Volatility source, Drift) and Dividend input.
+ * All other values render as right-aligned text.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -242,10 +242,12 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
       {/* Current Price */}
       <div className="row">
         <div className="k">Current Price</div>
-        <div className="v value">{isNum(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}</div>
+        <div className="v value">
+          {isNum(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}
+        </div>
       </div>
 
-      {/* Currency (display text) */}
+      {/* Currency (text) */}
       <div className="row">
         <div className="k">Currency</div>
         <div className="v value">{currency || "—"}</div>
@@ -262,7 +264,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         </div>
       </div>
 
-      {/* Volatility (dropdown + text value) */}
+      {/* Volatility (dropdown + text) */}
       <div className="row">
         <div className="k">Volatility</div>
         <div className="v v-vol">
@@ -283,13 +285,13 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         </div>
       </div>
 
-      {/* Beta (display text) */}
+      {/* Beta (text) */}
       <div className="row">
         <div className="k">Beta</div>
         <div className="v value">{Number.isFinite(beta) ? beta.toFixed(2) : "—"}</div>
       </div>
 
-      {/* Dividend (q) — editable input (kept) */}
+      {/* Dividend (q) — input */}
       <div className="row">
         <div className="k">Dividend (q)</div>
         <div className="v">
@@ -309,7 +311,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         </div>
       </div>
 
-      {/* CAPM μ (display text) */}
+      {/* CAPM μ (text) */}
       <div className="row">
         <div className="k">CAPM μ</div>
         <div className="v value">{Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}</div>
@@ -327,85 +329,70 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
       </div>
 
       <style jsx>{`
-        /* rows */
-        .row {
-          display: grid;
-          grid-template-columns: 1fr minmax(260px, 420px);
-          align-items: center;
-          gap: 16px;
-          padding: 10px 0;
-          border-bottom: 1px dashed var(--border, #2a2f3a);
+        /* rows — resilient two-column grid */
+        .row{
+          display:grid;
+          grid-template-columns: minmax(120px, 1fr) minmax(0, 420px); /* right col can shrink to 0 */
+          align-items:center;
+          gap:16px;
+          padding:10px 0;
+          border-bottom:1px dashed var(--border, #2a2f3a);
+          box-sizing:border-box;
+          width:100%;
         }
-        .row:last-of-type { border-bottom: 0; }
+        .row:last-of-type{ border-bottom:0; }
 
-        .k { font-size: 14px; opacity: .75; }
-        .v { display: flex; justify-content: flex-end; align-items: center; gap: 10px; width: 100%; }
-        .value { font-variant-numeric: tabular-nums; font-weight: 600; }
-
-        /* dropdowns (boxed) */
-        .select {
-          height: 38px;
-          padding: 6px 12px;
-          border-radius: 10px;
-          border: 1px solid var(--border, #2a2f3a);
-          background: var(--card, #111214);
-          color: var(--foreground, #e5e7eb);
-          font-size: 14px;
-          line-height: 22px;
-          min-width: 120px;
-          transition: border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
+        .k{ font-size:14px; opacity:.75; min-width:0; }
+        .v{
+          display:flex; justify-content:flex-end; align-items:center; gap:10px;
+          width:100%; min-width:0; /* allow shrink inside the grid */
+          flex-wrap:nowrap;
         }
-        .select:hover { border-color: var(--ring, #3b3f47); }
-        .select:focus-visible {
-          outline: 2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
-          outline-offset: 2px;
+        .value{
+          font-variant-numeric: tabular-nums; font-weight:600;
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+          max-width:100%;
         }
 
-        /* only text for read-only values */
-        .input {
-          height: 38px;
-          padding: 6px 12px;
-          border-radius: 10px;
-          border: 1px solid var(--border, #2a2f3a);
-          background: var(--card, #111214);
-          color: var(--foreground, #e5e7eb);
-          font-size: 14px;
-          line-height: 22px;
-          min-width: 120px;
-          width: 160px;
-          transition: border-color 140ms ease, outline-color 140ms ease;
+        /* dropdowns / inputs — constrained to avoid pushing the grid */
+        .select, .input{
+          height:38px; padding:6px 12px; border-radius:10px;
+          border:1px solid var(--border, #2a2f3a);
+          background:var(--card, #111214); color:var(--foreground, #e5e7eb);
+          font-size:14px; line-height:22px;
+          width:100%; max-width:220px; min-width:0; /* key: can shrink, never overflow */
+          box-sizing:border-box;
+          transition:border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
         }
-        .input:hover { border-color: var(--ring, #3b3f47); }
-        .input:focus-visible {
-          outline: 2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
-          outline-offset: 2px;
+        .select:hover, .input:hover{ border-color: var(--ring, #3b3f47); }
+        .select:focus-visible, .input:focus-visible{
+          outline:2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
+          outline-offset:2px;
         }
 
         /* volatility value skeleton */
-        .v-vol { position: relative; }
-        .volval { min-width: 48px; text-align: right; }
-        .skl {
-          position: absolute; right: 10px; top: 50%; height: 10px; width: 80px;
-          transform: translateY(-50%);
-          border-radius: 7px;
+        .v-vol{ position:relative; }
+        .volval{ min-width:48px; text-align:right; }
+        .skl{
+          position:absolute; right:10px; top:50%; height:10px; width:80px;
+          transform:translateY(-50%); border-radius:7px;
           background: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
-          overflow: hidden;
+          overflow:hidden;
         }
-        .skl::after {
-          content: ""; position: absolute; inset: 0; transform: translateX(-100%);
-          background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
-          animation: shimmer 1.15s ease-in-out infinite;
+        .skl::after{
+          content:""; position:absolute; inset:0; transform:translateX(-100%);
+          background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
+          animation:shimmer 1.15s ease-in-out infinite;
         }
-        @keyframes shimmer { 100% { transform: translateX(100%); } }
-        .is-pending { opacity: .6; }
+        @keyframes shimmer{ 100% { transform: translateX(100%); } }
+        .is-pending{ opacity:.6; }
 
-        @media (prefers-color-scheme: light) {
-          .select, .input {
-            border: 1px solid var(--border, #e5e7eb);
-            background: var(--card, #fff);
-            color: var(--foreground, #111827);
+        @media (prefers-color-scheme: light){
+          .select, .input{
+            border:1px solid var(--border, #e5e7eb);
+            background:#fff; color:#111827;
           }
-          .select:hover, .input:hover { border-color: var(--ring, #a3a3a3); }
+          .select:hover, .input:hover{ border-color:#a3a3a3; }
         }
       `}</style>
     </aside>
