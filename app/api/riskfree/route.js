@@ -1,6 +1,6 @@
 // app/api/riskfree/route.js
 // Runtime: Node.js (Vercel). Risk-free rate API with robust fallbacks, shared cache,
-// and first-party EUR provider (ECB €STR).
+// and first-party providers: USD (^IRX), EUR (€STR via ECB SDMX), CAD (BoC Valet 3M T-bill).
 import { NextResponse } from 'next/server';
 import { mget, mset, mkey } from '../../../lib/server/mcache';
 
@@ -100,7 +100,7 @@ async function fetchEURFromECB() {
 
   if (lastValue == null || lastIdx == null) throw new Error('ECB €STR: no observations');
 
-  // SDMX observation index → date id (e.g., "2024-06-12")
+  // SDMX observation index → date id (e.g., "2025-08-12")
   const asOf = obsDim?.[lastIdx]?.id || new Date().toISOString();
   // Convert percentage to decimal per year (e.g., 3.80 → 0.0380)
   const rAnnual = lastValue > 1 ? lastValue / 100 : lastValue;
@@ -109,13 +109,41 @@ async function fetchEURFromECB() {
 }
 
 /**
+ * Provider: CAD 3M T-bill via Bank of Canada Valet API.
+ * Series: TB.CDN.90D.MID (“Treasury bills - 3 month”), unit = percent → convert to decimal/year.
+ * Endpoint (latest): https://www.bankofcanada.ca/valet/observations/TB.CDN.90D.MID/json?recent=1
+ */
+async function fetchCADFromBoCValet() {
+  const url = 'https://www.bankofcanada.ca/valet/observations/TB.CDN.90D.MID/json?recent=1';
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`BoC Valet HTTP ${res.status}`);
+  const json = await res.json();
+
+  const obs = json?.observations;
+  if (!Array.isArray(obs) || obs.length === 0) throw new Error('BoC Valet: no observations');
+
+  // The series value typically sits under key "TB.CDN.90D.MID": { v: "2.66" }
+  const last = obs[obs.length - 1];
+  const date = last?.d || new Date().toISOString();
+  const node = last?.['TB.CDN.90D.MID'];
+  const v = node && (typeof node.v === 'string' || typeof node.v === 'number') ? Number(node.v) : NaN;
+  if (!Number.isFinite(v)) throw new Error('BoC Valet: invalid value');
+
+  const rAnnual = v / 100; // percent → decimal/year
+  const asOf = new Date(date).toISOString();
+
+  return { value: rAnnual, asOf, source: 'Bank of Canada Valet (TB.CDN.90D.MID)', basis: 'annual' };
+}
+
+/**
  * Minimal CCY router.
- * Phase 2 will add GBP (SONIA), JPY (TONA), CHF (SARON), CAD (3M T-bill) providers.
+ * Phase 2 will add: GBP (SONIA), JPY (TONA), CHF (SARON).
  */
 async function getAnnualRiskFree(ccy) {
   if (ccy === 'USD') return fetchUSDFromYahooIRX();
   if (ccy === 'EUR') return fetchEURFromECB();
-  // TODO (Phase 2): add SONIA/TONA/SARON/CAD providers
+  if (ccy === 'CAD') return fetchCADFromBoCValet();
+  // TODO: GBP→SONIA (BoE), JPY→TONA (BoJ), CHF→SARON (SIX/SNB)
   return null; // no provider → fallback path
 }
 
