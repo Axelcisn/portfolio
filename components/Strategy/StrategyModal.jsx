@@ -7,7 +7,6 @@ import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeTemplate from "./defs/materializeTemplate";
-import BreakevenPanel from "./BreakevenPanel";
 
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {
@@ -51,6 +50,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const {
     spot = null,
     currency = "USD",
+    high52,
+    low52,
     riskFree = 0.02,
     sigma = 0.2,
     T = 30 / 365, // years from company card
@@ -72,6 +73,18 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 
   const [greek, setGreek] = useState("vega");
 
+  // Lock page scroll + close on ESC
+  useEffect(() => {
+    const onEsc = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onEsc);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onEsc);
+      document.body.style.overflow = prev || "";
+    };
+  }, [onClose]);
+
   // Save = previous Apply (compat)
   const legsObj = useMemo(() => rowsToLegsObject(rows), [rows]);
   const totalPrem = useMemo(() => netPremium(rows), [rows]);
@@ -86,46 +99,13 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     setRows(fresh);
   };
 
-  // Close handling: ESC + click outside
-  const sheetRef = useRef(null);
-  useEffect(() => {
-    const onEsc = (e) => e.key === "Escape" && onClose?.();
-    window.addEventListener("keydown", onEsc);
-
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onEsc);
-      document.body.style.overflow = prev || "";
-    };
-  }, [onClose]);
-
-  const onOverlayPointerDown = (e) => {
-    // If the user pressed the mouse/touch outside of the sheet, close.
-    // Using pointerdown gives a snappier feel and works even when click gets cancelled.
-    if (sheetRef.current && !sheetRef.current.contains(e.target)) {
-      e.preventDefault();
-      onClose?.();
-    }
-  };
-
   const GAP = 14;
 
   return (
-    <div
-      className="modal-root"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sg-modal-title"
-      onMouseDown={onOverlayPointerDown}
-      onTouchStart={onOverlayPointerDown}
-    >
-      <div className="modal-backdrop" />
+    <div className="modal-root" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
+      <div className="modal-backdrop" onClick={onClose} />
       <div
-        ref={sheetRef}
         className="modal-sheet"
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
         style={{
           maxWidth: 1120,
           maxHeight: "calc(100vh - 96px)",
@@ -138,9 +118,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         {/* Header */}
         <div className="modal-head" style={{ marginBottom: GAP }}>
           <div className="mh-left">
-            <div className="mh-icon">
-              {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
-            </div>
+            <div className="mh-icon">{strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}</div>
             <div className="mh-meta">
               <div id="sg-modal-title" className="mh-name">
                 {strategy?.name || "Strategy"}
@@ -149,15 +127,10 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             </div>
           </div>
           <div className="mh-actions">
-            <button className="button" type="button" onClick={save} title="Save strategy">
+            <button className="button" type="button" onClick={save}>
               Save
             </button>
-            <button
-              className="button ghost"
-              type="button"
-              onClick={onClose}
-              title="Close"
-            >
+            <button className="button ghost" type="button" onClick={onClose}>
               Close
             </button>
           </div>
@@ -179,11 +152,6 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           />
         </div>
 
-        {/* Break-even panel — NEW & positioned right below the chart */}
-        <div style={{ marginBottom: GAP }}>
-          <BreakevenPanel rows={rows} spot={spot} currency={currency} />
-        </div>
-
         {/* Configuration */}
         <section className="card dense" style={{ marginBottom: GAP }}>
           <div className="section-head">
@@ -198,12 +166,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
               Reset
             </button>
           </div>
-          <PositionBuilder
-            rows={rows}
-            onChange={setRows}
-            currency={currency}
-            defaultDays={defaultDays}
-          />
+          <PositionBuilder rows={rows} onChange={setRows} currency={currency} defaultDays={defaultDays} />
         </section>
 
         {/* Summary */}
@@ -211,7 +174,9 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
       </div>
 
       <style jsx>{`
-        .modal-root { position: fixed; inset: 0; z-index: 70; }
+        .modal-root {
+          position: fixed; inset: 0; z-index: 70;
+        }
         .modal-backdrop {
           position: absolute; inset: 0;
           background: rgba(0, 0, 0, 0.32);
@@ -223,32 +188,25 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           border-radius: 16px; background: var(--bg);
           border: 1px solid var(--border);
           box-shadow: 0 30px 80px rgba(0,0,0,0.35);
-          transform: translateY(0);
-          transition: transform .16s ease, box-shadow .16s ease;
         }
-        .modal-sheet:focus { outline: none; }
         .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
         .mh-left { display:flex; gap:12px; align-items:center; }
-        .mh-icon {
-          width:34px; height:34px; border-radius:10px; background:var(--card);
-          border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
-          transition: filter .12s ease;
-        }
-        .mh-icon:hover { filter: brightness(.98); }
+        .mh-icon { width:34px; height:34px; border-radius:10px; background:var(--card); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
         .mh-name { font-weight:800; }
         .mh-actions { display:flex; gap:8px; }
-
         .section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
         .section-title { font-weight:700; }
         .card.dense { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
-
         .link-btn {
-          height: 28px; padding: 0 10px; border-radius: 8px;
-          border: 1px solid var(--border); background: transparent; color: var(--text);
-          font-size: 12.5px; transition: background .12s ease, border-color .12s ease, transform .12s ease;
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--text);
+          font-size: 12.5px;
         }
         .link-btn:hover { background: var(--card); }
-        .link-btn:active { transform: translateY(1px); }
       `}</style>
     </div>
   );
