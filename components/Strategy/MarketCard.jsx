@@ -1,13 +1,28 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { fmtPct } from "../../utils/format";
+import { getMarketStats } from "../../lib/client/market";
+
+// Notes (LaTeX, reference):
+// • Equity risk premium: \mathrm{ERP} = E(R_m) - r_f
+// • Annualization (daily): \mu_{\text{geom}} = \bar{r}_\Delta \cdot 252,\quad \sigma = s_{r_\Delta}\sqrt{252}
+// • Compounding: r_{\text{cont}} = \ln(1+r_{\text{annual}}),\quad r_{\text{annual}} = e^{r_{\text{cont}}}-1
 
 const INDICES = [
   { key: "SPX", label: "S&P 500" },
   { key: "STOXX", label: "STOXX 600" },
   { key: "NDX", label: "NASDAQ 100" }
 ];
+
+// Keep UI options unchanged; map "2y" → "3y" when calling the API.
 const LOOKS = ["1y", "2y", "3y", "5y", "10y"];
+const mapLookback = (lb) => (lb === "2y" ? "3y" : lb);
+
+// Minimal index→currency inference (overrideable via prop).
+const currencyByIndexKey = (k) => {
+  if (k === "STOXX") return "EUR";
+  return "USD"; // SPX, NDX default to USD
+};
 
 /* % input helpers — allow dot, up to 2 decimals, keep raw while typing */
 const pctPattern = /^(\d{0,3})(?:\.(\d{0,2})?)?$/; // "", "5", "5.", "5.5", "12.34", "100"
@@ -15,7 +30,13 @@ const sanitizePct = (raw) => raw.replace(/[^\d.]/g, ""); // no commas, no spaces
 const canAccept = (raw) => raw === "" || pctPattern.test(raw);
 const stripTrailingDot = (raw) => (raw.endsWith(".") ? raw.slice(0, -1) : raw);
 
-export default function MarketCard({ onRates }) {
+/**
+ * MarketCard
+ * Props:
+ *  - onRates?: ({ riskFree, mrp, indexAnn }) => void
+ *  - currency?: string (optional) — when provided, passed through to the API; otherwise inferred by index
+ */
+export default function MarketCard({ onRates, currency }) {
   // UI shows percent numbers (e.g., "5.50"), internal emits decimals (e.g., 0.055)
   const [riskFreePct, setRiskFreePct] = useState("");
   const [mrpPct, setMrpPct] = useState("");
@@ -36,19 +57,54 @@ export default function MarketCard({ onRates }) {
     return n == null || !isFinite(n) ? null : n / 100;
   }, [mrpPct]);
 
-  // Initial fetch (populate % inputs from decimals; emit to parent)
+  // Initial + reactive fetch (populate % inputs; emit to parent)
   useEffect(() => {
+    let alive = true;
+
     const fetchData = async () => {
-      const r = await fetch(`/api/market?index=${indexKey}&lookback=${lookback}`);
-      const d = await r.json();
-      setRiskFreePct(d.riskFree != null ? (d.riskFree * 100).toFixed(2) : "");
-      setMrpPct(d.mrp != null ? (d.mrp * 100).toFixed(2) : "");
-      setIndexAnn(d.indexAnn ?? null);
-      onRates?.({ riskFree: d.riskFree ?? 0, mrp: d.mrp ?? 0, indexAnn: d.indexAnn ?? null });
+      try {
+        const ccy = (currency || currencyByIndexKey(indexKey)).toUpperCase();
+        const data = await getMarketStats({
+          index: indexKey,                 // server normalizes aliases (e.g., SPX → ^GSPC)
+          lookback: mapLookback(lookback), // keep UI; map unsupported "2y" → "3y"
+          basis: "annual",
+          currency: ccy
+        });
+
+        // riskFree in requested basis (annual), mrp computed on annual basis, indexAnn from μ_geom
+        const rAnnual = data?.riskFree?.r;
+        const mrpAnnual = data?.mrp;
+        const muGeom = data?.stats?.mu_geom;
+
+        if (!alive) return;
+
+        setRiskFreePct(
+          rAnnual != null && isFinite(rAnnual) ? (rAnnual * 100).toFixed(2) : ""
+        );
+        setMrpPct(
+          mrpAnnual != null && isFinite(mrpAnnual) ? (mrpAnnual * 100).toFixed(2) : ""
+        );
+        setIndexAnn(
+          muGeom != null && isFinite(muGeom) ? muGeom : null
+        );
+
+        onRates?.({
+          riskFree: rAnnual ?? 0,
+          mrp: mrpAnnual ?? 0,
+          indexAnn: muGeom ?? null
+        });
+      } catch (e) {
+        // Soft-fail: leave existing values; still notify parent with safe zeros so downstream remains stable.
+        onRates?.({ riskFree: 0, mrp: 0, indexAnn: null });
+      }
     };
+
     fetchData();
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indexKey, lookback]);
+  }, [indexKey, lookback, currency]);
 
   const commitRates = () => {
     onRates?.({
