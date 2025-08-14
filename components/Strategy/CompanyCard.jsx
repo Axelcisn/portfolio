@@ -150,7 +150,7 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
   }
 }
 
-/** CAPM drift (annual): \mu = r_f + \beta\cdot \mathrm{ERP} - q */
+/** CAPM drift (annual): μ = r_f + β·ERP − q */
 function capmMu(rAnnual, beta, erp, q = 0) {
   const r = Number(rAnnual) || 0;
   const b = Number(beta) || 0;
@@ -181,7 +181,7 @@ export default function CompanyCard({
   /* -------- basic facts -------- */
   const [currency, setCurrency] = useState(value?.currency || "");
   const [spot, setSpot] = useState(value?.spot || null);
-  const [lastTs, setLastTs] = useState(null);
+  const [lastTs, setLastTs] = useState(null); // canonical "Last updated"
   const [exchangeLabel, setExchangeLabel] = useState("");
 
   /* -------- horizon (days) -------- */
@@ -200,13 +200,13 @@ export default function CompanyCard({
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  /* -------- new market + beta + capm state -------- */
+  /* -------- market + beta + capm state -------- */
   const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
   const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
   const [benchmark, setBenchmark] = useState(market?.benchmark || "^GSPC");
   const [beta, setBeta] = useState(typeof value?.beta === "number" ? value.beta : null);
-  const [divPct, setDivPct] = useState("0.00"); // percent string
-  const [driftMode, setDriftMode] = useState("CAPM"); // "CAPM" | "RF"
+  const [divPct, setDivPct] = useState("0.00");
+  const [driftMode, setDriftMode] = useState("CAPM");
 
   const qDec = useMemo(() => {
     const n = parsePctInput(divPct);
@@ -224,9 +224,7 @@ export default function CompanyCard({
     setVolLoading(false);
   }
 
-  /* =========================
-     API helpers (robust, with fallbacks)
-     ========================= */
+  /* ========================= API helpers ========================= */
 
   async function fetchSpotFromChart(sym) {
     try {
@@ -245,7 +243,6 @@ export default function CompanyCard({
     const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
-
     if (j?.ts) setLastTs(j.ts);
 
     const ccy =
@@ -486,12 +483,12 @@ export default function CompanyCard({
 
       {/* Controls */}
       <div className="company-fields">
-        <div className="fg fg-xs">
+        <div className="fg fg-currency">
           <label>Currency</label>
-          <input className="field" value={currency || ""} readOnly />
+          <input className="field" value={currency || "—"} readOnly />
         </div>
 
-        <div className="fg fg-xs">
+        <div className="fg fg-time">
           <label>Time</label>
           <select
             className="field"
@@ -504,7 +501,7 @@ export default function CompanyCard({
           </select>
         </div>
 
-        <div className="fg fg-lg">
+        <div className="fg fg-vol">
           <label>Volatility</label>
           <div className="vol-wrap" aria-busy={showVolSkeleton ? "true" : "false"}>
             <select
@@ -533,11 +530,9 @@ export default function CompanyCard({
               <input
                 className={`field ${showVolSkeleton ? "is-pending" : ""}`}
                 readOnly
-                value={Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : ""}
+                value={Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
               />
             )}
-
-            {/* tiny spinner + shimmer */}
             <span className={`vol-spin ${volLoading ? "is-on" : ""}`} aria-hidden="true" />
             {showVolSkeleton && <span className="skl w-80" aria-hidden="true" />}
           </div>
@@ -551,12 +546,12 @@ export default function CompanyCard({
           </div>
         </div>
 
-        <div className="fg fg-xs">
+        <div className="fg fg-beta">
           <label>Beta</label>
-          <input className="field" value={Number.isFinite(beta) ? beta.toFixed(2) : ""} readOnly />
+          <input className="field" value={Number.isFinite(beta) ? beta.toFixed(2) : "—"} readOnly />
         </div>
 
-        <div className="fg fg-sm">
+        <div className="fg fg-div">
           <label>Dividend (q)</label>
           <input
             className="field"
@@ -573,16 +568,16 @@ export default function CompanyCard({
           />
         </div>
 
-        <div className="fg fg-sm">
+        <div className="fg fg-mu">
           <label>CAPM μ</label>
           <input
             className="field"
-            value={Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : ""}
+            value={Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}
             readOnly
           />
         </div>
 
-        <div className="fg fg-sm">
+        <div className="fg fg-drift">
           <label>Drift</label>
           <select
             className="field"
@@ -598,38 +593,51 @@ export default function CompanyCard({
 
       <style jsx>{`
         .tiny{ font-size: 11.5px; opacity: .75; }
-        .company-block{ overflow-x: clip; }       /* hard-stop any horizontal bleed */
+        .company-block{ overflow-x: clip; }
         .company-selected{ margin-bottom: 8px; }
 
-        /* --- GRID --- */
+        /* --- GRID (definitive) --- */
         .company-fields{
           display:grid;
-          /* Wide: exact 12 cols so spans stay proportional and never overflow */
-          grid-template-columns: repeat(12, minmax(0, 1fr));
-          gap: 10px 12px;            /* consistent spacing */
+          /* Desktop: measured columns; this prevents overflow and wasted space */
+          grid-template-columns:
+            120px   /* Currency */
+            120px   /* Time */
+            320px   /* Volatility pair */
+            120px   /* Beta */
+            1fr     /* Dividend (q) */
+            1fr     /* CAPM μ */
+            1fr;    /* Drift */
+          gap: 12px;              /* consistent spacing */
           align-items: end;
           width: 100%;
           max-width: 100%;
           box-sizing: border-box;
         }
-        /* Spans tuned for balanced proportions on desktop */
-        .fg-xs { grid-column: span 1; }  /* tiny: Currency, Time, Beta */
-        .fg-sm { grid-column: span 2; }  /* small: q, CAPM μ, Drift */
-        .fg-md { grid-column: span 2; }  /* reserved */
-        .fg-lg { grid-column: span 3; }  /* Volatility pair */
-        /* Below 1500px: tidy two rows using auto-fit, still no overflow */
-        @media (max-width: 1500px){
+
+        /* Map each group to a column (keeps alignment rock-solid) */
+        .fg-currency { grid-column: 1; }
+        .fg-time     { grid-column: 2; }
+        .fg-vol      { grid-column: 3; }
+        .fg-beta     { grid-column: 4; }
+        .fg-div      { grid-column: 5; }
+        .fg-mu       { grid-column: 6; }
+        .fg-drift    { grid-column: 7; }
+
+        /* Below 1440px: two clean rows (auto-fit keeps balance) */
+        @media (max-width: 1440px){
           .company-fields{
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: 140px 120px 280px 120px 1fr 1fr;
           }
-          .fg-xs, .fg-sm, .fg-md, .fg-lg { grid-column: auto; }
+          .fg-drift{ grid-column: 1 / -1; max-width: 420px; }
         }
 
-        /* --- FIELDS --- */
         .fg{ display:grid; gap:6px; min-width:0; }
+
+        /* --- CONTROLS --- */
         .field{
-          height: 42px;                    /* uniform height */
-          padding: 8px 12px;               /* compact, consistent interior */
+          height: 42px;
+          padding: 8px 12px;
           border-radius: 12px;
           border: 1px solid var(--border, #2a2f3a);
           background: var(--card, #111214);
@@ -650,7 +658,7 @@ export default function CompanyCard({
           outline-offset: 2px;
         }
 
-        /* Volatility pair (two equal cells) */
+        /* Volatility pair = exactly two equal internal cells */
         .vol-wrap{
           position: relative;
           display: grid;
@@ -685,13 +693,12 @@ export default function CompanyCard({
           background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
           animation: shimmer 1.15s ease-in-out infinite;
         }
-        .w-80{ width:120px; }
 
         .field.is-pending{
           color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff));
         }
 
-        .meta-line{ min-height: 18px; } /* keeps row height stable */
+        .meta-line{ min-height: 18px; }
 
         /* Light mode fallback */
         @media (prefers-color-scheme: light) {
