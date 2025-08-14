@@ -1,4 +1,4 @@
-// components/Strategy/StatsRail.jsx
+/* components/Strategy/StatsRail.jsx */
 "use client";
 
 /**
@@ -95,9 +95,14 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
     } catch { return null; }
   }
 }
-async function fetchVol(sym, mapped, d, signal) {
+async function fetchVol(sym, mapped, { days, cmDays }, signal) {
   const tryOne = async (param) => {
-    const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}`;
+    const params = new URLSearchParams();
+    params.set("symbol", sym);
+    params.set(param, mapped);          // source or volSource
+    if (days != null) params.set("days", String(days));
+    if (cmDays != null) params.set("cmDays", String(cmDays));
+    const u = `/api/volatility?${params.toString()}`;
     const r = await fetch(u, { cache: "no-store", signal });
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
@@ -130,6 +135,8 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
 
   /* volatility */
   const [volSrc, setVolSrc] = useState("iv"); // iv | hist | manual
+  const [histDays, setHistDays] = useState(30); // shown only when "hist"
+  const CM_DEFAULT = 30; // constant-maturity target for implied
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
   const [volLoading, setVolLoading] = useState(false);
@@ -139,6 +146,26 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
 
   /* derived */
   const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
+
+  const volTag = useMemo(() => {
+    if (volSrc === "hist") return `Hist (${histDays}d)`;
+    if (volSrc === "iv") return `Imp (${CM_DEFAULT}d)`;
+    return "Manual";
+  }, [volSrc, histDays]);
+
+  const volDiag = useMemo(() => {
+    if (!volMeta) return "";
+    const parts = [];
+    if (volMeta.method) parts.push(String(volMeta.method));
+    if (volSrc === "hist") {
+      if (Number.isFinite(volMeta.pointsUsed)) parts.push(`n=${volMeta.pointsUsed}`);
+      parts.push(`win=${histDays}d`);
+    } else if (volSrc === "iv") {
+      if (Number.isFinite(volMeta.cmDays)) parts.push(`cm=${volMeta.cmDays}d`);
+    }
+    if (volMeta.fallback) parts.push("fallback");
+    return parts.join(" · ");
+  }, [volMeta, volSrc, histDays]);
 
   /* listen to navbar ticker selections */
   useEffect(() => {
@@ -177,7 +204,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           setVolLoading(true);
           try {
             const mapped = volSrc === "hist" ? "historical" : "live";
-            const j = await fetchVol(symbol, mapped, 30, ac.signal);
+            const j = await fetchVol(symbol, mapped, { days: volSrc === "hist" ? histDays : CM_DEFAULT, cmDays: volSrc === "iv" ? CM_DEFAULT : undefined }, ac.signal);
             if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
             setSigma(j?.sigmaAnnual ?? null);
             setVolMeta(j?.meta || null);
@@ -197,7 +224,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
     if (typeof market?.mrp === "number") setErp(market.mrp);
   }, [market?.riskFree, market?.mrp]);
 
-  /* re-fetch vol on source change */
+  /* re-fetch vol on source or horizon change */
   useEffect(() => {
     if (!symbol || volSrc === "manual") { cancelVol(); return; }
     (async () => {
@@ -208,7 +235,12 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
       setVolLoading(true);
       try {
         const mapped = volSrc === "hist" ? "historical" : "live";
-        const j = await fetchVol(symbol, mapped, 30, ac.signal);
+        const j = await fetchVol(
+          symbol,
+          mapped,
+          { days: volSrc === "hist" ? histDays : CM_DEFAULT, cmDays: volSrc === "iv" ? CM_DEFAULT : undefined },
+          ac.signal
+        );
         if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
         setSigma(j?.sigmaAnnual ?? null);
         setVolMeta(j?.meta || null);
@@ -217,7 +249,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc, symbol]);
+  }, [volSrc, symbol, histDays]);
 
   /* live price pulse */
   useEffect(() => {
@@ -264,7 +296,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         </div>
       </div>
 
-      {/* Volatility (dropdown + text) */}
+      {/* Volatility (source + horizon + value) */}
       <div className="row">
         <div className="k">Volatility</div>
         <div className="v v-vol">
@@ -278,10 +310,35 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
             <option value="hist">Hist</option>
             <option value="manual">Manual</option>
           </select>
+
+          {volSrc === "hist" && (
+            <select
+              className="select select-compact"
+              value={histDays}
+              onChange={(e) => setHistDays(Number(e.target.value))}
+              title="Historical window"
+            >
+              <option value={20}>20d</option>
+              <option value={30}>30d</option>
+              <option value={60}>60d</option>
+              <option value={90}>90d</option>
+            </select>
+          )}
+
+          <span className={`tag tiny`} aria-label="vol horizon">{volTag}</span>
+
           <span className={`value volval ${showVolSkeleton ? "is-pending" : ""}`}>
             {Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
           </span>
           {showVolSkeleton && <span className="skl" aria-hidden="true" />}
+        </div>
+      </div>
+
+      {/* Volatility diagnostics (subtle, single line) */}
+      <div className="row row-diag">
+        <div className="k">Vol. meta</div>
+        <div className="v">
+          <span className="small muted">{volDiag || "—"}</span>
         </div>
       </div>
 
@@ -332,7 +389,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         /* rows — resilient two-column grid */
         .row{
           display:grid;
-          grid-template-columns: minmax(120px, 1fr) minmax(0, 420px); /* right col can shrink to 0 */
+          grid-template-columns: minmax(120px, 1fr) minmax(0, 420px);
           align-items:center;
           gap:16px;
           padding:10px 0;
@@ -341,11 +398,12 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           width:100%;
         }
         .row:last-of-type{ border-bottom:0; }
+        .row-diag{ padding-top:6px; padding-bottom:6px; }
 
         .k{ font-size:14px; opacity:.75; min-width:0; }
         .v{
           display:flex; justify-content:flex-end; align-items:center; gap:10px;
-          width:100%; min-width:0; /* allow shrink inside the grid */
+          width:100%; min-width:0;
           flex-wrap:nowrap;
         }
         .value{
@@ -360,7 +418,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           border:1px solid var(--border, #2a2f3a);
           background:var(--card, #111214); color:var(--foreground, #e5e7eb);
           font-size:14px; line-height:22px;
-          width:100%; max-width:220px; min-width:0; /* key: can shrink, never overflow */
+          width:100%; max-width:220px; min-width:0;
           box-sizing:border-box;
           transition:border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
         }
@@ -369,6 +427,22 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           outline:2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
           outline-offset:2px;
         }
+
+        /* compact second select for hist window */
+        .select-compact{ max-width:100px; }
+
+        /* tiny horizon tag */
+        .tag{
+          display:inline-flex; align-items:center; justify-content:center;
+          height:22px; padding:0 8px;
+          border-radius:9999px;
+          border:1px solid var(--border);
+          background:transparent;
+          font-size:12px; font-weight:600;
+          color:var(--muted);
+          white-space:nowrap;
+        }
+        .tiny{ font-size:12px; }
 
         /* volatility value skeleton */
         .v-vol{ position:relative; }
