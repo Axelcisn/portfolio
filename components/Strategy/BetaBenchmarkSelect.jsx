@@ -9,6 +9,7 @@ export default function BetaBenchmarkSelect({
   onChange,
   id = "beta-benchmark",
   label = "Benchmark (β)",
+  showLabel = false,          // NEW: do not render an internal label by default
   options,
   className = "",
 }) {
@@ -30,9 +31,11 @@ export default function BetaBenchmarkSelect({
 
   return (
     <div className={`beta-select ${className}`}>
-      <label htmlFor={id} className="label">
-        {label}
-      </label>
+      {showLabel && (
+        <label htmlFor={id} className="label">
+          {label}
+        </label>
+      )}
 
       <div className="selectWrap">
         <select
@@ -40,7 +43,7 @@ export default function BetaBenchmarkSelect({
           value={current}
           onChange={(e) => onChange && onChange(e.target.value)}
           className="select"
-          aria-label="Benchmark for beta"
+          aria-label={showLabel ? undefined : "Benchmark for beta"}
         >
           {opts.map((o) => (
             <option key={o.value} value={o.value}>
@@ -50,8 +53,6 @@ export default function BetaBenchmarkSelect({
         </select>
         <span className="chev" aria-hidden>▾</span>
       </div>
-
-      {/* No helper text (as requested) */}
 
       <style jsx>{`
         .beta-select {
@@ -74,20 +75,20 @@ export default function BetaBenchmarkSelect({
           -moz-appearance: none;
           padding: 10px 32px 10px 12px;
           border-radius: 12px;
-          border: 1px solid var(--border, #e5e7eb);
-          background: var(--card, #ffffff);
-          color: var(--foreground, #111827);
+          border: 1px solid var(--border, #2a2f3a);
+          background: var(--card, #111214);
+          color: var(--foreground, #e5e7eb);
           font-size: 14px;
           line-height: 20px;
           outline: none;
           transition: border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
         }
         .select:hover {
-          border-color: var(--ring, #a3a3a3);
+          border-color: var(--ring, #3b3f47);
         }
         .select:focus {
           border-color: var(--ring, #9ca3af);
-          box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.15);
+          box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18);
         }
         .select:active {
           transform: translateY(0.5px);
@@ -99,25 +100,21 @@ export default function BetaBenchmarkSelect({
           transform: translateY(-50%);
           pointer-events: none;
           font-size: 12px;
-          color: var(--muted-foreground, #6b7280);
+          color: var(--muted-foreground, #9aa1ac);
         }
 
-        /* Prefer dark mode gracefully if design tokens aren't present */
-        @media (prefers-color-scheme: dark) {
+        /* Light mode fallback if tokens differ */
+        @media (prefers-color-scheme: light) {
           .select {
-            border-color: var(--border, #2a2f3a);
-            background: var(--card, #111214);
-            color: var(--foreground, #e5e7eb);
+            border: 1px solid var(--border, #e5e7eb);
+            background: var(--card, #ffffff);
+            color: var(--foreground, #111827);
           }
           .select:hover {
-            border-color: var(--ring, #3b3f47);
+            border-color: var(--ring, #a3a3a3);
           }
-          .select:focus {
-            box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.18);
-          }
-          .label,
           .chev {
-            color: var(--muted-foreground, #9aa1ac);
+            color: var(--muted-foreground, #6b7280);
           }
         }
       `}</style>
