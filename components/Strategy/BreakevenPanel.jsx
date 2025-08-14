@@ -2,46 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { rowsToApiLegs } from "./hooks/rowsToApiLegs";
 
-/** Convert PositionBuilder rows ➜ legs expected by the BE API. */
-function rowsToApiLegs(rows = []) {
-  const legs = [];
-  for (const r of rows || []) {
-    if (!r) continue;
-    const t = String(r.type || "").toLowerCase();
-
-    // map builder codes -> (type, side)
-    let type = null, side = null;
-    if (t === "lc") { type = "call"; side = "long"; }
-    else if (t === "sc") { type = "call"; side = "short"; }
-    else if (t === "lp") { type = "put";  side = "long"; }
-    else if (t === "sp") { type = "put";  side = "short"; }
-    else if (t === "ls") { type = "stock"; side = "long"; }
-    else if (t === "ss") { type = "stock"; side = "short"; }
-    else continue; // ignore unknowns
-
-    const qty = Number.isFinite(Number(r.qty)) ? Math.max(0, Number(r.qty)) : 1;
-
-    if (type === "stock") {
-      // For covered/protective structures. UI may carry a price in r.price or r.premium.
-      const price = Number(r.price ?? r.premium);
-      legs.push({
-        type, side, qty,
-        ...(Number.isFinite(price) ? { price: Number(price) } : {}),
-      });
-    } else {
-      const strike  = Number(r.K ?? r.strike);
-      const premium = Number(r.premium);
-      legs.push({
-        type, side, qty,
-        strike: Number.isFinite(strike)  ? Number(strike)  : null,
-        ...(Number.isFinite(premium) ? { premium: Number(premium) } : {}),
-      });
-    }
-  }
-  return legs;
-}
-
+/** Currency formatting */
 function fmtPrice(x, ccy = "USD") {
   if (!Number.isFinite(x)) return "—";
   try {
@@ -66,6 +29,7 @@ export default function BreakevenPanel({
   const acRef = useRef(null);
   const seqRef = useRef(0);
 
+  // ✅ Use shared mapper — single source of truth
   const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
 
   useEffect(() => {
@@ -90,6 +54,7 @@ export default function BreakevenPanel({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ legs, contractSize }),
         });
+
         const j = await res.json();
         if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
@@ -101,6 +66,7 @@ export default function BreakevenPanel({
           setState({ loading: false, be: null, error: j?.error || "unavailable", meta });
           return;
         }
+
         setState({ loading: false, be, error: null, meta });
       } catch (e) {
         if (!ac.signal.aborted) {
