@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import BreakevenKpiCell from "./BreakevenKpiCell";
+import BreakEvenKpiCell from "./BreakEvenKpiCell";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -212,6 +212,7 @@ export default function Chart({
   const greekWhich=(greekProp||"vega").toLowerCase();
   const gVals = useMemo(()=>xs.map(S=>greekTotal(greekWhich, S, rowsEff, env, contractSize)), [xs, rowsEff, env, contractSize, greekWhich]);
 
+  // Chart BE markers (numeric zero-crossings of expiration curve)
   const be = useMemo(()=>{
     const out=[]; for(let i=1;i<xs.length;i++){ const y0=yExp[i-1], y1=yExp[i];
       if((y0>0&&y1<0)||(y0<0&&y1>0)){ const t=(-y0)/(y1-y0); out.push(xs[i-1]+t*(xs[i]-xs[i-1])); }
@@ -301,7 +302,6 @@ export default function Chart({
       {/* header */}
       <div className="chart-header">
         <div className="legend">
-          {/* dots legend (compact) */}
           <div className="leg"><span className="dot" style={{ background: "var(--accent)" }} />Current P&amp;L</div>
           <div className="leg"><span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />Expiration P&amp;L</div>
           <div className="leg"><span className="dot" style={{ background: greekColor }} />{GREEK_LABEL[greekWhich]||"Greek"}</div>
@@ -375,7 +375,7 @@ export default function Chart({
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${yScale(yExp[i])}`).join(" ")} fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
         <path d={xs.map((v,i)=>`${i?'L':'M'}${xScale(v)},${gScale(gVals[i])}`).join(" ")} fill="none" stroke={greekColor} strokeWidth="2" />
 
-        {/* overlays: spot / mean / CI (solid lines) */}
+        {/* overlays: spot / mean / CI */}
         {Number.isFinite(spot) && spot>=xDomain[0] && spot<=xDomain[1] && (
           <line x1={xScale(Number(spot))} x2={xScale(Number(spot))} y1={pad.t} y2={pad.t+innerH} stroke={SPOT_COLOR} strokeWidth="2" />
         )}
@@ -399,11 +399,11 @@ export default function Chart({
           </>
         )}
 
-        {/* break-evens */}
+        {/* break-evens (chart markers) */}
         {be.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
       </svg>
 
-      {/* floating tooltip (smaller text) */}
+      {/* floating tooltip */}
       {hover && (() => {
         const i = hover.i;
         const leftProb  = (cdf[i] ?? 0);
@@ -448,40 +448,25 @@ export default function Chart({
         );
       })()}
 
-      {/* KPI row with horizontal scroll (RTL container) */}
-      <div className="metrics-scroll" role="region" aria-label="Key performance indicators">
-        <div className="metrics">
-          <div className="m">
-            <div className="k">Underlying price</div>
-            <div className="v">{Number.isFinite(spot)?Number(spot).toFixed(2):"—"}</div>
-          </div>
-          <div className="m">
-            <div className="k">Max profit</div>
-            <div className="v">{fmtNum(Math.max(...yExp),2)}</div>
-          </div>
-          <div className="m">
-            <div className="k">Max loss</div>
-            <div className="v">{fmtNum(Math.min(...yExp),2)}</div>
-          </div>
-          <div className="m">
-            <div className="k">Win rate</div>
-            <div className="v">{(() => {
-              let m=0,t=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; t+=p*dx; if(y>0)m+=p*dx; }
-              return t>0?`${(m/t*100).toFixed(2)}%`:"—";
-            })()}</div>
-          </div>
+      {/* KPI row */}
+      <div className="metrics" data-kpi>
+        <div className="m"><div className="k">Underlying price</div><div className="v">{Number.isFinite(spot)?Number(spot).toFixed(2):"—"}</div></div>
+        <div className="m"><div className="k">Max profit</div><div className="v">{fmtNum(Math.max(...yExp),2)}</div></div>
+        <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
+        <div className="m"><div className="k">Win rate</div><div className="v">{(() => {
+          let m=0,t=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; t+=p*dx; if(y>0)m+=p*dx; }
+          return t>0?`${(m/t*100).toFixed(2)}%`:"—";
+        })()}</div></div>
 
-          {/* Breakeven cell uses our KPI component */}
-          <div className="m">
-            <div className="k">Breakeven</div>
-            <BreakevenKpiCell rows={rowsEff} currency={currency} />
-          </div>
-
-          <div className="m">
-            <div className="k">Lot size</div>
-            <div className="v">{lotSize}</div>
+        {/* BREAK-EVEN cell — uses the compact KPI component */}
+        <div className="m be">
+          <div className="k">Breakeven</div>
+          <div className="v v-be">
+            <BreakEvenKpiCell rows={rowsEff} currency={currency} inline />
           </div>
         </div>
+
+        <div className="m"><div className="k">Lot size</div><div className="v">{lotSize}</div></div>
       </div>
 
       <style jsx>{`
@@ -504,31 +489,24 @@ export default function Chart({
         .tick{ font-size:11px; fill:var(--text); opacity:.75; }
         .axis{ font-size:12px; fill:var(--text); opacity:.7; }
 
-        /* KPI row */
-        .metrics-scroll{
-          overflow-x: auto;
-          overflow-y: hidden;
-          -webkit-overflow-scrolling: touch;
-          direction: rtl; /* start anchored on the right */
-          border-top:1px solid var(--border);
-        }
-        .metrics-scroll::-webkit-scrollbar{ display:none; height:0; }
-        .metrics-scroll{ scrollbar-width: none; }
-
+        /* KPI row: becomes horizontally scrollable on small widths; scrollbar hidden */
         .metrics{
-          direction: ltr;      /* restore normal content direction */
-          min-width: 780px;    /* forces horizontal scroll on narrow screens */
-          display:grid;
-          grid-template-columns: repeat(6, minmax(140px, 1fr));
+          display:flex;
           gap:10px;
           padding:10px 6px 12px;
+          border-top:1px solid var(--border);
+          overflow-x:auto;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;          /* Firefox */
         }
-        @media (max-width:920px){
-          .metrics{ grid-template-columns: repeat(6, minmax(160px, 1fr)); }
-        }
-
+        .metrics::-webkit-scrollbar{ display:none; } /* WebKit */
+        .m{ flex:0 0 auto; min-width:160px; }
         .m .k{ font-size:12px; opacity:.7; }
         .m .v{ font-weight:700; }
+
+        /* make BE cell a bit wider to host values or error line */
+        .m.be{ min-width:220px; }
+        .v-be :global(.be-inline){ width:100%; } /* for our KPI cell inline class */
 
         .tip{
           position:absolute;
