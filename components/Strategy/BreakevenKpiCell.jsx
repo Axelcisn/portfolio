@@ -2,8 +2,7 @@
 "use client";
 
 import { useMemo } from "react";
-
-// Try to consume whatever the lib exposes without hard-coupling a single name.
+import rowsToApiLegs from "./hooks/rowsToApiLegs.js";
 import * as be from "../../lib/strategy/breakeven.js";
 
 // --- helpers ---------------------------------------------------------------
@@ -11,41 +10,17 @@ const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
 
 const isNum = (x) => Number.isFinite(Number(x));
-const fmt = (v, ccy) =>
-  isNum(v) ? `${moneySign(ccy)}${Number(v).toFixed(2)}` : "—";
+const fmt = (v, ccy) => (isNum(v) ? `${moneySign(ccy)}${Number(v).toFixed(2)}` : "—");
 
-// Some lib variants accept rows directly; others want simplified legs.
-// Keep a light adapter in case the lib expects {lc,sc,lp,sp}.
-function rowsToLegsObject(rows) {
-  const out = {
-    lc: { enabled: false, K: null, qty: 0, premium: null },
-    sc: { enabled: false, K: null, qty: 0, premium: null },
-    lp: { enabled: false, K: null, qty: 0, premium: null },
-    sp: { enabled: false, K: null, qty: 0, premium: null },
-  };
-  for (const r of rows || []) {
-    if (!r?.type || !(r.type in out)) continue;
-    const K = Number(r.K);
-    const qty = Number(r.qty || 0);
-    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : null;
-    out[r.type] = {
-      enabled: qty !== 0 && Number.isFinite(K),
-      K: Number.isFinite(K) ? K : null,
-      qty,
-      premium: prem,
-    };
-  }
-  return out;
-}
-
-// Pick whichever function the lib exports
+// Pick whichever function the lib exposes (robust to naming/export variants)
 function pickLibFn() {
   return (
-    be.computeBreakEvenFromRows ||
+    be.computeBreakEvens ||
+    be.default?.computeBreakEvens ||
     be.computeBreakEven ||
+    be.default?.computeBreakEven ||
     be.calcBreakEven ||
-    be.breakEvenFromRows ||
-    be.breakEven ||
+    be.default?.calcBreakEven ||
     null
   );
 }
@@ -57,44 +32,36 @@ function pickLibFn() {
  *  - className: optional to blend with your KPI grid
  */
 export default function BreakevenKpiCell({ rows, currency = "USD", className = "" }) {
+  const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
+
   const result = useMemo(() => {
     const fn = pickLibFn();
-    if (!rows || !rows.length) {
-      return { kind: "empty" }; // show "—"
-    }
-    if (!fn) {
-      return { kind: "unavailable", reason: "No break-even calculator found in lib." };
-    }
+    if (!rows || !rows.length) return { kind: "empty" };
+    if (!fn) return { kind: "unavailable", reason: "No break-even calculator found in lib." };
 
     try {
-      // Most implementations return either:
-      //  - { be: [number, ...], meta?, error? }
-      //  - [number, ...]
-      //  - { value: [...], ... }
-      const maybe = fn(rows, { allowApprox: true, tolerateMissing: true }) 
-        ?? fn(rowsToLegsObject(rows), { allowApprox: true, tolerateMissing: true });
+      // The lib accepts either legs[] or { legs }. We pass legs[].
+      const out = fn(legs) ?? fn({ legs });
 
-      const beArr =
-        Array.isArray(maybe)
-          ? maybe
-          : Array.isArray(maybe?.be)
-          ? maybe.be
-          : Array.isArray(maybe?.value)
-          ? maybe.value
-          : null;
+      // Normalize to an array of numbers
+      const beArr = Array.isArray(out)
+        ? out
+        : Array.isArray(out?.be)
+        ? out.be
+        : Array.isArray(out?.value)
+        ? out.value
+        : null;
 
-      if (maybe?.error) {
-        return { kind: "error", reason: String(maybe.error) };
-      }
-      if (!beArr || beArr.length === 0 || !beArr.some(isNum)) {
+      if (!beArr || !beArr.some(isNum)) {
         return { kind: "unavailable", reason: "Insufficient or incompatible legs." };
       }
-      const clean = beArr.filter(isNum).slice(0, 2); // we only show up to two BEs in KPI
+
+      const clean = beArr.filter(isNum).slice(0, 2);
       return { kind: "ok", be: clean };
     } catch (e) {
       return { kind: "error", reason: String(e?.message || e) };
     }
-  }, [rows]);
+  }, [legs, rows]);
 
   if (result.kind === "ok") {
     const [a, b] = result.be;
@@ -106,40 +73,31 @@ export default function BreakevenKpiCell({ rows, currency = "USD", className = "
             {fmt(a, currency)} <span className="sep">|</span> {fmt(b, currency)}
           </span>
         )}
+        <style jsx>{`
+          .be-kpi { min-width: 0; }
+          .v { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+          .sep { opacity: .55; padding: 0 4px; }
+        `}</style>
       </div>
     );
   }
 
   if (result.kind === "unavailable" || result.kind === "error") {
-    // Explicit red message when unavailable
     return (
       <div className={`be-kpi ${className}`}>
         <span className="be-err">Break-even unavailable for current legs.</span>
+        <style jsx>{`
+          .be-err { color: #ef4444; font-weight: 600; font-size: 0.95rem; white-space: nowrap; }
+        `}</style>
       </div>
     );
   }
 
-  // Empty → show "—" with a tooltip for clarity
+  // Empty → show "—"
   return (
     <div className={`be-kpi ${className}`}>
       <span className="muted" title="Add valid legs to compute break-even.">—</span>
-
-      <style jsx>{`
-        .be-kpi { min-width: 0; }
-        .v {
-          font-variant-numeric: tabular-nums;
-          font-weight: 600;
-          white-space: nowrap;
-        }
-        .sep { opacity: .55; padding: 0 4px; }
-        .be-err {
-          color: #ef4444;
-          font-weight: 600;
-          font-size: 0.95rem;
-          white-space: nowrap;
-        }
-        .muted { color: var(--muted); }
-      `}</style>
+      <style jsx>{`.muted { color: var(--muted); }`}</style>
     </div>
   );
 }
