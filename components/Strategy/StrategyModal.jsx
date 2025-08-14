@@ -7,6 +7,7 @@ import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeTemplate from "./defs/materializeTemplate";
+import BreakevenPanel from "./BreakevenPanel"; // ⬅️ NEW
 
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {
@@ -118,7 +119,9 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         {/* Header */}
         <div className="modal-head" style={{ marginBottom: GAP }}>
           <div className="mh-left">
-            <div className="mh-icon">{strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}</div>
+            <div className="mh-icon">
+              {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
+            </div>
             <div className="mh-meta">
               <div id="sg-modal-title" className="mh-name">
                 {strategy?.name || "Strategy"}
@@ -152,6 +155,11 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           />
         </div>
 
+        {/* ⬇️ Break-even Panel — below the chart */}
+        <section style={{ marginBottom: GAP }}>
+          <BreakevenPanel rows={rows} currency={currency} spot={spot} />
+        </section>
+
         {/* Configuration */}
         <section className="card dense" style={{ marginBottom: GAP }}>
           <div className="section-head">
@@ -175,19 +183,23 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 
       <style jsx>{`
         .modal-root {
-          position: fixed; inset: 0; z-index: 70;
+          position: fixed; inset: 0; z-index: 250;
+          /* Ensure backdrop clicks work even if children overlap */
+          pointer-events: none;
         }
         .modal-backdrop {
           position: absolute; inset: 0;
           background: rgba(0, 0, 0, 0.32);
           backdrop-filter: blur(6px);
           -webkit-backdrop-filter: blur(6px);
+          pointer-events: auto;
         }
         .modal-sheet {
           position: relative; margin: 36px auto;
           border-radius: 16px; background: var(--bg);
           border: 1px solid var(--border);
           box-shadow: 0 30px 80px rgba(0,0,0,0.35);
+          pointer-events: auto; /* Accept interaction */
         }
         .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
         .mh-left { display:flex; gap:12px; align-items:center; }
