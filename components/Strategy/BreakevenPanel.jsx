@@ -2,78 +2,63 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import rowsToApiLegs from "./hooks/rowsToApiLegs";
 
-/** Convert PositionBuilder rows ➜ API legs */
-function rowsToApiLegs(rows = []) {
-  const legs = [];
-  for (const r of rows || []) {
-    if (!r) continue;
-    const t = String(r.type || "").toLowerCase();
+/* ------------ strategy alias handling ------------ */
+const STRAT_ALIASES = Object.freeze({
+  // single legs
+  longcall: "long_call",
+  long_call: "long_call",
+  shortcall: "short_call",
+  short_call: "short_call",
+  longput: "long_put",
+  long_put: "long_put",
+  shortput: "short_put",
+  short_put: "short_put",
 
-    // map builder codes -> (type, side)
-    let type = null, side = null;
-    if (t === "lc") { type = "call"; side = "long"; }
-    else if (t === "sc") { type = "call"; side = "short"; }
-    else if (t === "lp") { type = "put";  side = "long"; }
-    else if (t === "sp") { type = "put";  side = "short"; }
-    else if (t === "ls") { type = "stock"; side = "long"; }
-    else if (t === "ss") { type = "stock"; side = "short"; }
-    else continue;
+  // simple spreads
+  bullcallspread: "bull_call_spread",
+  bull_call_spread: "bull_call_spread",
+  bearcallspread: "bear_call_spread",
+  bear_call_spread: "bear_call_spread",
+  bullputspread: "bull_put_spread",
+  bull_put_spread: "bull_put_spread",
+  bearputspread: "bear_put_spread",
+  bear_put_spread: "bear_put_spread",
 
-    const qty = Number.isFinite(Number(r.qty)) ? Math.max(0, Number(r.qty)) : 1;
+  // multi-leg
+  longstraddle: "long_straddle",
+  long_straddle: "long_straddle",
+  shortstraddle: "short_straddle",
+  short_straddle: "short_straddle",
+  longstrangle: "long_strangle",
+  long_strangle: "long_strangle",
+  shortstrangle: "short_strangle",
+  short_strangle: "short_strangle",
+  ironcondor: "iron_condor",
+  iron_condor: "iron_condor",
+  ironbutterfly: "iron_butterfly",
+  iron_butterfly: "iron_butterfly",
+  callratio: "call_ratio",
+  call_ratio: "call_ratio",
+  putratio: "put_ratio",
+  put_ratio: "put_ratio",
+  collar: "collar",
+  callcalendar: "call_calendar",
+  call_calendar: "call_calendar",
+  putcalendar: "put_calendar",
+  put_calendar: "put_calendar",
+  longbox: "long_box",
+  long_box: "long_box",
+  shortbox: "short_box",
+  short_box: "short_box",
+  leaps: "long_call", // treat LEAPS like a long call for BE purposes
+});
 
-    if (type === "stock") {
-      const price = Number(r.price ?? r.premium);
-      legs.push({
-        type, side, qty,
-        ...(Number.isFinite(price) ? { price: Number(price) } : {}),
-      });
-    } else {
-      const strike  = Number(r.K ?? r.strike);
-      const premium = Number(r.premium);
-      legs.push({
-        type, side, qty,
-        strike: Number.isFinite(strike)  ? Number(strike)  : null,
-        ...(Number.isFinite(premium) ? { premium: Number(premium) } : {}),
-      });
-    }
-  }
-  return legs;
-}
-
-/** Minimal fallback guesser (used ONLY if parent did not pass a strategy) */
-function guessStrategyKey(rows = []) {
-  const has = (t) => rows.some(r => r?.type === t && Number(r?.qty || 0) !== 0);
-  const only = (t) => rows.filter(r => r?.type === t && Number(r?.qty || 0) !== 0);
-
-  // Single legs
-  if (only("lc").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "long_call";
-  if (only("lp").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "long_put";
-  if (only("sc").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "short_call";
-  if (only("sp").length === 1 && rows.filter(r=>Number(r?.qty||0)!==0).length===1) return "short_put";
-
-  // Simple 2-leg spreads (calls)
-  if (has("lc") && has("sc")) {
-    const Klong  = Number( rows.find(r=>r.type==="lc")?.K );
-    const Kshort = Number( rows.find(r=>r.type==="sc")?.K );
-    if (Number.isFinite(Klong) && Number.isFinite(Kshort)) {
-      if (Kshort > Klong) return "bull_call_spread";
-      if (Kshort < Klong) return "bear_call_spread";
-    }
-  }
-  // Simple 2-leg spreads (puts)
-  if (has("lp") && has("sp")) {
-    const Klong  = Number( rows.find(r=>r.type==="lp")?.K );
-    const Kshort = Number( rows.find(r=>r.type==="sp")?.K );
-    if (Number.isFinite(Klong) && Number.isFinite(Kshort)) {
-      if (Klong > Kshort) return "bear_put_spread";
-      if (Klong < Kshort) return "bull_put_spread";
-    }
-  }
-  // Short strangle
-  if (only("sc").length === 1 && only("sp").length === 1) return "short_strangle";
-
-  return null; // unknown → parent should pass explicit strategy
+function normalizeStrategyKey(x) {
+  if (!x) return null;
+  const s = String(x).toLowerCase().replace(/\s+/g, "").replace(/-/g, "");
+  return STRAT_ALIASES[s] ?? null;
 }
 
 function fmtPrice(x, ccy = "USD") {
@@ -92,7 +77,7 @@ function fmtPrice(x, ccy = "USD") {
 
 export default function BreakevenPanel({
   rows,
-  strategy = null,     // explicit strategy key/name (preferred)
+  strategy = null,     // explicit strategy id/name (optional)
   spot = null,         // if present, show distance from spot
   currency = "USD",
   contractSize = 1,    // reserved for futures/FX, 1 for equities
@@ -101,17 +86,17 @@ export default function BreakevenPanel({
   const acRef = useRef(null);
   const seqRef = useRef(0);
 
+  // single source of truth for leg mapping
   const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
-  const strategyKey = useMemo(() => {
-    if (strategy && String(strategy).trim()) return String(strategy);
-    return guessStrategyKey(rows);
-  }, [strategy, rows]);
+
+  // normalize strategy; if unknown, we will omit it to allow server inference
+  const normalizedStrategy = useMemo(() => normalizeStrategyKey(strategy), [strategy]);
 
   useEffect(() => {
     const run = async () => {
-      // If we still don't know the strategy, skip and show unavailable
-      if (!strategyKey) {
-        setState({ loading: false, be: null, error: "strategy_unavailable", meta: null });
+      // No legs → nothing to compute
+      if (!Array.isArray(legs) || legs.length === 0) {
+        setState({ loading: false, be: null, error: "no_legs", meta: null });
         return;
       }
 
@@ -122,18 +107,23 @@ export default function BreakevenPanel({
 
       setState((s) => ({ ...s, loading: true, error: null }));
 
-      await new Promise((r) => setTimeout(r, 220));
+      // tiny debounce for UX batching
+      await new Promise((r) => setTimeout(r, 180));
       if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
       try {
+        const payload = { legs, contractSize };
+        if (normalizedStrategy) payload.strategy = normalizedStrategy;
+
         const res = await fetch("/api/strategy/breakeven", {
           method: "POST",
           cache: "no-store",
           signal: ac.signal,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ strategy: strategyKey, legs, contractSize }),
+          body: JSON.stringify(payload),
         });
-        const j = await res.json();
+
+        const j = await res.json().catch(() => ({}));
         if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
         const be   = Array.isArray(j?.be) ? j.be : Array.isArray(j?.data?.be) ? j.data.be : null;
@@ -153,16 +143,22 @@ export default function BreakevenPanel({
 
     run();
     return () => { try { acRef.current?.abort(); } catch {} };
-  }, [legs, contractSize, strategyKey]);
+  }, [legs, contractSize, normalizedStrategy]);
 
   const isRange = Array.isArray(state.be) && state.be.length === 2;
   const isPoint = Array.isArray(state.be) && state.be.length === 1;
+
+  // Prefer resolved_by label if the backend provides it; otherwise show normalized key
+  const resolvedLabel =
+    state.meta?.resolved_by ||
+    state.meta?.used ||
+    (normalizedStrategy ? normalizedStrategy.replace(/_/g, " ") : "—");
 
   return (
     <section className="card dense">
       <div className="be-head">
         <div className="be-title">Break-even</div>
-        <div className="be-aside">{state.meta?.used ? String(state.meta.used).replace(/_/g, " ") : "—"}</div>
+        <div className="be-aside">{resolvedLabel}</div>
       </div>
 
       {state.loading ? (
