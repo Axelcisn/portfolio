@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { fmtPct } from "../../utils/format";
 import { getMarketStats } from "../../lib/client/market";
+import BetaBenchmarkSelect from "./BetaBenchmarkSelect";
 
 // Notes (LaTeX, reference):
 // • Equity risk premium: \mathrm{ERP} = E(R_m) - r_f
@@ -11,7 +12,7 @@ import { getMarketStats } from "../../lib/client/market";
 const INDICES = [
   { key: "SPX", label: "S&P 500" },
   { key: "STOXX", label: "STOXX 600" },
-  { key: "NDX", label: "NASDAQ 100" }
+  { key: "NDX", label: "NASDAQ 100" },
 ];
 
 // Keep UI options unchanged; map "2y" → "3y" when calling the API.
@@ -24,6 +25,13 @@ const currencyByIndexKey = (k) => {
   return "USD"; // SPX, NDX default to USD
 };
 
+// Default benchmark by index key (Yahoo symbols)
+const defaultBenchmarkByIndexKey = {
+  SPX: "^GSPC",
+  STOXX: "^STOXX",
+  NDX: "^NDX",
+};
+
 /* % input helpers — allow dot, up to 2 decimals, keep raw while typing */
 const pctPattern = /^(\d{0,3})(?:\.(\d{0,2})?)?$/; // "", "5", "5.", "5.5", "12.34", "100"
 const sanitizePct = (raw) => raw.replace(/[^\d.]/g, ""); // no commas, no spaces
@@ -34,9 +42,10 @@ const stripTrailingDot = (raw) => (raw.endsWith(".") ? raw.slice(0, -1) : raw);
  * MarketCard
  * Props:
  *  - onRates?: ({ riskFree, mrp, indexAnn }) => void
- *  - currency?: string (optional) — when provided, passed through to the API; otherwise inferred by index
+ *  - currency?: string (optional) — passed through to the API; otherwise inferred by index
+ *  - onBenchmarkChange?: (symbol: string) => void  — emits selected benchmark (Yahoo symbol)
  */
-export default function MarketCard({ onRates, currency }) {
+export default function MarketCard({ onRates, currency, onBenchmarkChange }) {
   // UI shows percent numbers (e.g., "5.50"), internal emits decimals (e.g., 0.055)
   const [riskFreePct, setRiskFreePct] = useState("");
   const [mrpPct, setMrpPct] = useState("");
@@ -44,6 +53,20 @@ export default function MarketCard({ onRates, currency }) {
   const [indexKey, setIndexKey] = useState("STOXX");
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
+
+  // Benchmark (β) — defaults with index; user may override anytime
+  const [benchmark, setBenchmark] = useState(defaultBenchmarkByIndexKey["STOXX"]);
+
+  // Keep benchmark default aligned when index changes (user can re-override)
+  useEffect(() => {
+    const def = defaultBenchmarkByIndexKey[indexKey] || "^GSPC";
+    setBenchmark(def);
+  }, [indexKey]);
+
+  // Notify parent of benchmark changes if asked
+  useEffect(() => {
+    onBenchmarkChange?.(benchmark);
+  }, [benchmark, onBenchmarkChange]);
 
   const riskFreeDec = useMemo(() => {
     const v = stripTrailingDot(riskFreePct);
@@ -68,7 +91,7 @@ export default function MarketCard({ onRates, currency }) {
           index: indexKey,                 // server normalizes aliases (e.g., SPX → ^GSPC)
           lookback: mapLookback(lookback), // keep UI; map unsupported "2y" → "3y"
           basis: "annual",
-          currency: ccy
+          currency: ccy,
         });
 
         // riskFree in requested basis (annual), mrp computed on annual basis, indexAnn from μ_geom
@@ -84,16 +107,14 @@ export default function MarketCard({ onRates, currency }) {
         setMrpPct(
           mrpAnnual != null && isFinite(mrpAnnual) ? (mrpAnnual * 100).toFixed(2) : ""
         );
-        setIndexAnn(
-          muGeom != null && isFinite(muGeom) ? muGeom : null
-        );
+        setIndexAnn(muGeom != null && isFinite(muGeom) ? muGeom : null);
 
         onRates?.({
           riskFree: rAnnual ?? 0,
           mrp: mrpAnnual ?? 0,
-          indexAnn: muGeom ?? null
+          indexAnn: muGeom ?? null,
         });
-      } catch (e) {
+      } catch {
         // Soft-fail: leave existing values; still notify parent with safe zeros so downstream remains stable.
         onRates?.({ riskFree: 0, mrp: 0, indexAnn: null });
       }
@@ -110,7 +131,7 @@ export default function MarketCard({ onRates, currency }) {
     onRates?.({
       riskFree: riskFreeDec ?? 0,
       mrp: mrpDec ?? 0,
-      indexAnn
+      indexAnn,
     });
   };
 
@@ -197,6 +218,15 @@ export default function MarketCard({ onRates, currency }) {
               {indexAnn == null ? "—" : fmtPct(indexAnn)}
             </div>
           </div>
+        </div>
+
+        {/* Row 4 — Benchmark (β) override (tiny control, no layout change) */}
+        <div className="vgroup">
+          <label>Benchmark (β)</label>
+          <BetaBenchmarkSelect
+            value={benchmark}
+            onChange={(sym) => setBenchmark(sym)}
+          />
         </div>
       </div>
     </section>
