@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import BreakevenKpiCell from "./BreakevenKpiCell";
+import BreakEvenBadge from "./BreakEvenBadge";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -161,6 +161,8 @@ export default function Chart({
   contractSize=1,
   showControls=true,
   frameless=false,
+  /** NEW: explicit strategy key (optional). If absent, BE badge auto-guesses. */
+  strategy=null,
 }) {
   const rowsEff = useMemo(() => {
     if (rows && Array.isArray(rows)) return rows;
@@ -473,10 +475,10 @@ export default function Chart({
             })()}</div>
           </div>
 
-          {/* Breakeven cell uses the shared KPI component */}
+          {/* Breakeven cell uses the shared API-based badge */}
           <div className="m">
             <div className="k">Breakeven</div>
-            <BreakevenKpiCell rows={rowsEff} currency={currency} />
+            <BreakEvenBadge rows={rowsEff} currency={currency} strategy={strategy} />
           </div>
 
           <div className="m"><div className="k">Lot size</div><div className="v">{lotSize}</div></div>
