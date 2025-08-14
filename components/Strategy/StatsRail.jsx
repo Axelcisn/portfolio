@@ -2,17 +2,9 @@
 "use client";
 
 /**
- * Key Stats — definitive line layout.
- * One stat per row with dashed separators.
- * Rows:
- *  - Current Price
- *  - Currency (read-only)
- *  - Time (365/252)
- *  - Volatility (source + value/manual)
- *  - Beta (read-only)
- *  - Dividend (q)
- *  - CAPM μ (read-only)
- *  - Drift (CAPM | RF)
+ * Key Stats — line layout.
+ * Boxes only for dropdowns (Time, Volatility source, Drift).
+ * Dividend (q) stays as an input. All other values are clean text.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -21,14 +13,11 @@ import { useTimeBasis } from "../ui/TimeBasisContext";
 /* ===== helpers ===== */
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
 const isNum = (x) => Number.isFinite(Number(x));
-
 const parsePctInput = (str) => {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
 };
-
 const lastFromArray = (arr) => {
   if (!Array.isArray(arr) || !arr.length) return NaN;
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -37,7 +26,6 @@ const lastFromArray = (arr) => {
   }
   return NaN;
 };
-
 function pickLastClose(j) {
   const arrs = [
     j?.data?.c, j?.c, j?.close,
@@ -64,37 +52,21 @@ async function fetchSpotFromChart(sym) {
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Chart ${r.status}`);
     const last = pickLastClose(j);
     return Number.isFinite(last) ? last : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
 async function fetchCompany(sym) {
   const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
   const j = await r.json();
   if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
-
   const currency =
     j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
-
   let spot = Number(j?.regularMarketPrice);
-  if (!Number.isFinite(spot) || spot <= 0) {
-    spot = await fetchSpotFromChart(j.symbol || sym);
-  }
-
-  return {
-    symbol: j.symbol || sym,
-    currency,
-    beta: typeof j.beta === "number" ? j.beta : null,
-    spot: Number.isFinite(spot) ? spot : null,
-  };
+  if (!Number.isFinite(spot) || spot <= 0) spot = await fetchSpotFromChart(j.symbol || sym);
+  return { symbol: j.symbol || sym, currency, beta: typeof j.beta === "number" ? j.beta : null, spot: Number.isFinite(spot) ? spot : null };
 }
-
 async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
   try {
-    const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(
-      currency
-    )}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
+    const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(currency)}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
     const r = await fetch(u, { cache: "no-store" });
     const j = await r.json();
     if (!r.ok) throw new Error(j?.error || `Market ${r.status}`);
@@ -103,16 +75,11 @@ async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback =
       erp: typeof j?.mrp === "number" ? j.mrp : null,
       indexAnn: typeof j?.indexAnn === "number" ? j.indexAnn : null,
     };
-  } catch {
-    return { rAnnual: null, erp: null, indexAnn: null };
-  }
+  } catch { return { rAnnual: null, erp: null, indexAnn: null }; }
 }
-
 async function fetchBetaStats(sym, benchmark = "^GSPC") {
   try {
-    const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(
-      benchmark
-    )}&range=5y&interval=1mo`;
+    const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(benchmark)}&range=5y&interval=1mo`;
     const r = await fetch(u, { cache: "no-store" });
     const j = await r.json();
     if (!r.ok) throw new Error(j?.error || `Beta ${r.status}`);
@@ -125,27 +92,18 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
       const jc = await rc.json();
       if (!rc.ok) throw new Error(jc?.error || `Company ${rc.status}`);
       return typeof jc?.beta === "number" ? jc.beta : null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
 }
-
 async function fetchVol(sym, mapped, d, signal) {
   const tryOne = async (param) => {
-    const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(
-      mapped
-    )}&days=${encodeURIComponent(d)}`;
+    const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}`;
     const r = await fetch(u, { cache: "no-store", signal });
     const j = await r.json();
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
     return j;
   };
-  try {
-    return await tryOne("source");
-  } catch {
-    return await tryOne("volSource");
-  }
+  try { return await tryOne("source"); } catch { return await tryOne("volSource"); }
 }
 
 /* ===== CAPM: μ = r_f + β·ERP − q ===== */
@@ -163,7 +121,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
   /* market/capm */
   const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
   const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
-  const [beta, setBeta] = useState(isNum(company?.beta) ? company.beta : null);
+  const [beta, setBeta] = useState(Number.isFinite(company?.beta) ? company.beta : null);
   const [divPct, setDivPct] = useState("0.00");
   const qDec = useMemo(() => {
     const n = parsePctInput(divPct);
@@ -177,11 +135,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
   const [volLoading, setVolLoading] = useState(false);
   const volAbortRef = useRef(null);
   const volSeqRef = useRef(0);
-  const cancelVol = () => {
-    try { volAbortRef.current?.abort(); } catch {}
-    volAbortRef.current = null;
-    setVolLoading(false);
-  };
+  const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
 
   /* derived */
   const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
@@ -202,27 +156,19 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
   useEffect(() => {
     if (!symbol) return;
     let mounted = true;
-
     (async () => {
       try {
         const c = await fetchCompany(symbol);
         if (!mounted) return;
         if (c.currency) setCurrency(c.currency);
         if (isNum(c.spot)) setSpot(c.spot);
-
-        const mb = await fetchMarketBasics({
-          index: "^GSPC",
-          currency: c.currency || "USD",
-          lookback: "2y",
-        });
+        const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || "USD", lookback: "2y" });
         if (!mounted) return;
         if (mb.rAnnual != null) setRf(mb.rAnnual);
         if (mb.erp != null) setErp(mb.erp);
-
         const b = await fetchBetaStats(symbol, "^GSPC");
         if (!mounted) return;
         if (b != null) setBeta(b);
-
         if (volSrc !== "manual") {
           cancelVol();
           const ac = new AbortController();
@@ -236,17 +182,11 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
             setSigma(j?.sigmaAnnual ?? null);
             setVolMeta(j?.meta || null);
           } finally {
-            if (mySeq === volSeqRef.current) {
-              setVolLoading(false);
-              volAbortRef.current = null;
-            }
+            if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
           }
         }
-      } catch {
-        /* leave as "—" */
-      }
+      } catch { /* leave as "—" */ }
     })();
-
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
@@ -272,9 +212,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
         setSigma(j?.sigmaAnnual ?? null);
         setVolMeta(j?.meta || null);
-      } catch {
-        /* ignore */
-      } finally {
+      } catch {} finally {
         if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
       }
     })();
@@ -304,91 +242,59 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
       {/* Current Price */}
       <div className="row">
         <div className="k">Current Price</div>
-        <div className="v">{isNum(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}</div>
+        <div className="v value">{isNum(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}</div>
       </div>
 
-      {/* Currency (read-only) */}
+      {/* Currency (display text) */}
       <div className="row">
         <div className="k">Currency</div>
-        <div className="v">
-          <input className="field ro" value={currency || "—"} readOnly />
-        </div>
+        <div className="v value">{currency || "—"}</div>
       </div>
 
-      {/* Time basis */}
+      {/* Time (dropdown) */}
       <div className="row">
         <div className="k">Time</div>
         <div className="v">
-          <select className="field" value={basis} onChange={(e) => setBasis(Number(e.target.value))}>
+          <select className="select" value={basis} onChange={(e) => setBasis(Number(e.target.value))}>
             <option value={365}>365</option>
             <option value={252}>252</option>
           </select>
         </div>
       </div>
 
-      {/* Volatility (source + value/manual) */}
+      {/* Volatility (dropdown + text value) */}
       <div className="row">
         <div className="k">Volatility</div>
-        <div className="v">
-          <div className="vol-wrap" aria-busy={showVolSkeleton ? "true" : "false"}>
-            <select
-              className="field"
-              value={volSrc}
-              onChange={(e) => setVolSrc(e.target.value)}
-              title="Volatility source"
-            >
-              <option value="iv">Imp</option>
-              <option value="hist">Hist</option>
-              <option value="manual">Manual</option>
-            </select>
-
-            {volSrc === "manual" ? (
-              <input
-                className="field"
-                placeholder="0.30"
-                value={Number.isFinite(sigma) ? (sigma ?? 0) : ""}
-                onChange={(e) => {
-                  const v = parsePctInput(e.target.value);
-                  setSigma(Number.isFinite(v) ? v : null);
-                }}
-              />
-            ) : (
-              <input
-                className={`field ro ${showVolSkeleton ? "is-pending" : ""}`}
-                readOnly
-                value={Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
-              />
-            )}
-
-            {/* spinner + shimmer */}
-            <span className={`vol-spin ${volLoading ? "is-on" : ""}`} aria-hidden="true" />
-            {showVolSkeleton && <span className="skl" aria-hidden="true" />}
-          </div>
-
-          <div className="small muted meta-line">
-            {volSrc === "iv" && volMeta?.expiry
-              ? `IV @ ${volMeta.expiry}${volMeta?.fallback ? " · fallback used" : ""}`
-              : volSrc === "hist" && volMeta?.pointsUsed
-              ? `Hist 30d (n=${volMeta.pointsUsed})${volMeta?.fallback ? " · fallback used" : ""}`
-              : ""}
-          </div>
+        <div className="v v-vol">
+          <select
+            className="select"
+            value={volSrc}
+            onChange={(e) => setVolSrc(e.target.value)}
+            title="Volatility source"
+          >
+            <option value="iv">Imp</option>
+            <option value="hist">Hist</option>
+            <option value="manual">Manual</option>
+          </select>
+          <span className={`value volval ${showVolSkeleton ? "is-pending" : ""}`}>
+            {Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
+          </span>
+          {showVolSkeleton && <span className="skl" aria-hidden="true" />}
         </div>
       </div>
 
-      {/* Beta */}
+      {/* Beta (display text) */}
       <div className="row">
         <div className="k">Beta</div>
-        <div className="v">
-          <input className="field ro" value={Number.isFinite(beta) ? beta.toFixed(2) : "—"} readOnly />
-        </div>
+        <div className="v value">{Number.isFinite(beta) ? beta.toFixed(2) : "—"}</div>
       </div>
 
-      {/* Dividend (q) */}
+      {/* Dividend (q) — editable input (kept) */}
       <div className="row">
         <div className="k">Dividend (q)</div>
         <div className="v">
           <input
-            className="field"
+            className="input"
             placeholder="0.00"
             value={divPct}
             onChange={(e) => {
@@ -403,23 +309,17 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         </div>
       </div>
 
-      {/* CAPM μ */}
+      {/* CAPM μ (display text) */}
       <div className="row">
         <div className="k">CAPM μ</div>
-        <div className="v">
-          <input
-            className="field ro"
-            value={Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}
-            readOnly
-          />
-        </div>
+        <div className="v value">{Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}</div>
       </div>
 
-      {/* Drift */}
+      {/* Drift (dropdown) */}
       <div className="row">
         <div className="k">Drift</div>
         <div className="v">
-          <select className="field" defaultValue="CAPM" title="Choose which drift to apply elsewhere">
+          <select className="select" defaultValue="CAPM" title="Choose which drift to apply elsewhere">
             <option value="CAPM">CAPM</option>
             <option value="RF">Risk-Free Rate</option>
           </select>
@@ -430,7 +330,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         /* rows */
         .row {
           display: grid;
-          grid-template-columns: 1fr minmax(240px, 380px);
+          grid-template-columns: 1fr minmax(260px, 420px);
           align-items: center;
           gap: 16px;
           padding: 10px 0;
@@ -439,56 +339,55 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         .row:last-of-type { border-bottom: 0; }
 
         .k { font-size: 14px; opacity: .75; }
-        .v { display: flex; justify-content: flex-end; width: 100%; }
+        .v { display: flex; justify-content: flex-end; align-items: center; gap: 10px; width: 100%; }
+        .value { font-variant-numeric: tabular-nums; font-weight: 600; }
 
-        /* fields */
-        .field {
-          height: 42px;
-          padding: 8px 12px;
-          border-radius: 12px;
+        /* dropdowns (boxed) */
+        .select {
+          height: 38px;
+          padding: 6px 12px;
+          border-radius: 10px;
           border: 1px solid var(--border, #2a2f3a);
           background: var(--card, #111214);
           color: var(--foreground, #e5e7eb);
           font-size: 14px;
           line-height: 22px;
-          min-width: 0;
-          box-sizing: border-box;
-          appearance: none;
-          transition: border-color 140ms ease, outline-color 140ms ease;
-          font-variant-numeric: tabular-nums;
+          min-width: 120px;
+          transition: border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
         }
-        .field:hover { border-color: var(--ring, #3b3f47); }
-        .field:focus-visible {
+        .select:hover { border-color: var(--ring, #3b3f47); }
+        .select:focus-visible {
           outline: 2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
           outline-offset: 2px;
         }
-        .field.ro { background: color-mix(in srgb, var(--card, #111214) 96%, transparent); }
 
-        /* volatility inline group */
-        .vol-wrap {
-          position: relative;
-          display: grid;
-          grid-template-columns: minmax(100px, 1fr) minmax(120px, 1fr);
-          gap: 10px;
-          align-items: center;
-          width: 100%;
+        /* only text for read-only values */
+        .input {
+          height: 38px;
+          padding: 6px 12px;
+          border-radius: 10px;
+          border: 1px solid var(--border, #2a2f3a);
+          background: var(--card, #111214);
+          color: var(--foreground, #e5e7eb);
+          font-size: 14px;
+          line-height: 22px;
+          min-width: 120px;
+          width: 160px;
+          transition: border-color 140ms ease, outline-color 140ms ease;
         }
-        .vol-spin {
-          position: absolute; right: 12px; top: 50%; margin-top: -8px;
-          width: 16px; height: 16px; border-radius: 50%;
-          border: 2px solid transparent;
-          border-top-color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff));
-          opacity: 0; pointer-events: none;
-          animation: vs-rot .9s linear infinite;
-          transition: opacity 120ms ease;
+        .input:hover { border-color: var(--ring, #3b3f47); }
+        .input:focus-visible {
+          outline: 2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
+          outline-offset: 2px;
         }
-        .vol-spin.is-on { opacity: 1; }
-        @keyframes vs-rot { to { transform: rotate(360deg); } }
 
+        /* volatility value skeleton */
+        .v-vol { position: relative; }
+        .volval { min-width: 48px; text-align: right; }
         .skl {
-          position: absolute; right: 44px; top: 50%; height: 10px; width: 96px;
+          position: absolute; right: 10px; top: 50%; height: 10px; width: 80px;
           transform: translateY(-50%);
-          border-radius: 8px;
+          border-radius: 7px;
           background: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
           overflow: hidden;
         }
@@ -497,21 +396,16 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           background: linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent);
           animation: shimmer 1.15s ease-in-out infinite;
         }
-        .is-pending {
-          color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff));
-        }
-
-        .small { font-size: 12px; }
-        .muted { opacity: .75; }
-        .meta-line { margin-top: 6px; }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
+        .is-pending { opacity: .6; }
 
         @media (prefers-color-scheme: light) {
-          .field {
+          .select, .input {
             border: 1px solid var(--border, #e5e7eb);
             background: var(--card, #fff);
             color: var(--foreground, #111827);
           }
-          .field:hover { border-color: var(--ring, #a3a3a3); }
+          .select:hover, .input:hover { border-color: var(--ring, #a3a3a3); }
         }
       `}</style>
     </aside>
