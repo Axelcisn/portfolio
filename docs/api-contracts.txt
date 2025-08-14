@@ -1,0 +1,183 @@
+OPTIONS ANALYTICS — API CONTRACTS (PLAIN TEXT, COPY/PASTE FRIENDLY)
+
+Notation and Units
+• All rates are decimals per year.
+• Basis flag: basis ∈ {annual, cont}.
+• Compounding identities:
+  r_cont = ln(1 + r_annual)
+  r_annual = e^{r_cont} - 1
+
+Core Formulas (reference)
+• Equity risk premium: ERP = E(R_m) - r_f
+• CAPM drift: μ = r_f + β · ERP - q
+• GBM terminal price: S_T = S_0 · exp((μ - ½σ^2)T + σ√T · Z),  Z ~ N(0,1)
+• Log return (interval Δ): r_Δ = ln(P_t / P_{t-1})
+• Annualization (daily): μ_geom = \bar{r}_Δ · 252,  μ_arith = \overline{R_Δ} · 252,  σ = s_{r_Δ} · √252
+• Beta: β = Cov(R_s, R_m) / Var(R_m)
+
+────────────────────────────────────────────────────────────────────────
+
+1) GET /api/riskfree
+Purpose
+• Return the risk-free rate for a currency with selectable basis and robust fallbacks.
+
+Query
+• ccy: USD|EUR|GBP|JPY|CHF|CAD  (default: USD)
+• basis: annual|cont                (default: annual)
+
+Response 200
+{
+  r: number,                // risk-free in requested basis (decimal/year)
+  basis: "annual"|"cont",
+  ccy: "USD"|...,
+  asOf: "ISO-8601",
+  source: "Yahoo ^IRX (13W T-Bill)"|"fallback"|"...",
+  meta: {
+    ttlSeconds: number,
+    fallback?: true,
+    reason?: "no_provider"|"provider_invalid",
+    lastGood?: { rAnnual: number, asOf: string, source: string }
+  }
+}
+
+Errors
+• 500 unexpected_error
+
+Example
+• /api/riskfree?ccy=USD&basis=cont
+
+Notes
+• For non-USD, providers may fall back until Phase 2 sources are enabled.
+
+────────────────────────────────────────────────────────────────────────
+
+2) GET /api/market/stats
+Purpose
+• Market stats and ERP for an index with explicit basis and window meta.
+
+Query
+• index: Yahoo symbol or alias (e.g., ^GSPC, SPX, STOXX). Default: ^GSPC
+• lookback: 3m|6m|1y|3y|5y|10y|ytd  (default: 5y)
+• basis: annual|cont                  (default: annual)
+• currency: override currency code (optional; defaults from index)
+
+Response 200
+{
+  index: string,                   // normalized Yahoo symbol
+  currency: string,                // inferred or overridden CCY
+  basis: "annual"|"cont",
+  stats: {
+    mu_geom: number,               // annualized (decimal)
+    mu_arith: number,              // annualized (decimal)
+    sigma: number,                 // annualized volatility (decimal)
+    n: number
+  },
+  riskFree: {
+    r: number,                     // r in requested basis
+    asOf: string,
+    source: string
+  },
+  mrp: number,                     // ERP = mu_geom(annual) - r_f(annual)
+  meta: {
+    window: "3m|6m|1y|3y|5y|10y|ytd",
+    startDate: "ISO-8601",
+    endDate: "ISO-8601",
+    periodsPerYear: number,
+    cacheTTL: number,
+    note: "mrp computed as mu_geom(annual) - r_f(annual)"
+  }
+}
+
+Errors
+• 500 unexpected_error
+
+Example
+• /api/market/stats?index=^GSPC&lookback=5y&basis=annual
+
+Formulas
+• r_Δ = ln(P_t / P_{t-1})
+• μ_geom = \bar{r}_Δ · 252
+• μ_arith = \overline{R_Δ} · 252
+• σ = s_{r_Δ} · √252
+• ERP = E(R_m) - r_f
+
+────────────────────────────────────────────────────────────────────────
+
+3) GET /api/beta/stats
+Purpose
+• Compute β with diagnostics from aligned return series.
+
+Query
+• symbol: required, e.g., AAPL, MSFT
+• benchmark: optional; defaults by exchange suffix or ^GSPC
+• range: 1y|3y|5y (default: 5y)
+• interval: 1d|1mo (default: 1mo if range=5y, else 1d)
+
+Response 200
+{
+  symbol: string,
+  benchmark: string,
+  params: { range: "1y|3y|5y", interval: "1d|1mo" },
+  beta: number,
+  alpha: number,
+  r2: number,
+  seBeta: number|null,
+  n: number,
+  window: { startDate: "ISO-8601"|null, endDate: "ISO-8601"|null },
+  means: { meanMarket: number, meanStock: number },
+  meta: {
+    cacheTTL: number,
+    note: "Returns are log-returns; OLS with intercept; SE(β) per OLS."
+  }
+}
+
+Errors
+• 400 bad_request (missing symbol)
+• 500 unexpected_error
+
+Formulas
+• β = Cov(R_s, R_m) / Var(R_m)
+• α = \bar{R}_s - β \bar{R}_m
+• R^2 = 1 - SSE/SST
+• SE(β) = sqrt( (SSE/(n-2)) / Σ(R_m - \bar{R}_m)^2 )
+
+Example
+• /api/beta/stats?symbol=AAPL&benchmark=^GSPC&range=5y&interval=1mo
+
+────────────────────────────────────────────────────────────────────────
+
+4) GET/POST /api/capm
+Purpose
+• Compute CAPM drift μ in a single endpoint.
+
+Inputs
+• basis: annual|cont (default: annual)
+• Either:
+  A) beta, riskFree, mrp[, q=0]
+  B) beta, riskFree, indexAnn[, q=0]   (mrp := indexAnn - riskFree)
+
+Response 200
+{
+  mu: number,
+  inputs: { basis: "annual"|"cont", beta: number, riskFree: number, mrp: number, q: number },
+  meta: { formula: "mu = r_f + beta * (E[R_m] - r_f) - q", asOf: "ISO-8601" }
+}
+
+Errors
+• 400 bad_request (validation errors)
+• 500 unexpected_error
+
+Formulas
+• ERP = E(R_m) - r_f
+• μ = r_f + β · ERP - q
+
+Examples
+• GET  /api/capm?beta=1.2&riskFree=0.03&mrp=0.05&q=0.01&basis=annual
+• POST { "basis":"annual","beta":1.2,"riskFree":0.03,"mrp":0.05,"q":0.01 }
+
+────────────────────────────────────────────────────────────────────────
+
+Client Integration Notes
+• Always persist/echo basis through the pipeline to avoid compounding mismatches.
+• Use μ from /api/capm when “CAPM drift + Live IV” mode is active; keep σ from IV service.
+• For realized PoP/EP/EL, you may choose μ = r_f + β · ERP (real-world) or μ = r - q (risk-neutral). Document the choice.
