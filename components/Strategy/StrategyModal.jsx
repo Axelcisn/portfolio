@@ -7,7 +7,7 @@ import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeTemplate from "./defs/materializeTemplate";
-import BreakevenPanel from "./BreakevenPanel"; // ⬅️ NEW
+import BreakevenPanel from "./BreakevenPanel"; // ⬅️ uses strategy prop
 
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {
@@ -57,6 +57,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     sigma = 0.2,
     T = 30 / 365, // years from company card
   } = env || {};
+
+  // derive an explicit strategy key for API/aliases
+  const strategyKey = useMemo(
+    () => strategy?.id ?? strategy?.key ?? strategy?.name ?? null,
+    [strategy]
+  );
 
   // Default days derived from company card's T
   const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
@@ -157,7 +163,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
 
         {/* ⬇️ Break-even Panel — below the chart */}
         <section style={{ marginBottom: GAP }}>
-          <BreakevenPanel rows={rows} currency={currency} spot={spot} />
+          <BreakevenPanel
+            rows={rows}
+            currency={currency}
+            spot={spot}
+            strategy={strategyKey}   // ⬅️ pass explicit strategy to API
+          />
         </section>
 
         {/* Configuration */}
