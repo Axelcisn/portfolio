@@ -3,11 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtPct } from "../../utils/format";
 
+/* Expanded index list */
 const INDICES = [
-  { key: "SPX",   label: "S&P 500" },
-  { key: "STOXX", label: "STOXX 600" },
-  { key: "NDX",   label: "NASDAQ 100" }
+  { key: "SPX",    label: "S&P 500 (SPX)" },
+  { key: "NDX",    label: "NASDAQ 100 (NDX)" },
+  { key: "DJI",    label: "Dow Jones (DJI)" },
+  { key: "RUT",    label: "Russell 2000 (RUT)" },
+  { key: "STOXX",  label: "STOXX Europe 600 (STOXX)" },
+  { key: "SX5E",   label: "EURO STOXX 50 (SX5E)" },
+  { key: "FTSE",   label: "FTSE 100 (FTSE)" },
+  { key: "N225",   label: "Nikkei 225 (N225)" },
+  { key: "SSMI",   label: "SMI Switzerland (SSMI)" },
+  { key: "GSPTSE", label: "TSX Composite (GSPTSE)" },
 ];
+
 const LOOKS = ["1y", "2y", "3y", "5y", "10y"];
 
 /* % input helpers */
@@ -30,11 +39,6 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
   const [indexKey, setIndexKey] = useState("STOXX");
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
-
-  // Benchmark linkage (default: same as index)
-  const [sameBenchmark, setSameBenchmark] = useState(true);
-  const [benchmarkKey, setBenchmarkKey] = useState("STOXX");
-  const effectiveBenchmark = sameBenchmark ? indexKey : benchmarkKey;
 
   // Auto/Manual for RF/MRP
   const [autoRF, setAutoRF] = useState(true);
@@ -112,11 +116,11 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indexKey, lookback, currency, autoRF, autoMRP]);
 
-  // Emit effective benchmark to parent
+  // For external consumers that still listen for a benchmark, emit the same index
   useEffect(() => {
-    onBenchmarkChange?.(effectiveBenchmark);
+    onBenchmarkChange?.(indexKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveBenchmark]);
+  }, [indexKey]);
 
   const commitRF  = () => emitRates();
   const commitMRP = () => emitRates();
@@ -210,7 +214,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
           </div>
         </div>
 
-        {/* Row 3 — Index Average Return */}
+        {/* Row 3 — Index Average Return (controls left; % value right) */}
         <div className="vgroup">
           <label>Index Average Return</label>
           <div className="index-row">
@@ -219,7 +223,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
                 className="field"
                 value={indexKey}
                 onChange={(e) => setIndexKey(e.target.value)}
-                style={{ width: 200 }}
+                style={{ width: 260 }}
               >
                 {INDICES.map((i) => (
                   <option key={i.key} value={i.key}>{i.label}</option>
@@ -244,39 +248,7 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
               ) : indexAnn == null ? "—" : fmtPct(indexAnn)}
             </div>
           </div>
-
-          {/* Helper line for benchmark linkage */}
-          <div className="helper">
-            <span className="muted">
-              Also used as β benchmark
-              {sameBenchmark ? "" : " (overridden)"}
-              .
-            </span>
-            <button
-              className="ghost"
-              onClick={() => setSameBenchmark((s) => !s)}
-              aria-expanded={!sameBenchmark}
-            >
-              {sameBenchmark ? "Change" : "Use index"}
-            </button>
-          </div>
         </div>
-
-        {/* Optional — separate Benchmark only when user chooses to override */}
-        {!sameBenchmark && (
-          <div className="vgroup">
-            <label>Benchmark (β)</label>
-            <select
-              className="field"
-              value={benchmarkKey}
-              onChange={(e) => setBenchmarkKey(e.target.value)}
-            >
-              {INDICES.map((i) => (
-                <option key={i.key} value={i.key}>{i.label} ({i.key})</option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
 
       <style jsx>{`
@@ -300,7 +272,6 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
           outline-offset: 2px;
         }
 
-        /* Auto + Refresh controls */
         .toggles{ display:flex; gap:8px; align-items:center; }
         .pill{
           height: 32px; padding: 0 10px; border-radius: 999px;
@@ -327,7 +298,6 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
         .icon.spin{ animation: rot 760ms linear infinite; }
         @keyframes rot{ to { transform: rotate(360deg); } }
 
-        /* Index value skeleton */
         .skl{
           display:inline-block;
           width: 64px; height: 12px; border-radius: 7px;
@@ -342,26 +312,15 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
         }
         @keyframes shimmer{ 100% { transform: translateX(100%); } }
 
-        .helper{
-          display:flex; align-items:center; justify-content:space-between;
-          margin-top:4px;
-        }
-        .muted{ opacity:.65; font-size:12.5px; }
-        .ghost{
-          height: 28px; padding: 0 10px; border-radius: 8px;
-          border: 1px solid transparent; background: transparent; color: inherit;
-          opacity:.85; cursor:pointer;
-          transition: background 140ms ease, border-color 140ms ease, opacity 120ms ease;
-        }
-        .ghost:hover{
-          opacity:1;
-          background: color-mix(in srgb, var(--text, #e5e7eb) 10%, transparent);
-          border-color: color-mix(in srgb, var(--text, #e5e7eb) 14%, transparent);
-        }
-
         @media (prefers-color-scheme: light){
-          .field, .pill, .icon{ border: 1px solid var(--border, #e5e7eb); background: #fff; color: #111827; }
-          .pill.on{ background: color-mix(in srgb, #111827 6%, #ffffff); border-color: #a3a3a3; }
+          .field, .pill, .icon{
+            border: 1px solid var(--border, #e5e7eb);
+            background: #ffffff; color: #111827;
+          }
+          .pill.on{
+            background: color-mix(in srgb, #111827 6%, #ffffff);
+            border-color: #a3a3a3;
+          }
         }
       `}</style>
     </section>
