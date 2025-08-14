@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import BreakevenKpiCell from "./BreakevenKpiCell";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -447,17 +448,40 @@ export default function Chart({
         );
       })()}
 
-      {/* metrics */}
-      <div className="metrics">
-        <div className="m"><div className="k">Underlying price</div><div className="v">{Number.isFinite(spot)?Number(spot).toFixed(2):"—"}</div></div>
-        <div className="m"><div className="k">Max profit</div><div className="v">{fmtNum(Math.max(...yExp),2)}</div></div>
-        <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
-        <div className="m"><div className="k">Win rate</div><div className="v">{(() => {
-          let m=0,t=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; t+=p*dx; if(y>0)m+=p*dx; }
-          return t>0?`${(m/t*100).toFixed(2)}%`:"—";
-        })()}</div></div>
-        <div className="m"><div className="k">Breakeven</div><div className="v">{be.length===0?"—":be.length===1?fmtNum(be[0],2):`${fmtNum(be[0],0)} | ${fmtNum(be[1],0)}`}</div></div>
-        <div className="m"><div className="k">Lot size</div><div className="v">{lotSize}</div></div>
+      {/* KPI row with horizontal scroll (RTL container) */}
+      <div className="metrics-scroll" role="region" aria-label="Key performance indicators">
+        <div className="metrics">
+          <div className="m">
+            <div className="k">Underlying price</div>
+            <div className="v">{Number.isFinite(spot)?Number(spot).toFixed(2):"—"}</div>
+          </div>
+          <div className="m">
+            <div className="k">Max profit</div>
+            <div className="v">{fmtNum(Math.max(...yExp),2)}</div>
+          </div>
+          <div className="m">
+            <div className="k">Max loss</div>
+            <div className="v">{fmtNum(Math.min(...yExp),2)}</div>
+          </div>
+          <div className="m">
+            <div className="k">Win rate</div>
+            <div className="v">{(() => {
+              let m=0,t=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; t+=p*dx; if(y>0)m+=p*dx; }
+              return t>0?`${(m/t*100).toFixed(2)}%`:"—";
+            })()}</div>
+          </div>
+
+          {/* Breakeven cell uses our KPI component */}
+          <div className="m">
+            <div className="k">Breakeven</div>
+            <BreakevenKpiCell rows={rowsEff} currency={currency} />
+          </div>
+
+          <div className="m">
+            <div className="k">Lot size</div>
+            <div className="v">{lotSize}</div>
+          </div>
+        </div>
       </div>
 
       <style jsx>{`
@@ -480,9 +504,31 @@ export default function Chart({
         .tick{ font-size:11px; fill:var(--text); opacity:.75; }
         .axis{ font-size:12px; fill:var(--text); opacity:.7; }
 
-        .metrics{ display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:10px; padding:10px 6px 12px; border-top:1px solid var(--border); }
-        .m .k{ font-size:12px; opacity:.7; } .m .v{ font-weight:700; }
-        @media (max-width:920px){ .metrics{ grid-template-columns: repeat(3, minmax(0,1fr)); } }
+        /* KPI row */
+        .metrics-scroll{
+          overflow-x: auto;
+          overflow-y: hidden;
+          -webkit-overflow-scrolling: touch;
+          direction: rtl; /* start anchored on the right */
+          border-top:1px solid var(--border);
+        }
+        .metrics-scroll::-webkit-scrollbar{ display:none; height:0; }
+        .metrics-scroll{ scrollbar-width: none; }
+
+        .metrics{
+          direction: ltr;      /* restore normal content direction */
+          min-width: 780px;    /* forces horizontal scroll on narrow screens */
+          display:grid;
+          grid-template-columns: repeat(6, minmax(140px, 1fr));
+          gap:10px;
+          padding:10px 6px 12px;
+        }
+        @media (max-width:920px){
+          .metrics{ grid-template-columns: repeat(6, minmax(160px, 1fr)); }
+        }
+
+        .m .k{ font-size:12px; opacity:.7; }
+        .m .v{ font-weight:700; }
 
         .tip{
           position:absolute;
@@ -495,7 +541,7 @@ export default function Chart({
           box-shadow: 0 8px 24px rgba(0,0,0,.35);
           border: 1px solid rgba(255,255,255,.08);
           pointer-events: none;
-          font-size: 11.5px; /* smaller */
+          font-size: 11.5px;
         }
         .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:650; }
         .row + .row{ margin-top:6px; }
