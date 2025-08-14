@@ -150,7 +150,7 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
   }
 }
 
-/** CAPM drift (annual): μ = r_f + β·ERP − q */
+/** CAPM drift (annual): \mu = r_f + \beta\cdot \mathrm{ERP} - q */
 function capmMu(rAnnual, beta, erp, q = 0) {
   const r = Number(rAnnual) || 0;
   const b = Number(beta) || 0;
@@ -574,7 +574,7 @@ export default function CompanyCard({
           </div>
         </div>
 
-        {/* -------- Beta (display-only) -------- */}
+        {/* Beta */}
         <div className="fg">
           <label>Beta</label>
           <input
@@ -584,7 +584,7 @@ export default function CompanyCard({
           />
         </div>
 
-        {/* -------- Dividend (q) input (helper line removed) -------- */}
+        {/* Dividend (q) */}
         <div className="fg">
           <label>Dividend (q)</label>
           <input
@@ -604,7 +604,7 @@ export default function CompanyCard({
           />
         </div>
 
-        {/* -------- CAPM μ (display-only, helper line removed) -------- */}
+        {/* CAPM μ */}
         <div className="fg">
           <label>CAPM μ</label>
           <input
@@ -614,7 +614,7 @@ export default function CompanyCard({
           />
         </div>
 
-        {/* -------- Drift selector -------- */}
+        {/* Drift */}
         <div className="fg">
           <label>Drift</label>
           <select
@@ -632,6 +632,22 @@ export default function CompanyCard({
       {/* Local minimal styles (keeps Apple-style) */}
       <style jsx>{`
         .tiny{ font-size: 11.5px; opacity: .75; }
+
+        /* 1-row on wide screens; 2 neat rows below ~1500px */
+        .company-fields{
+          display:grid;
+          grid-template-columns: repeat(7, minmax(160px, 1fr));
+          column-gap: 14px;
+          row-gap: 12px;
+          align-items: end;
+        }
+        @media (max-width: 1500px){
+          .company-fields{
+            grid-template-columns: repeat(4, minmax(200px, 1fr));
+          }
+        }
+
+        .fg{ display:grid; gap:6px; }
 
         /* Focus rings (subtle, Apple-like) */
         .field:focus-visible{
