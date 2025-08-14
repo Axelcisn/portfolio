@@ -58,7 +58,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     T = 30 / 365, // years from company card
   } = env || {};
 
-  // derive an explicit strategy key for API/aliases
+  // derive an explicit strategy key for the BE API (id > key > name)
   const strategyKey = useMemo(
     () => strategy?.id ?? strategy?.key ?? strategy?.name ?? null,
     [strategy]
