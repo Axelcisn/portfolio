@@ -6,7 +6,7 @@ import DirectionBadge from "./DirectionBadge";
 import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
-import materializeTemplate from "./defs/materializeTemplate";
+import materializeSeeded from "./defs/materializeSeeded";
 import BreakevenPanel from "./BreakevenPanel"; // ⬅️ uses strategy prop
 
 /* ---------- helpers ---------- */
@@ -67,14 +67,30 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   // Default days derived from company card's T
   const defaultDays = Math.max(1, Math.round((T || 30 / 365) * 365));
 
-  // Seed rows from the strategy template (legs, qty, expirations from company card's Time)
+  // Seed rows from the strategy template + deterministic seeding (K & premium)
   const [rows, setRows] = useState(() =>
-    materializeTemplate(strategy?.id, { T, defaultDays })
+    materializeSeeded(strategy?.id, {
+      spot,
+      sigma,
+      T,
+      defaultDays,
+      riskFree,
+      dividendYield: env?.dividendYield ?? 0,
+    })
   );
 
   // Re-materialize when opening a different strategy
   useEffect(() => {
-    setRows(materializeTemplate(strategy?.id, { T, defaultDays }));
+    setRows(
+      materializeSeeded(strategy?.id, {
+        spot,
+        sigma,
+        T,
+        defaultDays,
+        riskFree,
+        dividendYield: env?.dividendYield ?? 0,
+      })
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategy?.id]);
 
@@ -100,9 +116,16 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     onClose?.();
   };
 
-  // Reset to template using **current** company card time
+  // Reset to template using **current** company card time (seeded)
   const resetToDefaults = () => {
-    const fresh = materializeTemplate(strategy?.id, { T, defaultDays });
+    const fresh = materializeSeeded(strategy?.id, {
+      spot,
+      sigma,
+      T,
+      defaultDays,
+      riskFree,
+      dividendYield: env?.dividendYield ?? 0,
+    });
     setRows(fresh);
   };
 
