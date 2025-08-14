@@ -1,37 +1,80 @@
-// components/Strategy/StatsRail.jsx
+// components/Strategy/CompanyCard.jsx
 "use client";
 
-/**
- * Key Stats — line layout with robust right column.
- * Boxes only for dropdowns (Time, Volatility source, Drift) and Dividend input.
- * All other values render as right-aligned text.
- * Fix: Current Price never shows $0.00; only display if price > 0.
- */
-
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useTimeBasis } from "../ui/TimeBasisContext";
 
-/* ===== helpers ===== */
-const moneySign = (ccy) =>
-  ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
-const isNum = (x) => Number.isFinite(Number(x));
-const hasPrice = (x) => Number.isFinite(Number(x)) && Number(x) > 0;
-
-const parsePctInput = (str) => {
-  const v = Number(String(str).replace("%", "").trim());
-  return Number.isFinite(v) ? v / 100 : NaN;
+/* Exchange pretty labels */
+const EX_NAMES = {
+  NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
+  NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
+  MIL: "Milan", LSE: "London", EBS: "Swiss", SWX: "Swiss",
+  TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
 
-const lastFromArray = (arr) => {
+/* ---------- helpers ---------- */
+function fmtMoney(v, ccy = "") {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  const sign = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
+  return sign + n.toFixed(2);
+}
+function fmtLast(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - Number(ts);
+  if (diff < 45_000) return "Just now";
+  try {
+    const d = new Date(Number(ts));
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+function lastFromArray(arr) {
   if (!Array.isArray(arr) || !arr.length) return NaN;
   for (let i = arr.length - 1; i >= 0; i--) {
     const n = Number(arr[i]);
     if (Number.isFinite(n) && n > 0) return n;
   }
   return NaN;
-};
+}
+/** Try many common shapes to extract a spot/last/close price */
+function pickSpot(obj) {
+  if (!obj || typeof obj !== "object") return NaN;
+  const tryKeys = (o) => {
+    if (!o || typeof o !== "object") return NaN;
+    const keys = [
+      "spot","last","lastPrice","price",
+      "regularMarketPrice","close","previousClose","prevClose",
+    ];
+    for (const k of keys) {
+      const v = Number(o?.[k]);
+      if (Number.isFinite(v) && v > 0) return v;
+    }
+    return NaN;
+  };
+  let v = tryKeys(obj);
+  if (Number.isFinite(v)) return v;
 
+  const nests = [
+    obj.quote, obj.quotes, obj.price, obj.data, obj.meta,
+    obj.result?.[0], obj.result, obj.chart?.result?.[0]?.meta,
+  ];
+  for (const nest of nests) {
+    v = tryKeys(nest);
+    if (Number.isFinite(v)) return v;
+  }
+  const arrs = [
+    obj?.data?.c, obj?.c, obj?.close,
+    obj?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+    obj?.result?.[0]?.indicators?.quote?.[0]?.close,
+  ];
+  for (const a of arrs) {
+    v = lastFromArray(a);
+    if (Number.isFinite(v)) return v;
+  }
+  return NaN;
+}
+/** Fallback close/last from chart payloads */
 function pickLastClose(j) {
   const arrs = [
     j?.data?.c, j?.c, j?.close,
@@ -49,7 +92,7 @@ function pickLastClose(j) {
   return Number.isFinite(metaPx) ? metaPx : null;
 }
 
-/* ===== server calls ===== */
+/* ---------- server helpers ---------- */
 async function fetchSpotFromChart(sym) {
   try {
     const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
@@ -58,378 +101,168 @@ async function fetchSpotFromChart(sym) {
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Chart ${r.status}`);
     const last = pickLastClose(j);
     return Number.isFinite(last) ? last : null;
-  } catch { return null; }
-}
-async function fetchCompany(sym) {
-  const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-  const j = await r.json();
-  if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
-  const currency =
-    j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
-
-  let spot = Number(j?.regularMarketPrice);
-  if (!hasPrice(spot)) {
-    spot = await fetchSpotFromChart(j.symbol || sym);
-  }
-
-  return {
-    symbol: j.symbol || sym,
-    currency,
-    beta: typeof j.beta === "number" ? j.beta : null,
-    spot: hasPrice(spot) ? spot : null,
-  };
-}
-async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
-  try {
-    const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(currency)}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
-    const r = await fetch(u, { cache: "no-store" });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || `Market ${r.status}`);
-    return {
-      rAnnual: typeof j?.riskFree?.r === "number" ? j.riskFree.r : null,
-      erp: typeof j?.mrp === "number" ? j.mrp : null,
-      indexAnn: typeof j?.indexAnn === "number" ? j.indexAnn : null,
-    };
   } catch {
-    return { rAnnual: null, erp: null, indexAnn: null };
+    return null;
   }
 }
-async function fetchBetaStats(sym, benchmark = "^GSPC") {
-  try {
-    const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(benchmark)}&range=5y&interval=1mo`;
-    const r = await fetch(u, { cache: "no-store" });
+
+export default function CompanyCard({
+  value = null,
+  onConfirm,
+}) {
+  /* Selection from NAV search */
+  const [picked, setPicked] = useState(
+    value?.symbol ? { symbol: value.symbol, name: value.name, exchange: value.exchange } : null
+  );
+  const selSymbol = useMemo(
+    () => (picked?.symbol || "").trim().toUpperCase(),
+    [picked]
+  );
+
+  /* basics for header */
+  const [currency, setCurrency] = useState(value?.currency || "");
+  const [spot, setSpot] = useState(value?.spot || null);
+  const [lastTs, setLastTs] = useState(null);
+  const [exchangeLabel, setExchangeLabel] = useState("");
+  const [msg, setMsg] = useState("");
+
+  async function fetchCompany(sym) {
+    const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
     const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || `Beta ${r.status}`);
-    const b = typeof j?.beta === "number" ? j.beta : null;
-    if (b == null) throw new Error("no_beta");
-    return b;
-  } catch {
+    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
+
+    if (j?.ts) setLastTs(j.ts);
+
+    const ccy =
+      j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
+    if (ccy) setCurrency(ccy);
+
+    let px = pickSpot(j);
+    if (!Number.isFinite(px) || px <= 0) {
+      try {
+        const r2 = await fetch(`/api/company/autoFields?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+        const j2 = await r2.json();
+        if (r2.ok && j2?.ok !== false) {
+          const alt = pickSpot(j2);
+          if (Number.isFinite(alt) && alt > 0) px = alt;
+          const c2 = j2.currency || j2.ccy || j2?.quote?.currency;
+          if (c2 && !ccy) setCurrency(c2);
+        }
+      } catch {}
+    }
+    if (!Number.isFinite(px) || px <= 0) {
+      const c = await fetchSpotFromChart(sym);
+      if (Number.isFinite(c) && c > 0) px = c;
+      setLastTs(Date.now());
+    }
+
+    setSpot(Number.isFinite(px) ? px : null);
+    setExchangeLabel(
+      (picked?.exchange && (EX_NAMES[picked.exchange] || picked.exchange)) ||
+      j.exchange || j.exchangeName || ""
+    );
+
+    onConfirm?.({
+      symbol: j.symbol || sym,
+      name: j.name || j.longName || j.companyName || picked?.name || "",
+      exchange: picked?.exchange || j.exchange || null,
+      currency: ccy || j.currency || "",
+      spot: Number.isFinite(px) ? px : null,
+      high52: j.high52 ?? j.fiftyTwoWeekHigh ?? null,
+      low52: j.low52 ?? j.fiftyTwoWeekLow ?? null,
+      beta: j.beta ?? null,
+    });
+  }
+
+  async function confirmSymbol(sym) {
+    const s = (sym || "").toUpperCase();
+    if (!s) return;
+    setMsg("");
     try {
-      const rc = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-      const jc = await rc.json();
-      if (!rc.ok) throw new Error(jc?.error || `Company ${rc.status}`);
-      return typeof jc?.beta === "number" ? jc.beta : null;
-    } catch { return null; }
+      await fetchCompany(s);
+    } catch (e) {
+      setMsg(String(e?.message || e));
+    }
   }
-}
-async function fetchVol(sym, mapped, d, signal) {
-  const tryOne = async (param) => {
-    const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}`;
-    const r = await fetch(u, { cache: "no-store", signal });
-    const j = await r.json();
-    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
-    return j;
-  };
-  try { return await tryOne("source"); } catch { return await tryOne("volSource"); }
-}
 
-/* ===== CAPM: μ = r_f + β·ERP − q ===== */
-const capmMu = (rf, beta, erp, q = 0) =>
-  (Number(rf) || 0) + (Number(beta) || 0) * (Number(erp) || 0) - (Number(q) || 0);
-
-export default function StatsRail({ spot: propSpot, currency: propCcy, company, market }) {
-  const { basis, setBasis } = useTimeBasis();
-
-  /* selection & basics */
-  const [symbol, setSymbol] = useState(company?.symbol || "");
-  const [currency, setCurrency] = useState(propCcy || company?.currency || "");
-  // IMPORTANT: don't initialize with 0; only accept positive spot
-  const [spot, setSpot] = useState(Number(propSpot) > 0 ? Number(propSpot) : null);
-
-  /* market/capm */
-  const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
-  const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
-  const [beta, setBeta] = useState(Number.isFinite(company?.beta) ? company.beta : null);
-  const [divPct, setDivPct] = useState("0.00");
-  const qDec = useMemo(() => {
-    const n = parsePctInput(divPct);
-    return Number.isFinite(n) ? n : 0;
-  }, [divPct]);
-
-  /* volatility */
-  const [volSrc, setVolSrc] = useState("iv"); // iv | hist | manual
-  const [sigma, setSigma] = useState(null);
-  const [volMeta, setVolMeta] = useState(null);
-  const [volLoading, setVolLoading] = useState(false);
-  const volAbortRef = useRef(null);
-  const volSeqRef = useRef(0);
-  const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
-
-  /* derived */
-  const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
-
-  /* keep spot in sync if parent later provides a valid price */
-  useEffect(() => {
-    if (Number(propSpot) > 0) setSpot(Number(propSpot));
-  }, [propSpot]);
-
-  /* listen to navbar ticker selections */
+  /* Subscribe to navbar search picks */
   useEffect(() => {
     const onPick = (e) => {
       const it = e?.detail || {};
       const sym = (it.symbol || "").toUpperCase();
       if (!sym) return;
-      setSymbol(sym);
+      setPicked({ symbol: sym, name: it.name || "", exchange: it.exchange || it.exchDisp || "" });
+      confirmSymbol(sym);
     };
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* hydrate when symbol known */
+  /* If a value was passed initially, confirm it once on mount */
   useEffect(() => {
-    if (!symbol) return;
-    let mounted = true;
-
-    (async () => {
-      try {
-        const c = await fetchCompany(symbol);
-        if (!mounted) return;
-        if (c.currency) setCurrency(c.currency);
-        if (hasPrice(c.spot)) setSpot(c.spot);
-
-        const mb = await fetchMarketBasics({
-          index: "^GSPC",
-          currency: c.currency || "USD",
-          lookback: "2y",
-        });
-        if (!mounted) return;
-        if (mb.rAnnual != null) setRf(mb.rAnnual);
-        if (mb.erp != null) setErp(mb.erp);
-
-        const b = await fetchBetaStats(symbol, "^GSPC");
-        if (!mounted) return;
-        if (b != null) setBeta(b);
-
-        if (volSrc !== "manual") {
-          cancelVol();
-          const ac = new AbortController();
-          volAbortRef.current = ac;
-          const mySeq = ++volSeqRef.current;
-          setVolLoading(true);
-          try {
-            const mapped = volSrc === "hist" ? "historical" : "live";
-            const j = await fetchVol(symbol, mapped, 30, ac.signal);
-            if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
-            setSigma(j?.sigmaAnnual ?? null);
-            setVolMeta(j?.meta || null);
-          } finally {
-            if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
-          }
-        }
-      } catch {
-        /* leave as "—" */
-      }
-    })();
-
-    return () => { mounted = false; };
+    if (value?.symbol) {
+      const sym = value.symbol.toUpperCase();
+      setPicked({ symbol: sym, name: value.name || "", exchange: value.exchange || "" });
+      confirmSymbol(sym);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, []);
 
-  /* honor market props if provided */
+  /* Lightweight live price poll (15s) using chart endpoint only */
   useEffect(() => {
-    if (typeof market?.riskFree === "number") setRf(market.riskFree);
-    if (typeof market?.mrp === "number") setErp(market.mrp);
-  }, [market?.riskFree, market?.mrp]);
-
-  /* re-fetch vol on source change */
-  useEffect(() => {
-    if (!symbol || volSrc === "manual") { cancelVol(); return; }
-    (async () => {
-      cancelVol();
-      const ac = new AbortController();
-      volAbortRef.current = ac;
-      const mySeq = ++volSeqRef.current;
-      setVolLoading(true);
-      try {
-        const mapped = volSrc === "hist" ? "historical" : "live";
-        const j = await fetchVol(symbol, mapped, 30, ac.signal);
-        if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
-        setSigma(j?.sigmaAnnual ?? null);
-        setVolMeta(j?.meta || null);
-      } catch {
-        /* ignore */
-      } finally {
-        if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [volSrc, symbol]);
-
-  /* live price pulse */
-  useEffect(() => {
-    if (!symbol) return;
-    let stop = false, id;
+    if (!selSymbol) return;
+    let stop = false;
+    let id;
     const tick = async () => {
-      const px = await fetchSpotFromChart(symbol);
-      if (!stop && hasPrice(px)) setSpot(px);
+      const px = await fetchSpotFromChart(selSymbol);
+      if (!stop && Number.isFinite(px)) {
+        setSpot(px);
+        setLastTs(Date.now());
+        onConfirm?.({
+          symbol: selSymbol,
+          name: picked?.name || value?.name || "",
+          exchange: picked?.exchange || null,
+          currency,
+          spot: px,
+          high52: value?.high52 ?? null,
+          low52: value?.low52 ?? null,
+          beta: value?.beta ?? null,
+        });
+      }
       id = setTimeout(tick, 15000);
     };
     tick();
     return () => { stop = true; clearTimeout(id); };
-  }, [symbol]);
-
-  const showVolSkeleton =
-    volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selSymbol]);
 
   return (
-    <aside className="card">
-      <h3>Key stats</h3>
-
-      {/* Current Price */}
-      <div className="row">
-        <div className="k">Current Price</div>
-        <div className="v value">
-          {hasPrice(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}
+    <section className="company-block">
+      {/* Selected status line (single source-of-truth display) */}
+      {selSymbol && (
+        <div className="company-selected small">
+          <span className="muted">Selected:</span> <strong>{selSymbol}</strong>
+          {picked?.name ? ` — ${picked.name}` : ""}
+          {exchangeLabel ? ` • ${exchangeLabel}` : ""}
+          {Number.isFinite(spot) && (
+            <>
+              {" • "}
+              <strong>{fmtMoney(spot, currency)}</strong>
+              <span className="muted tiny">{` · Last updated ${fmtLast(lastTs)}`}</span>
+            </>
+          )}
         </div>
-      </div>
-
-      {/* Currency (text) */}
-      <div className="row">
-        <div className="k">Currency</div>
-        <div className="v value">{currency || "—"}</div>
-      </div>
-
-      {/* Time (dropdown) */}
-      <div className="row">
-        <div className="k">Time</div>
-        <div className="v">
-          <select className="select" value={basis} onChange={(e) => setBasis(Number(e.target.value))}>
-            <option value={365}>365</option>
-            <option value={252}>252</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Volatility (dropdown + text) */}
-      <div className="row">
-        <div className="k">Volatility</div>
-        <div className="v v-vol">
-          <select
-            className="select"
-            value={volSrc}
-            onChange={(e) => setVolSrc(e.target.value)}
-            title="Volatility source"
-          >
-            <option value="iv">Imp</option>
-            <option value="hist">Hist</option>
-            <option value="manual">Manual</option>
-          </select>
-          <span className={`value volval ${showVolSkeleton ? "is-pending" : ""}`}>
-            {Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
-          </span>
-          {showVolSkeleton && <span className="skl" aria-hidden="true" />}
-        </div>
-      </div>
-
-      {/* Beta (text) */}
-      <div className="row">
-        <div className="k">Beta</div>
-        <div className="v value">{Number.isFinite(beta) ? beta.toFixed(2) : "—"}</div>
-      </div>
-
-      {/* Dividend (q) — input */}
-      <div className="row">
-        <div className="k">Dividend (q)</div>
-        <div className="v">
-          <input
-            className="input"
-            placeholder="0.00"
-            value={divPct}
-            onChange={(e) => {
-              const raw = e.target.value.replace(/[^\d.]/g, "");
-              if (raw === "" || /^\d{0,3}(\.\d{0,2})?$/.test(raw)) setDivPct(raw);
-            }}
-            onBlur={() => {
-              const v = parsePctInput(divPct);
-              setDivPct(Number.isFinite(v) ? (v * 100).toFixed(2) : "0.00");
-            }}
-          />
-        </div>
-      </div>
-
-      {/* CAPM μ (text) */}
-      <div className="row">
-        <div className="k">CAPM μ</div>
-        <div className="v value">{Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}</div>
-      </div>
-
-      {/* Drift (dropdown) */}
-      <div className="row">
-        <div className="k">Drift</div>
-        <div className="v">
-          <select className="select" defaultValue="CAPM" title="Choose which drift to apply elsewhere">
-            <option value="CAPM">CAPM</option>
-            <option value="RF">Risk-Free Rate</option>
-          </select>
-        </div>
-      </div>
+      )}
+      {msg && <div className="small" style={{ color: "#ef4444" }}>{msg}</div>}
 
       <style jsx>{`
-        /* rows — resilient two-column grid */
-        .row{
-          display:grid;
-          grid-template-columns: minmax(120px, 1fr) minmax(0, 420px);
-          align-items:center;
-          gap:16px;
-          padding:10px 0;
-          border-bottom:1px dashed var(--border, #2a2f3a);
-          box-sizing:border-box;
-          width:100%;
-        }
-        .row:last-of-type{ border-bottom:0; }
-
-        .k{ font-size:14px; opacity:.75; min-width:0; }
-        .v{
-          display:flex; justify-content:flex-end; align-items:center; gap:10px;
-          width:100%; min-width:0; flex-wrap:nowrap;
-        }
-        .value{
-          font-variant-numeric: tabular-nums; font-weight:600;
-          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-          max-width:100%;
-        }
-
-        /* dropdowns / inputs — constrained */
-        .select, .input{
-          height:38px; padding:6px 12px; border-radius:10px;
-          border:1px solid var(--border, #2a2f3a);
-          background:var(--card, #111214); color:var(--foreground, #e5e7eb);
-          font-size:14px; line-height:22px;
-          width:100%; max-width:220px; min-width:0;
-          box-sizing:border-box;
-          transition:border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
-        }
-        .select:hover, .input:hover{ border-color: var(--ring, #3b3f47); }
-        .select:focus-visible, .input:focus-visible{
-          outline:2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
-          outline-offset:2px;
-        }
-
-        /* volatility value skeleton */
-        .v-vol{ position:relative; }
-        .volval{ min-width:48px; text-align:right; }
-        .skl{
-          position:absolute; right:10px; top:50%; height:10px; width:80px;
-          transform:translateY(-50%); border-radius:7px;
-          background: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
-          overflow:hidden;
-        }
-        .skl::after{
-          content:""; position:absolute; inset:0; transform:translateX(-100%);
-          background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
-          animation:shimmer 1.15s ease-in-out infinite;
-        }
-        @keyframes shimmer{ 100% { transform: translateX(100%); } }
-        .is-pending{ opacity:.6; }
-
-        @media (prefers-color-scheme: light){
-          .select, .input{
-            border:1px solid var(--border, #e5e7eb);
-            background:#fff; color:#111827;
-          }
-          .select:hover, .input:hover{ border-color:#a3a3a3; }
-        }
+        .company-block{ overflow-x: clip; }
+        .company-selected{ margin-bottom: 8px; }
+        .small{ font-size: 13px; }
+        .tiny{ font-size: 11.5px; opacity: .75; }
+        .muted{ opacity: .75; }
       `}</style>
-    </aside>
+    </section>
   );
 }
