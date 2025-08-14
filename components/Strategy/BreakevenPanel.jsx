@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rowsToApiLegs } from "./hooks/rowsToApiLegs";
 
-/** Currency formatting */
+/** Format currency */
 function fmtPrice(x, ccy = "USD") {
   if (!Number.isFinite(x)) return "—";
   try {
@@ -21,15 +21,16 @@ function fmtPrice(x, ccy = "USD") {
 
 export default function BreakevenPanel({
   rows,
-  spot = null,          // if present, show distance from spot
+  /** NEW: pass the human strategy name shown in the UI, e.g. "Long Call" */
+  strategy,
+  spot = null,
   currency = "USD",
-  contractSize = 1,     // reserved for futures/FX, 1 for equities
+  contractSize = 1,
 }) {
   const [state, setState] = useState({ loading: false, be: null, error: null, meta: null });
   const acRef = useRef(null);
   const seqRef = useRef(0);
 
-  // ✅ Use shared mapper — single source of truth
   const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
 
   useEffect(() => {
@@ -52,9 +53,9 @@ export default function BreakevenPanel({
           cache: "no-store",
           signal: ac.signal,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ legs, contractSize }),
+          // IMPORTANT: send strategy along with legs
+          body: JSON.stringify({ strategy, legs, contractSize }),
         });
-
         const j = await res.json();
         if (ac.signal.aborted || mySeq !== seqRef.current) return;
 
@@ -66,7 +67,6 @@ export default function BreakevenPanel({
           setState({ loading: false, be: null, error: j?.error || "unavailable", meta });
           return;
         }
-
         setState({ loading: false, be, error: null, meta });
       } catch (e) {
         if (!ac.signal.aborted) {
@@ -75,9 +75,15 @@ export default function BreakevenPanel({
       }
     };
 
-    run();
+    // only run if we have a strategy and at least one leg
+    if (strategy && Array.isArray(legs) && legs.length) {
+      run();
+    } else {
+      setState({ loading: false, be: null, error: "unavailable", meta: null });
+    }
+
     return () => { try { acRef.current?.abort(); } catch {} };
-  }, [legs, contractSize]);
+  }, [strategy, legs, contractSize]);
 
   const isRange = Array.isArray(state.be) && state.be.length === 2;
   const isPoint = Array.isArray(state.be) && state.be.length === 1;
