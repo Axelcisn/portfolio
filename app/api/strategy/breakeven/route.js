@@ -211,6 +211,16 @@ const HANDLERS = {
     return { be: [K - D, K + D], meta: { used: "closed_form", K, D } };
   },
 
+  /* 17b */ short_straddle(legs) {
+    // Short call + short put, ideally at the same strike K; BE = K ± C (net credit)
+    const Kc = extremeStrike(legs.filter(l=>normType(l.type)==="call" && normSide(l.side)==="short"), "call", "min");
+    const Kp = extremeStrike(legs.filter(l=>normType(l.type)==="put"  && normSide(l.side)==="short"), "put", "max");
+    const K = isNum(Kc) ? Kc : isNum(Kp) ? Kp : null;
+    const { netCredit: C } = sumPremium(legs);
+    if (!isNum(K) || !isNum(C)) return { be: null };
+    return { be: [K - C, K + C], meta: { used: "closed_form", Kcall: Kc, Kput: Kp, C } };
+  },
+
   /* 18 */ call_calendar_spread(legs) {
     const K = strikesAt(legs,"call")[0] ?? null;
     const { netDebit: D } = sumPremium(legs);
@@ -356,6 +366,7 @@ const ALIAS = new Map([
   ["collar","collar"],
   ["bear_call_spread","bear_call_spread"],
   ["long_straddle","long_straddle"],
+  ["short_straddle","short_straddle"], ["sell_straddle","short_straddle"],
   ["call_calendar_spread","call_calendar_spread"], ["call_calendar","call_calendar_spread"],
   ["reverse_condor","reverse_condor"], ["long_iron_condor","reverse_condor"],
   ["call_butterfly","call_butterfly"],
@@ -382,11 +393,16 @@ function pickStrategyKey(name) {
   return ALIAS.get(slug) || slug; // try alias, else pass-through (allows future additions)
 }
 
-/* -------- NEW: minimal inference when strategy is missing -------- */
+/* -------- Inference when strategy is missing or unsupported -------- */
 function inferStrategyKeyFromLegs(legs) {
   const calls = legs.filter(l => normType(l.type) === "call");
   const puts  = legs.filter(l => normType(l.type) === "put");
   const { netDebit, netCredit } = sumPremium(legs);
+
+  const longCalls  = calls.filter(l => normSide(l.side) === "long");
+  const shortCalls = calls.filter(l => normSide(l.side) === "short");
+  const longPuts   = puts.filter(l => normSide(l.side) === "long");
+  const shortPuts  = puts.filter(l => normSide(l.side) === "short");
 
   // Single-leg
   if (calls.length === 1 && puts.length === 0) {
@@ -396,12 +412,18 @@ function inferStrategyKeyFromLegs(legs) {
     return normSide(puts[0].side) === "long" ? "long_put" : "short_put";
   }
 
-  // Two-leg verticals (decide bull/bear by debit/credit)
-  const longCalls  = calls.filter(l => normSide(l.side) === "long");
-  const shortCalls = calls.filter(l => normSide(l.side) === "short");
-  const longPuts   = puts.filter(l => normSide(l.side) === "long");
-  const shortPuts  = puts.filter(l => normSide(l.side) === "short");
+  // Straddles/strangles (2 legs, one call + one put)
+  if (calls.length === 1 && puts.length === 1) {
+    const Kc = isNum(calls[0].strike) ? Number(calls[0].strike) : null;
+    const Kp = isNum(puts[0].strike) ? Number(puts[0].strike) : null;
+    const sameK = isNum(Kc) && isNum(Kp) && Math.abs(Kc - Kp) < 1e-6;
+    const bothShort = normSide(calls[0].side) === "short" && normSide(puts[0].side) === "short";
+    const bothLong  = normSide(calls[0].side) === "long"  && normSide(puts[0].side) === "long";
+    if (bothShort) return sameK ? "short_straddle" : "short_strangle";
+    if (bothLong)  return sameK ? "long_straddle"  : "long_strangle";
+  }
 
+  // Two-leg verticals (decide bull/bear by debit/credit)
   if (longCalls.length === 1 && shortCalls.length === 1 && puts.length === 0) {
     return netDebit > 0 ? "bull_call_spread" : "bear_call_spread";
   }
@@ -409,7 +431,7 @@ function inferStrategyKeyFromLegs(legs) {
     return netDebit > 0 ? "bear_put_spread" : "bull_put_spread";
   }
 
-  // Unknown -> let caller decide (will error nicely)
+  // Unknown -> null
   return null;
 }
 
@@ -458,30 +480,43 @@ async function handle(req) {
       price: n(l.price),
     }));
 
-    // Strategy: explicit -> alias; otherwise infer basic patterns
+    // Resolve strategy:
+    // 1) If explicit key maps to a supported handler, use it.
+    // 2) Otherwise, try to infer from legs and use it if supported.
+    // 3) Else, error (unsupported).
     const explicitKey = strategy ? pickStrategyKey(strategy) : null;
-    const inferredKey = explicitKey || inferStrategyKeyFromLegs(normLegs);
-    if (!inferredKey) {
-      return err("STRATEGY_REQUIRED", "strategy required (could not infer from legs)");
+
+    let usedKey = null;
+    let resolved_by = "inferred";
+
+    if (explicitKey && typeof HANDLERS[explicitKey] === "function") {
+      usedKey = explicitKey;
+      resolved_by = "explicit";
+    } else {
+      const inferred = inferStrategyKeyFromLegs(normLegs);
+      if (inferred && typeof HANDLERS[inferred] === "function") {
+        usedKey = inferred;
+        resolved_by = explicitKey ? "inferred_fallback" : "inferred";
+      }
     }
 
-    const fn = HANDLERS[inferredKey];
-    if (typeof fn !== "function") {
-      return err("UNSUPPORTED_STRATEGY", `strategy '${explicitKey || inferredKey}' not supported`);
+    if (!usedKey) {
+      return err("UNSUPPORTED_STRATEGY", `strategy '${explicitKey || "unknown"}' not supported`);
     }
 
+    const fn = HANDLERS[usedKey];
     const out = fn(normLegs, {});
     const { netDebit, netCredit, paid, received } = sumPremium(normLegs);
 
     return ok({
       ok: true,
-      strategy: inferredKey,
+      strategy: usedKey,
       be: Array.isArray(out?.be) ? out.be : null,
       meta: {
         ...(out?.meta || {}),
         premiums: { paid, received, netDebit, netCredit },
         legs: normLegs.length,
-        resolved_by: explicitKey ? "explicit" : "inferred",
+        resolved_by,
       },
     });
   } catch (e) {
