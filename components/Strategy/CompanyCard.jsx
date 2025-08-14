@@ -574,7 +574,7 @@ export default function CompanyCard({
           </div>
         </div>
 
-        {/* -------- NEW: Beta (display-only) -------- */}
+        {/* -------- Beta (display-only) -------- */}
         <div className="fg">
           <label>Beta</label>
           <input
@@ -584,7 +584,7 @@ export default function CompanyCard({
           />
         </div>
 
-        {/* -------- NEW: Dividend (q) input -------- */}
+        {/* -------- Dividend (q) input (helper line removed) -------- */}
         <div className="fg">
           <label>Dividend (q)</label>
           <input
@@ -592,7 +592,6 @@ export default function CompanyCard({
             placeholder="0.00"
             value={divPct}
             onChange={(e) => {
-              // allow digits + dot; format on blur
               const raw = e.target.value.replace(/[^\d.]/g, "");
               if (raw === "" || /^\d{0,3}(\.\d{0,2})?$/.test(raw)) {
                 setDivPct(raw);
@@ -603,10 +602,9 @@ export default function CompanyCard({
               setDivPct(Number.isFinite(v) ? (v * 100).toFixed(2) : "0.00");
             }}
           />
-          <div className="small muted">Enter as percent (e.g., 1.25 = 1.25%).</div>
         </div>
 
-        {/* -------- NEW: CAPM μ (display-only) -------- */}
+        {/* -------- CAPM μ (display-only, helper line removed) -------- */}
         <div className="fg">
           <label>CAPM μ</label>
           <input
@@ -614,12 +612,9 @@ export default function CompanyCard({
             value={Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : ""}
             readOnly
           />
-          <div className="small muted">
-            μ = r_f + β·ERP − q
-          </div>
         </div>
 
-        {/* -------- NEW: Drift selector -------- */}
+        {/* -------- Drift selector -------- */}
         <div className="fg">
           <label>Drift</label>
           <select
