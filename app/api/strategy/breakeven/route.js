@@ -91,7 +91,6 @@ const HANDLERS = {
   },
 
   /* 3 */ protective_put(legs) {
-    // needs stock purchase price + put premium
     const stockBuy = legs.find((l) => normType(l.type) === "stock" && normSide(l.side)==="long");
     const Kstock = isNum(stockBuy?.price) ? Number(stockBuy.price) : null;
     const { netDebit: D } = sumPremium(legs.filter(l=>normType(l.type)==="put"));
@@ -126,7 +125,6 @@ const HANDLERS = {
   },
 
   /* 7 */ iron_condor(legs) {
-    // Short put spread K1/K0 + short call spread K2/K3 (credits)
     const K1 = extremeStrike(legs.filter(l=>normSide(l.side)==="short"),"put","min");
     const K2 = extremeStrike(legs.filter(l=>normSide(l.side)==="short"),"call","max");
     const { netCredit: C } = sumPremium(legs);
@@ -135,7 +133,6 @@ const HANDLERS = {
   },
 
   /* 8 */ reverse_butterfly(legs) {
-    // Short butterfly (credit): BE lower = lower wing + C; upper = upper wing - C
     const puts = strikesAt(legs, "put");
     const calls = strikesAt(legs, "call");
     const Kmin = Math.min(puts[0] ?? Infinity, calls[0] ?? Infinity);
@@ -146,7 +143,6 @@ const HANDLERS = {
   },
 
   /* 9 */ strap(legs) {
-    // Long 2 calls + 1 put @ K, net debit D => Upside BE K + D/2; Downside BE K - D
     const K = (strikesAt(legs,"call")[0] ?? strikesAt(legs,"put")[0] ?? null);
     const { netDebit: D } = sumPremium(legs);
     if (!isNum(K) || !isNum(D)) return { be: null };
@@ -161,7 +157,6 @@ const HANDLERS = {
     if (D > 0) {
       return { be: [K1 + D, 2*K2 - K1 - D], meta: { used: "closed_form_debit", K1, K2, D } };
     }
-    // net credit
     return { be: [2*K2 - K1 + C], meta: { used: "closed_form_credit", K1, K2, C, note:"unlimited risk above BE" } };
   },
 
@@ -170,10 +165,7 @@ const HANDLERS = {
     const K2 = extremeStrike(legs.filter(l=>normSide(l.side)==="long"),"put","min");
     const { netDebit: D, netCredit: C } = sumPremium(legs);
     if (!isNum(K1) || !isNum(K2)) return { be: null };
-    if (C > 0) {
-      return { be: [K1 - C, 2*K2 - K1 + C], meta: { used: "closed_form_credit", K1, K2, C } };
-    }
-    // debit: one BE typically below K2: solve payoff=0 -> approximate with 2K2 - K1 + D
+    if (C > 0) return { be: [K1 - C, 2*K2 - K1 + C], meta: { used: "closed_form_credit", K1, K2, C } };
     return { be: [2*K2 - K1 + D], meta: { used: "approx_debit", K1, K2, D } };
   },
 
@@ -227,7 +219,6 @@ const HANDLERS = {
   },
 
   /* 19 */ reverse_condor(legs) {
-    // Long Iron Condor (debit D)
     const K1 = extremeStrike(legs.filter(l=>normType(l.type)==="put" && normSide(l.side)==="short"),"put","min");
     const K2 = extremeStrike(legs.filter(l=>normType(l.type)==="call" && normSide(l.side)==="short"),"call","max");
     const { netDebit: D } = sumPremium(legs);
@@ -255,9 +246,7 @@ const HANDLERS = {
     const Kshort = extremeStrike(legs.filter(l=>normSide(l.side)==="short"),"put","min");
     const { netDebit: D, netCredit: C } = sumPremium(legs);
     if (!isNum(Klong) || !isNum(Kshort)) return { be: null };
-    if (C > 0) {
-      return { be: [2*Kshort - Klong - C], meta: { used: "closed_form_credit", Klong, Kshort, C } };
-    }
+    if (C > 0) return { be: [2*Kshort - Klong - C], meta: { used: "closed_form_credit", Klong, Kshort, C } };
     return { be: [2*Kshort - Klong + D], meta: { used: "approx_debit", Klong, Kshort, D } };
   },
 
@@ -277,7 +266,6 @@ const HANDLERS = {
   },
 
   /* 26 */ covered_put(legs) {
-    // Short stock + short put: BE = short-sale price + premium received
     const ss = legs.find(l=>normType(l.type)==="stock" && normSide(l.side)==="short");
     const Sshort = isNum(ss?.price) ? Number(ss.price) : null;
     const { netCredit: C } = sumPremium(legs.filter(l=>normType(l.type)==="put"));
@@ -339,9 +327,7 @@ const HANDLERS = {
     const K2 = extremeStrike(legs.filter(l=>normSide(l.side)==="long"),"call","max");
     const { netDebit: D, netCredit: C } = sumPremium(legs);
     if (!isNum(K1) || !isNum(K2)) return { be: null };
-    if (C > 0) {
-      return { be: [K1 + C, 2*K2 - K1 - C], meta: { used: "closed_form_credit", K1, K2, C } };
-    }
+    if (C > 0) return { be: [K1 + C, 2*K2 - K1 - C], meta: { used: "closed_form_credit", K1, K2, C } };
     return { be: [2*K2 - K1 + D], meta: { used: "approx_debit", K1, K2, D } };
   },
 
@@ -396,6 +382,37 @@ function pickStrategyKey(name) {
   return ALIAS.get(slug) || slug; // try alias, else pass-through (allows future additions)
 }
 
+/* -------- NEW: minimal inference when strategy is missing -------- */
+function inferStrategyKeyFromLegs(legs) {
+  const calls = legs.filter(l => normType(l.type) === "call");
+  const puts  = legs.filter(l => normType(l.type) === "put");
+  const { netDebit, netCredit } = sumPremium(legs);
+
+  // Single-leg
+  if (calls.length === 1 && puts.length === 0) {
+    return normSide(calls[0].side) === "long" ? "long_call" : "short_call";
+  }
+  if (puts.length === 1 && calls.length === 0) {
+    return normSide(puts[0].side) === "long" ? "long_put" : "short_put";
+  }
+
+  // Two-leg verticals (decide bull/bear by debit/credit)
+  const longCalls  = calls.filter(l => normSide(l.side) === "long");
+  const shortCalls = calls.filter(l => normSide(l.side) === "short");
+  const longPuts   = puts.filter(l => normSide(l.side) === "long");
+  const shortPuts  = puts.filter(l => normSide(l.side) === "short");
+
+  if (longCalls.length === 1 && shortCalls.length === 1 && puts.length === 0) {
+    return netDebit > 0 ? "bull_call_spread" : "bear_call_spread";
+  }
+  if (longPuts.length === 1 && shortPuts.length === 1 && calls.length === 0) {
+    return netDebit > 0 ? "bear_put_spread" : "bull_put_spread";
+  }
+
+  // Unknown -> let caller decide (will error nicely)
+  return null;
+}
+
 /* --------------------------- handlers --------------------------- */
 
 async function parseInput(req) {
@@ -427,7 +444,6 @@ export async function POST(req) { return handle(req); }
 async function handle(req) {
   try {
     const { strategy, legs } = await parseInput(req);
-    if (!strategy) return err("STRATEGY_REQUIRED", "strategy required");
     if (!Array.isArray(legs) || legs.length === 0) {
       return err("LEGS_REQUIRED", "legs[] required");
     }
@@ -442,10 +458,16 @@ async function handle(req) {
       price: n(l.price),
     }));
 
-    const key = pickStrategyKey(strategy);
-    const fn = HANDLERS[key];
+    // Strategy: explicit -> alias; otherwise infer basic patterns
+    const explicitKey = strategy ? pickStrategyKey(strategy) : null;
+    const inferredKey = explicitKey || inferStrategyKeyFromLegs(normLegs);
+    if (!inferredKey) {
+      return err("STRATEGY_REQUIRED", "strategy required (could not infer from legs)");
+    }
+
+    const fn = HANDLERS[inferredKey];
     if (typeof fn !== "function") {
-      return err("UNSUPPORTED_STRATEGY", `strategy '${strategy}' not supported`);
+      return err("UNSUPPORTED_STRATEGY", `strategy '${explicitKey || inferredKey}' not supported`);
     }
 
     const out = fn(normLegs, {});
@@ -453,12 +475,13 @@ async function handle(req) {
 
     return ok({
       ok: true,
-      strategy: key,
+      strategy: inferredKey,
       be: Array.isArray(out?.be) ? out.be : null,
       meta: {
         ...(out?.meta || {}),
         premiums: { paid, received, netDebit, netCredit },
         legs: normLegs.length,
+        resolved_by: explicitKey ? "explicit" : "inferred",
       },
     });
   } catch (e) {
