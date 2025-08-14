@@ -1,5 +1,6 @@
 // app/api/riskfree/route.js
-// Runtime: Node.js (Vercel). Risk-free rate API with robust fallbacks and shared cache.
+// Runtime: Node.js (Vercel). Risk-free rate API with robust fallbacks, shared cache,
+// and first-party EUR provider (ECB €STR).
 import { NextResponse } from 'next/server';
 import { mget, mset, mkey } from '../../../lib/server/mcache';
 
@@ -59,20 +60,69 @@ async function fetchUSDFromYahooIRX() {
 }
 
 /**
- * Minimal CCY router (Phase 2 will plug real providers for non-USD).
- * Return null to trigger the uniform fallback envelope.
+ * Provider: EUR via ECB €STR (SDMX-JSON).
+ * Endpoint (latest observation): https://sdw-wsrest.ecb.europa.eu/service/data/ESTR/D?lastNObservations=1
+ * Accept header must request SDMX JSON.
+ * Returned unit is percentage; convert to decimal/year.
+ */
+async function fetchEURFromECB() {
+  const url = 'https://sdw-wsrest.ecb.europa.eu/service/data/ESTR/D?lastNObservations=1';
+  const res = await fetch(url, {
+    cache: 'no-store',
+    headers: { Accept: 'application/vnd.sdmx.data+json;version=1.0' },
+  });
+  if (!res.ok) throw new Error(`ECB €STR HTTP ${res.status}`);
+
+  const json = await res.json();
+  const series = json?.dataSets?.[0]?.series;
+  const obsDim = json?.structure?.dimensions?.observation?.[0]?.values;
+
+  if (!series || !obsDim) throw new Error('ECB €STR: unexpected SDMX structure');
+
+  // Pick first series' last observation
+  let lastValue = null;
+  let lastIdx = null;
+  for (const key in series) {
+    const observations = series[key]?.observations;
+    if (!observations) continue;
+    for (const k in observations) {
+      const idx = Number(k);
+      if (!Number.isFinite(idx)) continue;
+      if (lastIdx === null || idx > lastIdx) {
+        lastIdx = idx;
+        const arr = observations[k];
+        const v = Array.isArray(arr) ? arr[0] : arr;
+        if (typeof v === 'number') lastValue = v;
+      }
+    }
+    break; // first series is enough (daily €STR)
+  }
+
+  if (lastValue == null || lastIdx == null) throw new Error('ECB €STR: no observations');
+
+  // SDMX observation index → date id (e.g., "2024-06-12")
+  const asOf = obsDim?.[lastIdx]?.id || new Date().toISOString();
+  // Convert percentage to decimal per year (e.g., 3.80 → 0.0380)
+  const rAnnual = lastValue > 1 ? lastValue / 100 : lastValue;
+
+  return { value: rAnnual, asOf: new Date(asOf).toISOString(), source: 'ECB €STR (SDMX)', basis: 'annual' };
+}
+
+/**
+ * Minimal CCY router.
+ * Phase 2 will add GBP (SONIA), JPY (TONA), CHF (SARON), CAD (3M T-bill) providers.
  */
 async function getAnnualRiskFree(ccy) {
   if (ccy === 'USD') return fetchUSDFromYahooIRX();
-  return null; // no provider yet → fallback path
+  if (ccy === 'EUR') return fetchEURFromECB();
+  // TODO (Phase 2): add SONIA/TONA/SARON/CAD providers
+  return null; // no provider → fallback path
 }
 
 /** Build normalized JSON payload (backward-compatible + richer meta). */
 function buildPayload({ rAnnual, basisOut, ccy, asOf, source, fallback = false, reason = null }) {
   const r = basisOut === 'cont' ? toCont(rAnnual) : rAnnual;
-  const meta = {
-    ttlSeconds: TTL_MS / 1000,
-  };
+  const meta = { ttlSeconds: TTL_MS / 1000 };
   if (fallback) {
     meta.fallback = true;
     if (reason) meta.reason = reason;
