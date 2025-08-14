@@ -1,44 +1,41 @@
 // app/api/riskfree/route.js
-// Runtime: Node.js (Vercel). Dynamic: always compute fresh (we also add a small in-memory TTL cache).
+// Runtime: Node.js (Vercel). Risk-free rate API with robust fallbacks and shared cache.
 import { NextResponse } from 'next/server';
+import { mget, mset, mkey } from '../../../lib/server/mcache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // ─────────────────────────────────────────────────────────────
 // Formulas (LaTeX):
-// • Continuous from annual: r_{cont} = \ln(1 + r_{annual})
-// • Annual from continuous: r_{annual} = e^{r_{cont}} - 1
+// • Continuous from annual: r_{\text{cont}} = \ln(1 + r_{\text{annual}})
+// • Annual from continuous: r_{\text{annual}} = e^{r_{\text{cont}}} - 1
 // All rates are decimals per year.
 // ─────────────────────────────────────────────────────────────
 
 const TTL_MS = 60 * 1000; // micro-cache TTL
-const cache = new Map();
-
-/** Supported currency codes for the contract (some use robust fallbacks in this first pass). */
 const SUPPORTED = new Set(['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD']);
 
-/** Conservative fallbacks (decimal/year) used only if providers fail. */
+// Conservative fallbacks (decimal/year) used only if providers fail.
 const FALLBACKS = {
-  USD: 0.0300, // 3.00%
-  EUR: 0.0200, // 2.00%
-  GBP: 0.0300, // 3.00%
-  JPY: 0.0010, // 0.10%
-  CHF: 0.0050, // 0.50%
-  CAD: 0.0300, // 3.00%
+  USD: 0.0300,
+  EUR: 0.0200,
+  GBP: 0.0300,
+  JPY: 0.0010,
+  CHF: 0.0050,
+  CAD: 0.0300,
 };
 
+// Keep a "last good" snapshot per CCY so fallbacks can surface previous valid data.
+const LAST_GOOD = new Map();
+
 /** Basis transforms */
-function toCont(rAnnual) {
-  return Math.log(1 + Number(rAnnual));
-}
-function toAnnual(rCont) {
-  return Math.exp(Number(rCont)) - 1;
-}
+function toCont(rAnnual) { return Math.log(1 + Number(rAnnual)); }
+function toAnnual(rCont) { return Math.exp(Number(rCont)) - 1; }
 
 /**
  * Provider: USD 13-week T-Bill via Yahoo Finance (^IRX).
- * Yahoo returns percentage; we convert to decimal/year.
+ * Yahoo close is a percentage; convert to decimal/year.
  */
 async function fetchUSDFromYahooIRX() {
   const url = 'https://query1.finance.yahoo.com/v8/finance/chart/%5EIRX?range=1mo&interval=1d';
@@ -50,41 +47,39 @@ async function fetchUSDFromYahooIRX() {
   const timestamps = result?.timestamp || [];
   const closes = result?.indicators?.quote?.[0]?.close || [];
 
-  // Pick last non-null close
   let i = closes.length - 1;
   while (i >= 0 && (closes[i] === null || typeof closes[i] !== 'number')) i -= 1;
   if (i < 0) throw new Error('Yahoo IRX: no close values');
 
-  const pct = closes[i]; // percentage (e.g., 5.12)
-  const rAnnual = Number(pct) / 100; // decimal/year
+  const pct = closes[i]; // e.g., 5.12 (%)
+  const rAnnual = Number(pct) / 100;
   const asOf = new Date((timestamps?.[i] || Date.now() / 1000) * 1000).toISOString();
 
   return { value: rAnnual, asOf, source: 'Yahoo ^IRX (13W T-Bill)', basis: 'annual' };
 }
 
 /**
- * Minimal CCY router.
- * For EUR/others we currently rely on conservative fallbacks; Phase 2 will plug first-party sources.
+ * Minimal CCY router (Phase 2 will plug real providers for non-USD).
+ * Return null to trigger the uniform fallback envelope.
  */
 async function getAnnualRiskFree(ccy) {
   if (ccy === 'USD') return fetchUSDFromYahooIRX();
-
-  // Placeholder for EUR/GBP/JPY/CHF/CAD providers to be added in Phase 2.
-  // Return null to trigger explicit fallback envelope below.
-  return null;
+  return null; // no provider yet → fallback path
 }
 
-/** Build a normalized JSON payload */
-function buildPayload({ rAnnual, basisOut, ccy, asOf, source }) {
+/** Build normalized JSON payload (backward-compatible + richer meta). */
+function buildPayload({ rAnnual, basisOut, ccy, asOf, source, fallback = false, reason = null }) {
   const r = basisOut === 'cont' ? toCont(rAnnual) : rAnnual;
-  return {
-    r,
-    basis: basisOut,
-    ccy,
-    asOf,
-    source,
-    meta: { ttlSeconds: TTL_MS / 1000 },
+  const meta = {
+    ttlSeconds: TTL_MS / 1000,
   };
+  if (fallback) {
+    meta.fallback = true;
+    if (reason) meta.reason = reason;
+    const last = LAST_GOOD.get(ccy);
+    if (last) meta.lastGood = last;
+  }
+  return { r, basis: basisOut, ccy, asOf, source, meta };
 }
 
 /** GET /api/riskfree?ccy=USD&basis=annual|cont */
@@ -96,48 +91,50 @@ export async function GET(req) {
 
     const ccy = SUPPORTED.has(ccyParam) ? ccyParam : 'USD';
     const basisOut = basisParam === 'cont' ? 'cont' : 'annual';
-    const cacheKey = `${ccy}:${basisOut}`;
-    const now = Date.now();
 
     // Micro-cache
-    const hit = cache.get(cacheKey);
-    if (hit && hit.expiry > now) {
-      return NextResponse.json(hit.data, {
+    const cacheKey = mkey('riskfree', ccy, basisOut);
+    const cached = mget(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached, {
         status: 200,
         headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=30' },
       });
     }
 
-    // Try provider
-    let provider = await getAnnualRiskFree(ccy);
-    let rAnnual, asOf, source;
+    // Provider flow with uniform fallback envelope
+    let provider, rAnnual, asOf, source, payload;
 
-    if (provider && typeof provider.value === 'number') {
-      rAnnual = provider.value;
-      asOf = provider.asOf || new Date().toISOString();
-      source = provider.source || 'provider';
-    } else {
-      // Explicit fallback (documented)
+    try {
+      provider = await getAnnualRiskFree(ccy);
+      if (provider && typeof provider.value === 'number') {
+        rAnnual = provider.value;
+        asOf = provider.asOf || new Date().toISOString();
+        source = provider.source || 'provider';
+        payload = buildPayload({ rAnnual, basisOut, ccy, asOf, source, fallback: false });
+        // remember last good for this CCY (annual basis)
+        LAST_GOOD.set(ccy, { rAnnual, asOf, source });
+      } else {
+        throw new Error('no_provider_data');
+      }
+    } catch (e) {
       rAnnual = FALLBACKS[ccy] ?? FALLBACKS.USD;
       asOf = new Date().toISOString();
       source = 'fallback';
+      payload = buildPayload({
+        rAnnual, basisOut, ccy, asOf, source, fallback: true,
+        reason: provider ? 'provider_invalid' : 'no_provider',
+      });
     }
 
-    const data = buildPayload({ rAnnual, basisOut, ccy, asOf, source });
-
-    // Save in cache
-    cache.set(cacheKey, { data, expiry: now + TTL_MS });
-
-    return NextResponse.json(data, {
+    mset(cacheKey, payload, TTL_MS);
+    return NextResponse.json(payload, {
       status: 200,
       headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=30' },
     });
   } catch (err) {
     return NextResponse.json(
-      {
-        error: 'unexpected_error',
-        message: err?.message || String(err),
-      },
+      { error: 'unexpected_error', message: err?.message || String(err) },
       { status: 500 }
     );
   }
