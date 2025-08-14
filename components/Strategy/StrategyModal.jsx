@@ -8,10 +8,6 @@ import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeTemplate from "./defs/materializeTemplate";
 
-// NEW: BE hook + UI
-import useBreakEven from "./hooks/useBreakEven";
-import BreakEvenBadges from "./ui/BreakEvenBadges";
-
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {
   // Legacy shape expected upstream (options only)
@@ -34,15 +30,6 @@ function rowsToLegsObject(rows) {
   }
   return out;
 }
-
-// Convenience: the BE API & hook work directly with the builder row array.
-const rowsToLegsArray = (rows) =>
-  (Array.isArray(rows) ? rows : []).map((r) => ({
-    type: r.type,             // 'lc'|'sc'|'lp'|'sp'|'ls'|'ss'
-    K: Number.isFinite(Number(r.K)) ? Number(r.K) : null,
-    qty: Number(r.qty || 0),
-    premium: Number.isFinite(Number(r.premium)) ? Number(r.premium) : null,
-  }));
 
 function netPremium(rows) {
   // Long options pay premium (debit), short receive (credit). Stocks: none.
@@ -112,10 +99,6 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     setRows(fresh);
   };
 
-  // ---------- Break-even wiring ----------
-  const legs = useMemo(() => rowsToLegsArray(rows), [rows]);
-  const { be, meta, loading, error } = useBreakEven({ legs, spot });
-
   const GAP = 14;
 
   return (
@@ -135,24 +118,12 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         {/* Header */}
         <div className="modal-head" style={{ marginBottom: GAP }}>
           <div className="mh-left">
-            <div className="mh-icon">
-              {strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}
-            </div>
+            <div className="mh-icon">{strategy?.icon ? <strategy.icon aria-hidden="true" /> : <div className="badge" />}</div>
             <div className="mh-meta">
               <div id="sg-modal-title" className="mh-name">
                 {strategy?.name || "Strategy"}
               </div>
               <DirectionBadge value={strategy?.direction || "Neutral"} />
-              {/* NEW — Break-even chips (auto updates with builder) */}
-              <BreakEvenBadges
-                className="mh-be"
-                be={be}
-                currency={currency}
-                loading={loading}
-                label="Break-even"
-              />
-              {/* Optional tiny warning if BE can't be computed */}
-              {error ? <div className="be-err small">Break-even unavailable for current legs.</div> : null}
             </div>
           </div>
           <div className="mh-actions">
@@ -211,38 +182,18 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           background: rgba(0, 0, 0, 0.32);
           backdrop-filter: blur(6px);
           -webkit-backdrop-filter: blur(6px);
-          transition: opacity .18s ease;
         }
         .modal-sheet {
           position: relative; margin: 36px auto;
           border-radius: 16px; background: var(--bg);
           border: 1px solid var(--border);
           box-shadow: 0 30px 80px rgba(0,0,0,0.35);
-          transition: box-shadow .18s ease, transform .18s ease, border-color .18s ease;
-        }
-        .modal-sheet:hover{
-          box-shadow: 0 34px 88px rgba(0,0,0,0.38);
-          border-color: color-mix(in srgb, var(--text) 10%, var(--border));
         }
         .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-        .mh-left { display:flex; gap:12px; align-items:flex-start; }
-        .mh-icon {
-          width:34px; height:34px; border-radius:10px;
-          background:var(--card); border:1px solid var(--border);
-          display:flex; align-items:center; justify-content:center;
-          transition: background .15s ease, border-color .15s ease, transform .12s ease;
-        }
-        .mh-icon:hover{ background: color-mix(in srgb, var(--card) 70%, var(--bg)); }
-        .mh-meta { display:grid; gap:6px; }
-        .mh-name { font-weight:800; letter-spacing:.2px; }
+        .mh-left { display:flex; gap:12px; align-items:center; }
+        .mh-icon { width:34px; height:34px; border-radius:10px; background:var(--card); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
+        .mh-name { font-weight:800; }
         .mh-actions { display:flex; gap:8px; }
-
-        .button{
-          transition: background .12s ease, filter .12s ease, opacity .12s ease, box-shadow .12s ease, transform .08s ease;
-        }
-        .button:hover{ box-shadow: 0 2px 8px rgba(0,0,0,.08); transform: translateY(-0.5px); }
-        .button:active{ transform: translateY(0); }
-
         .section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
         .section-title { font-weight:700; }
         .card.dense { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
@@ -254,12 +205,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           background: transparent;
           color: var(--text);
           font-size: 12.5px;
-          transition: background .12s ease, border-color .12s ease, transform .08s ease;
         }
         .link-btn:hover { background: var(--card); }
-        .link-btn:active{ transform: translateY(1px); }
-
-        .be-err{ color:#ef4444; }
       `}</style>
     </div>
   );
