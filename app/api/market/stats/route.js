@@ -23,42 +23,29 @@ export const dynamic = 'force-dynamic';
 const TTL_MS = 60 * 1000;
 const cache = new Map();
 
-// Normalize common aliases to Yahoo symbols
+/** Number coercion to finite or null */
+const num = (x) => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Normalize common aliases to Yahoo symbols (expanded)
 function normalizeIndex(ix) {
   const q = (ix || '^GSPC').toUpperCase().trim();
   const map = {
-    'SPX': '^GSPC',
-    '^SPX': '^GSPC',
-    'S&P500': '^GSPC',
-    'GSPC': '^GSPC',
-
-    'NDX': '^NDX',
-    '^NDX': '^NDX',
-
-    'DJI': '^DJI',
-    '^DJI': '^DJI',
-
-    'RUT': '^RUT',
-    '^RUT': '^RUT',
-
-    'STOXX': '^STOXX',
-    '^STOXX': '^STOXX',
-
-    'EUROSTOXX50': '^SX5E',
-    'SX5E': '^SX5E',
-    '^SX5E': '^SX5E',
-
-    'FTSE': '^FTSE',
-    '^FTSE': '^FTSE',
-
-    'N225': '^N225',
-    '^N225': '^N225',
-
-    'SMI': '^SSMI',
-    '^SSMI': '^SSMI',
-
-    'TSX': '^GSPTSE',
-    '^GSPTSE': '^GSPTSE',
+    // US
+    'SPX': '^GSPC', '^SPX': '^GSPC', 'S&P500': '^GSPC', 'GSPC': '^GSPC',
+    'NDX': '^NDX', '^NDX': '^NDX',
+    'DJI': '^DJI', '^DJI': '^DJI',
+    'RUT': '^RUT', '^RUT': '^RUT',
+    // Europe
+    'STOXX': '^STOXX', '^STOXX': '^STOXX', // STOXX Europe 600
+    'SX5E': '^STOXX50E', '^SX5E': '^STOXX50E', 'EUROSTOXX50': '^STOXX50E',
+    'FTSE': '^FTSE', '^FTSE': '^FTSE',
+    // APAC, CH, CA
+    'N225': '^N225', '^N225': '^N225',
+    'SMI': '^SSMI', 'SSMI': '^SSMI', '^SSMI': '^SSMI',
+    'TSX': '^GSPTSE', 'GSPTSE': '^GSPTSE', '^GSPTSE': '^GSPTSE',
   };
   return map[q] || (q.startsWith('^') ? q : `^${q}`);
 }
@@ -66,12 +53,8 @@ function normalizeIndex(ix) {
 // Minimal index→currency mapping (overrideable via ?currency=)
 function currencyByIndex(index) {
   const map = {
-    '^GSPC': 'USD',
-    '^NDX': 'USD',
-    '^DJI': 'USD',
-    '^RUT': 'USD',
-    '^STOXX': 'EUR',
-    '^SX5E': 'EUR',
+    '^GSPC': 'USD', '^NDX': 'USD', '^DJI': 'USD', '^RUT': 'USD',
+    '^STOXX': 'EUR', '^STOXX50E': 'EUR',
     '^FTSE': 'GBP',
     '^N225': 'JPY',
     '^SSMI': 'CHF',
@@ -82,7 +65,7 @@ function currencyByIndex(index) {
 
 // Basis transforms
 function toCont(rAnnual) { return Math.log(1 + Number(rAnnual)); }
-function toAnnual(rCont) { return Math.exp(Number(rCont)) - 1; } // reserved for completeness
+function toAnnual(rCont) { return Math.exp(Number(rCont)) - 1; } // reserved
 
 // Conservative fallbacks for r_f (annual, decimal)
 const RF_FALLBACK = { USD: 0.03, EUR: 0.02, GBP: 0.03, JPY: 0.001, CHF: 0.005, CAD: 0.03 };
@@ -104,9 +87,9 @@ async function fetchSeries(symbol, range, interval) {
   const { timestamps, closes } = await fetchYahooChart(symbol, range, interval);
   const out = [];
   for (let i = 0; i < closes.length; i++) {
-    const p = closes[i];
-    const t = timestamps?.[i];
-    if (typeof p === 'number' && p > 0 && typeof t === 'number') {
+    const p = num(closes[i]);
+    const t = num(timestamps?.[i]);
+    if (p != null && p > 0 && t != null) {
       out.push({ t: t * 1000, p });
     }
   }
@@ -118,9 +101,9 @@ function statsFromSeries(series, intervalHint = '1d') {
   const ppYear = intervalHint === '1mo' ? 12 : 252;
   if (!series || series.length < 3) {
     return {
-      muGeom: 0,
-      muArith: 0,
-      sigmaAnn: 0,
+      muGeom: null,
+      muArith: null,
+      sigmaAnn: null,
       n: 0,
       startDate: null,
       endDate: null,
@@ -143,9 +126,9 @@ function statsFromSeries(series, intervalHint = '1d') {
   const n = logR.length;
   if (n === 0) {
     return {
-      muGeom: 0,
-      muArith: 0,
-      sigmaAnn: 0,
+      muGeom: null,
+      muArith: null,
+      sigmaAnn: null,
       n: 0,
       startDate: new Date(series[0].t).toISOString(),
       endDate: new Date(series[series.length - 1].t).toISOString(),
@@ -158,17 +141,14 @@ function statsFromSeries(series, intervalHint = '1d') {
     const m = mean(a);
     const v = a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1 || 1);
     return Math.sqrt(Math.max(v, 0));
-  };
+    };
 
-  const muGeom = mean(logR) * ppYear;      // μ_geom = \bar{r}_\Delta · periodsPerYear
-  const muArith = mean(simR) * ppYear;     // μ_arith = \overline{R_\Delta} · periodsPerYear
-  const sigmaAnn = stdev(logR) * Math.sqrt(ppYear); // σ = s_{log} · √periodsPerYear
+  const muGeom = mean(logR) * ppYear;             // μ_geom (annual)
+  const muArith = mean(simR) * ppYear;            // μ_arith (annual)
+  const sigmaAnn = stdev(logR) * Math.sqrt(ppYear);
 
   return {
-    muGeom,
-    muArith,
-    sigmaAnn,
-    n,
+    muGeom, muArith, sigmaAnn, n,
     startDate: new Date(series[0].t).toISOString(),
     endDate: new Date(series[series.length - 1].t).toISOString(),
     ppYear,
@@ -191,14 +171,14 @@ async function fetchRiskFreeAnnual(ccy) {
   return { rAnnual: RF_FALLBACK[ccy] ?? RF_FALLBACK.USD, asOf: new Date().toISOString(), source: 'fallback' };
 }
 
-// Map lookback → Yahoo range/interval  (now includes "2y")
+// Map lookback → Yahoo range/interval (includes "2y")
 function rangeParams(lookback) {
   const lb = (lookback || '5y').toLowerCase();
   switch (lb) {
     case '3m': return { range: '3mo', interval: '1d', window: '3m' };
     case '6m': return { range: '6mo', interval: '1d', window: '6m' };
     case '1y': return { range: '1y', interval: '1d', window: '1y' };
-    case '2y': return { range: '2y', interval: '1d', window: '2y' }; // NEW
+    case '2y': return { range: '2y', interval: '1d', window: '2y' };
     case '3y': return { range: '3y', interval: '1d', window: '3y' };
     case '5y': return { range: '5y', interval: '1d', window: '5y' };
     case 'ytd': return { range: 'ytd', interval: '1d', window: 'ytd' };
@@ -207,7 +187,7 @@ function rangeParams(lookback) {
   }
 }
 
-/** GET /api/market/stats?index=^GSPC&lookback=5y&basis=annual&currency=USD */
+/** GET /api/market/stats?index=SPX&lookback=5y&basis=annual&currency=USD */
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
@@ -232,44 +212,48 @@ export async function GET(req) {
       });
     }
 
-    // Fetch series and compute stats
+    // 1) Fetch series and compute stats
     const series = await fetchSeries(index, range, interval);
     const s = statsFromSeries(series, interval);
 
-    // Fetch risk-free (annual) and convert to requested basis
+    // 2) Fetch risk-free (annual) and convert to requested basis
     const rf = await fetchRiskFreeAnnual(ccy);
     const rOut = basis === 'cont' ? toCont(rf.rAnnual) : rf.rAnnual;
 
-    // ERP = E(R_m) - r_f  (use geometric mean by default)
-    const erp = s.muGeom - rf.rAnnual;
+    // 3) ERP = E(R_m) - r_f  (use geometric mean by default)
+    const erp = (s.muGeom ?? 0) - rf.rAnnual;
 
+    // 4) Compose payload
     const payload = {
-      index,
+      index,                 // normalized (Yahoo) symbol
       currency: ccy,
       basis,
       stats: {
-        mu_geom: s.muGeom,     // annual (decimal)
-        mu_arith: s.muArith,   // annual (decimal)
-        sigma: s.sigmaAnn,     // annualized volatility (decimal)
+        mu_geom: s.muGeom,   // annual (decimal)
+        mu_arith: s.muArith, // annual (decimal)
+        sigma: s.sigmaAnn,   // annualized volatility (decimal)
         n: s.n,
       },
+      // Back-compat + UI convenience: geometric annual mean exposed as indexAnn (number)
+      indexAnn: s.muGeom ?? null,
       riskFree: {
         r: rOut,
         asOf: rf.asOf,
         source: rf.source,
       },
-      mrp: erp, // computed on annual basis against rf.rAnnual
+      mrp: s.muGeom == null ? null : erp, // null-safe ERP
       meta: {
         window,
         startDate: s.startDate,
         endDate: s.endDate,
         periodsPerYear: s.ppYear,
         cacheTTL: TTL_MS / 1000,
-        note: 'mrp computed as mu_geom(annual) - r_f(annual)',
+        yahooSymbol: index,
+        note: 'indexAnn = mu_geom (annual); mrp = mu_geom - r_f(annual)',
       },
     };
 
-    // Cache and return
+    // 5) Cache and return
     cache.set(key, { data: payload, expiry: now + TTL_MS });
     return NextResponse.json(payload, {
       status: 200,
