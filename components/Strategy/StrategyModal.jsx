@@ -203,17 +203,33 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           background: rgba(0, 0, 0, 0.32);
           backdrop-filter: blur(6px);
           -webkit-backdrop-filter: blur(6px);
-          z-index: 0;             /* ⬅ explicit layer for backdrop */
-          pointer-events: auto;   /* ⬅ clickable outside the card */
+          pointer-events: auto;
         }
         .modal-sheet {
           position: relative; margin: 36px auto;
           border-radius: 16px; background: var(--bg);
           border: 1px solid var(--border);
           box-shadow: 0 30px 80px rgba(0,0,0,0.35);
-          z-index: 1;             /* ⬅ above backdrop */
-          pointer-events: auto;   /* ⬅ interactive content */
+          pointer-events: auto; /* Accept interaction */
         }
+        .modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .mh-left { display:flex; gap:12px; align-items:center; }
+        .mh-icon { width:34px; height:34px; border-radius:10px; background:var(--card); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; }
+        .mh-name { font-weight:800; }
+        .mh-actions { display:flex; gap:8px; }
+        .section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .section-title { font-weight:700; }
+        .card.dense { padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
+        .link-btn {
+          height: 28px;
+          padding: 0 10px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--text);
+          font-size: 12.5px;
+        }
+        .link-btn:hover { background: var(--card); }
       `}</style>
     </div>
   );
