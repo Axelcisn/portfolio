@@ -502,13 +502,13 @@ export default function CompanyCard({
       {/* Inline facts/controls */}
       <div className="company-fields">
         {/* Currency */}
-        <div className="fg">
+        <div className="fg fg-sm">
           <label>Currency</label>
           <input className="field" value={currency || ""} readOnly />
         </div>
 
         {/* ---- Time (basis only) ---- */}
-        <div className="fg">
+        <div className="fg fg-sm">
           <label>Time</label>
           <select
             className="field"
@@ -521,8 +521,8 @@ export default function CompanyCard({
           </select>
         </div>
 
-        {/* Volatility */}
-        <div className="fg">
+        {/* Volatility (two controls) */}
+        <div className="fg fg-wide">
           <label>Volatility</label>
           <div
             className="vol-wrap"
@@ -532,16 +532,17 @@ export default function CompanyCard({
               className="field"
               value={volSrc}
               onChange={(e) => setVolSrc(e.target.value)}
+              title="Volatility source"
             >
-              <option value="iv">Implied Volatility</option>
-              <option value="hist">Historical Volatility</option>
+              <option value="iv">Imp</option>
+              <option value="hist">Hist</option>
               <option value="manual">Manual</option>
             </select>
 
             {volSrc === "manual" ? (
               <input
                 className="field"
-                placeholder="0.30 = 30%"
+                placeholder="0.30"
                 value={Number.isFinite(sigma) ? (sigma ?? 0) : ""}
                 onChange={(e) => {
                   const v = parsePctInput(e.target.value);
@@ -575,7 +576,7 @@ export default function CompanyCard({
         </div>
 
         {/* Beta */}
-        <div className="fg">
+        <div className="fg fg-sm">
           <label>Beta</label>
           <input
             className="field"
@@ -585,7 +586,7 @@ export default function CompanyCard({
         </div>
 
         {/* Dividend (q) */}
-        <div className="fg">
+        <div className="fg fg-md">
           <label>Dividend (q)</label>
           <input
             className="field"
@@ -605,7 +606,7 @@ export default function CompanyCard({
         </div>
 
         {/* CAPM μ */}
-        <div className="fg">
+        <div className="fg fg-md">
           <label>CAPM μ</label>
           <input
             className="field"
@@ -615,7 +616,7 @@ export default function CompanyCard({
         </div>
 
         {/* Drift */}
-        <div className="fg">
+        <div className="fg fg-md">
           <label>Drift</label>
           <select
             className="field"
@@ -633,29 +634,59 @@ export default function CompanyCard({
       <style jsx>{`
         .tiny{ font-size: 11.5px; opacity: .75; }
 
-        /* 1-row on wide screens; 2 neat rows below ~1500px */
+        /* Prevent any horizontal overflow; content always contained */
+        .company-block{ overflow: hidden; }
+
+        /* Grid that prefers 1 row, then 2 clean rows */
         .company-fields{
           display:grid;
-          grid-template-columns: repeat(7, minmax(160px, 1fr));
-          column-gap: 14px;
-          row-gap: 12px;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 10px 12px;
           align-items: end;
+          max-width: 100%;
         }
-        @media (max-width: 1500px){
+        /* Wide: 12 columns with explicit spans for crisp alignment */
+        @media (min-width: 1400px){
           .company-fields{
-            grid-template-columns: repeat(4, minmax(200px, 1fr));
+            grid-template-columns: repeat(12, minmax(0, 1fr));
           }
+          .fg-sm { grid-column: span 1; }
+          .fg-md { grid-column: span 2; }
+          .fg-wide { grid-column: span 3; }
         }
 
-        .fg{ display:grid; gap:6px; }
+        .fg{ display:grid; gap:6px; min-width:0; }
+        .fg :global(.field){ box-sizing: border-box; }
 
-        /* Focus rings (subtle, Apple-like) */
+        /* Compact, consistent controls (no wasted interior space) */
+        .field{
+          height: 44px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid var(--border, #2a2f3a);
+          background: var(--card, #111214);
+          color: var(--foreground, #e5e7eb);
+          font-size: 14px;
+          line-height: 22px;
+          width: 100%;
+        }
+        /* Slight polish on focus/hover */
+        .field:hover{ border-color: var(--ring, #3b3f47); }
         .field:focus-visible{
-          outline: 2px solid color-mix(in srgb, var(--text, #0f172a) 28%, transparent);
+          outline: 2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
           outline-offset: 2px;
         }
 
-        .vol-wrap{ position: relative; }
+        /* Volatility pair = tidy 2-cell grid */
+        .vol-wrap{
+          position: relative;
+          display: grid;
+          grid-template-columns: minmax(88px, 1fr) minmax(88px, 1fr);
+          gap: 10px;
+          align-items: center;
+        }
+
+        /* Spinner + shimmer */
         .vol-spin{
           position:absolute; right:10px; top:50%; margin-top:-8px;
           width:16px; height:16px; border-radius:50%;
@@ -668,7 +699,6 @@ export default function CompanyCard({
         .vol-spin.is-on{ opacity:1; }
         @keyframes vs-rot{ to { transform: rotate(360deg); } }
 
-        /* Shimmer skeleton */
         .skl{
           position:absolute; right:42px; top:50%; height:12px; width:100px;
           transform: translateY(-50%);
@@ -683,10 +713,19 @@ export default function CompanyCard({
         }
         .w-80{ width:120px; }
 
-        @keyframes shimmer{ 100% { transform: translateX(100%); } }
+        .field.is-pending{
+          color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff));
+        }
 
-        /* Pending value dims text slightly (when no skeleton is active it looks normal) */
-        .field.is-pending{ color: color-mix(in srgb, var(--text, #0f172a) 60%, var(--card, #fff)); }
+        /* Light mode fallback */
+        @media (prefers-color-scheme: light) {
+          .field{
+            border: 1px solid var(--border, #e5e7eb);
+            background: var(--card, #ffffff);
+            color: var(--foreground, #111827);
+          }
+          .field:hover{ border-color: var(--ring, #a3a3a3); }
+        }
       `}</style>
     </section>
   );
