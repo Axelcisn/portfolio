@@ -2,66 +2,128 @@
 "use client";
 
 import { useMemo } from "react";
-import rowsToApiLegs from "./hooks/rowsToApiLegs.js";
 import * as be from "../../lib/strategy/breakeven.js";
 
-// --- helpers ---------------------------------------------------------------
+/* ---------- helpers ---------- */
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
 const isNum = (x) => Number.isFinite(Number(x));
 const fmt = (v, ccy) => (isNum(v) ? `${moneySign(ccy)}${Number(v).toFixed(2)}` : "—");
+const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 
-// Pick whichever function the lib exposes (robust to naming/export variants)
-function pickLibFn() {
+/** Convert PositionBuilder rows (lc/sc/lp/sp/ls/ss) ➜ lib legs */
+function rowsToLibLegs(rows = []) {
+  const out = [];
+  for (const r of rows || []) {
+    const t = String(r?.type || "").toLowerCase();
+    const qty = toNum(r?.qty) ?? 1;
+    const K = toNum(r?.K ?? r?.strike);
+    const prem = toNum(r?.premium);
+
+    if (t === "lc") out.push({ kind: "call", side: "long", strike: K, premium: prem, qty });
+    else if (t === "sc") out.push({ kind: "call", side: "short", strike: K, premium: prem, qty });
+    else if (t === "lp") out.push({ kind: "put",  side: "long", strike: K, premium: prem, qty });
+    else if (t === "sp") out.push({ kind: "put",  side: "short", strike: K, premium: prem, qty });
+    else if (t === "ls") {
+      // Stock basis goes in `premium` for the lib’s stock leg
+      const price = toNum(r?.price ?? r?.premium ?? r?.K);
+      out.push({ kind: "stock", side: "long", premium: price, qty });
+    } else if (t === "ss") {
+      const price = toNum(r?.price ?? r?.premium ?? r?.K);
+      out.push({ kind: "stock", side: "short", premium: price, qty });
+    }
+  }
+  return out;
+}
+
+/** Legacy adapter (in case an older lib variant is present) */
+function rowsToLegacyObject(rows = []) {
+  const out = {
+    lc: { enabled: false, K: null, qty: 0, premium: null },
+    sc: { enabled: false, K: null, qty: 0, premium: null },
+    lp: { enabled: false, K: null, qty: 0, premium: null },
+    sp: { enabled: false, K: null, qty: 0, premium: null },
+  };
+  for (const r of rows) {
+    if (!r?.type || !(r.type in out)) continue;
+    const K = toNum(r.K);
+    const qty = toNum(r.qty) ?? 0;
+    const prem = toNum(r.premium);
+    out[r.type] = { enabled: qty !== 0 && isNum(K), K, qty, premium: prem };
+  }
+  return out;
+}
+
+/** Try all known lib entry points */
+function pickFallbackFn() {
   return (
-    be.computeBreakEvens ||
-    be.default?.computeBreakEvens ||
+    be.computeBreakEvenFromRows ||
     be.computeBreakEven ||
-    be.default?.computeBreakEven ||
     be.calcBreakEven ||
-    be.default?.calcBreakEven ||
+    be.breakEvenFromRows ||
+    be.breakEven ||
     null
   );
 }
 
 /**
  * Props:
- *  - rows: PositionBuilder rows
- *  - currency: "USD" | "EUR" | ...
- *  - className: optional to blend with your KPI grid
+ *  - rows
+ *  - currency
+ *  - className
  */
 export default function BreakevenKpiCell({ rows, currency = "USD", className = "" }) {
-  const legs = useMemo(() => rowsToApiLegs(rows), [rows]);
-
   const result = useMemo(() => {
-    const fn = pickLibFn();
-    if (!rows || !rows.length) return { kind: "empty" };
-    if (!fn) return { kind: "unavailable", reason: "No break-even calculator found in lib." };
+    if (!rows || rows.length === 0) return { kind: "empty" };
 
+    const legs = rowsToLibLegs(rows);
+
+    // 1) Prefer the new API
     try {
-      // The lib accepts either legs[] or { legs }. We pass legs[].
-      const out = fn(legs) ?? fn({ legs });
+      if (typeof be.computeBreakEvens === "function") {
+        const out = be.computeBreakEvens(legs);
+        const arr = Array.isArray(out?.be)
+          ? out.be
+          : Array.isArray(out)
+          ? out
+          : Array.isArray(out?.value)
+          ? out.value
+          : null;
 
-      // Normalize to an array of numbers
-      const beArr = Array.isArray(out)
-        ? out
-        : Array.isArray(out?.be)
-        ? out.be
-        : Array.isArray(out?.value)
-        ? out.value
-        : null;
-
-      if (!beArr || !beArr.some(isNum)) {
-        return { kind: "unavailable", reason: "Insufficient or incompatible legs." };
+        if (Array.isArray(arr) && arr.some(isNum)) {
+          return { kind: "ok", be: arr.filter(isNum).slice(0, 2) };
+        }
       }
+    } catch (e) {
+      // fall through to legacy
+    }
 
-      const clean = beArr.filter(isNum).slice(0, 2);
-      return { kind: "ok", be: clean };
+    // 2) Legacy fallbacks (older libs)
+    try {
+      const fn = pickFallbackFn();
+      if (fn) {
+        const maybe =
+          fn(rows, { allowApprox: true, tolerateMissing: true }) ??
+          fn(rowsToLegacyObject(rows), { allowApprox: true, tolerateMissing: true });
+
+        const arr = Array.isArray(maybe)
+          ? maybe
+          : Array.isArray(maybe?.be)
+          ? maybe.be
+          : Array.isArray(maybe?.value)
+          ? maybe.value
+          : null;
+
+        if (Array.isArray(arr) && arr.some(isNum)) {
+          return { kind: "ok", be: arr.filter(isNum).slice(0, 2) };
+        }
+      }
     } catch (e) {
       return { kind: "error", reason: String(e?.message || e) };
     }
-  }, [legs, rows]);
+
+    return { kind: "unavailable", reason: "No compatible break-even function." };
+  }, [rows]);
 
   if (result.kind === "ok") {
     const [a, b] = result.be;
@@ -87,17 +149,16 @@ export default function BreakevenKpiCell({ rows, currency = "USD", className = "
       <div className={`be-kpi ${className}`}>
         <span className="be-err">Break-even unavailable for current legs.</span>
         <style jsx>{`
-          .be-err { color: #ef4444; font-weight: 600; font-size: 0.95rem; white-space: nowrap; }
+          .be-err { color: #ef4444; font-weight: 600; font-size: .95rem; white-space: nowrap; }
         `}</style>
       </div>
     );
   }
 
-  // Empty → show "—"
   return (
     <div className={`be-kpi ${className}`}>
       <span className="muted" title="Add valid legs to compute break-even.">—</span>
-      <style jsx>{`.muted { color: var(--muted); }`}</style>
+      <style jsx>{`.muted{ color: var(--muted); }`}</style>
     </div>
   );
 }
