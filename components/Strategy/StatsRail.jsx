@@ -364,9 +364,15 @@ export default function StatsRail({
   const volHorizon = volMeta?.sourceUsed === "hist" ? (volMeta?.days ?? 30) : (volMeta?.cmDays ?? CM_DAYS);
   const volDiag = (volKind ? `${volKind} (${volHorizon}d)` : "") + (volMeta?.fallback ? " · fallback" : "");
 
-  // Dropdown formatting
-  const fmtLong = (iso) =>
-    new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+  // Safe local-date formatter (no UTC shift)
+  const fmtLong = (iso) => {
+    const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return String(iso || "");
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return d.toLocaleDateString(undefined, {
+      weekday: "short", year: "numeric", month: "short", day: "numeric",
+    });
+  };
 
   return (
     <aside className="card">
@@ -380,7 +386,7 @@ export default function StatsRail({
             className="select"
             value={selectedExpiry || ""}
             onChange={(e) => setSelectedExpiry(e.target.value || null)}
-            disabled={!expiryList.length}
+            title="Pick expiry"
           >
             {!expiryList.length ? (
               <option value="">No expiries</option>
