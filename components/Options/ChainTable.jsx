@@ -1,8 +1,10 @@
 // components/Options/ChainTable.jsx
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
+
+/* ------------------------------- Component ------------------------------- */
 
 export default function ChainTable({
   symbol,
@@ -20,13 +22,14 @@ export default function ChainTable({
   const [expanded, setExpanded] = useState(null); // { strike, side: 'call'|'put' } | null
 
   // StatsRail context (days/basis/sigma/drift…)
-  const [ctx, setCtx] = useState(() => (typeof window !== "undefined" ? snapshotStatsCtx() : null));
+  const [ctx, setCtx] = useState(() =>
+    (typeof window !== "undefined" ? snapshotStatsCtx() : null)
+  );
   useEffect(() => subscribeStatsCtx(setCtx), []);
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
   const moneySign = (ccy) =>
     ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
   const effCurrency = meta?.currency || currency || "USD";
   const fmtMoney = (v, d = 2) =>
     Number.isFinite(v) ? `${moneySign(effCurrency)}${Number(v).toFixed(d)}` : "—";
@@ -98,18 +101,16 @@ export default function ChainTable({
       if (!byStrike.has(k)) byStrike.set(k, { strike: k, call: null, put: null, ivPct: null });
       const row = byStrike.get(k);
       row[side] = {
-        // NOTE: price = theoretical/model price (e.g., BS) from API if present
-        price: pick(o.price),
+        price: pick(o.price), // model price from API if present
         ask: pick(o.ask),
         bid: pick(o.bid),
         ivPct: pick(o.ivPct),
         greeks: takeGreeks(o),
       };
     };
-    for (const c of calls || []) add("call", c);
-    for (const p of puts || []) add("put", p);
+    for (const c of (calls || [])) add("call", c);
+    for (const p of (puts  || [])) add("put",  p);
 
-    // finalize iv midpoint + compute strict mids
     const out = Array.from(byStrike.values());
     for (const r of out) {
       const cIV = r.call?.ivPct;
@@ -121,7 +122,6 @@ export default function ChainTable({
       if (r.call) r.call.mid = strictMid(r.call.ask, r.call.bid);
       if (r.put)  r.put.mid  = strictMid(r.put.ask,  r.put.bid);
     }
-
     return out.sort((a, b) => a.strike - b.strike);
   };
 
@@ -139,7 +139,6 @@ export default function ChainTable({
 
       setStatus("loading");
 
-      // Prefer the ISO date provided by OptionsTab; if absent, fall back to resolver
       const isoFromTab = expiry?.iso || null;
       const dateISO = isoFromTab || (await resolveDate(symbol, expiry));
 
@@ -160,7 +159,11 @@ export default function ChainTable({
         const mergedAsc = buildRows(calls, puts);
 
         if (cancelled) return;
-        setMeta({ spot: pick(m.spot), currency: m.currency || currency, expiry: m.expiry || dateISO });
+        setMeta({
+          spot: pick(m.spot),
+          currency: m.currency || currency,
+          expiry: m.expiry || dateISO,
+        });
         setRows(mergedAsc);
         setStatus("ready");
       } catch (e) {
@@ -226,11 +229,6 @@ export default function ChainTable({
     return best;
   }, [rows, meta?.spot]);
 
-  const atmRow = useMemo(() => {
-    if (closestStrike == null) return null;
-    return rows.find((r) => Number(r?.strike) === Number(closestStrike)) || null;
-  }, [rows, closestStrike]);
-
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
 
@@ -254,10 +252,11 @@ export default function ChainTable({
     });
   }, []);
 
-  const isOpen = (strike) => expanded && expanded.strike === strike;
+  const isOpen  = (strike) => expanded && expanded.strike === strike;
   const focusSide = (strike) => (isOpen(strike) ? expanded.side : null);
 
-  // ===== Math helpers (normal CDF & lognormal tools) =====
+  /* ----------------------------- Math helpers ---------------------------- */
+
   function erf(x) {
     const sign = x < 0 ? -1 : 1;
     const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429, p=0.3275911;
@@ -269,28 +268,22 @@ export default function ChainTable({
   const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
 
   function metricsForOption({ type, pos, S0, K, premium, sigma, T, drift }) {
-    // Guards
     if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !(sigma > 0) || !(T > 0)) {
       return { be: null, pop: null, expP: null, expR: null, sharpe: null };
     }
-
     const sqrtT = Math.sqrt(T);
     const sigSqrtT = sigma * sqrtT;
 
-    // Break-even
     const BE = type === "call" ? (K + premium) : Math.max(1e-9, K - premium);
 
-    // PoP via lognormal threshold
     const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const needsAbove = (type === "call" && pos === "long") || (type === "put" && pos === "short");
     const PoP = needsAbove ? (1 - Phi(z)) : Phi(z);
 
-    // d~ with chosen drift (not risk-neutral unless drift = rf - q)
     const d1 = (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const d2 = d1 - sigSqrtT;
 
-    // Expected payoff under lognormal with selected drift
-    const expST = Math.exp(drift * T); // factor for E[S_T] = S0 * exp(drift T)
+    const expST = Math.exp(drift * T);
     let Epay;
     if (type === "call") {
       Epay = S0 * expST * Phi(d1) - K * Phi(d2);
@@ -298,28 +291,23 @@ export default function ChainTable({
       Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
     }
 
-    // Second moment via truncated moments
-    const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT); // P(S_T > K) = Phi(dbar)
+    const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const PgtK = Phi(dbar);
     const PltK = 1 - PgtK;
-
-    const E1_above = S0 * expST * Phi(d1);                 // E[S_T 1_{S>K}]
-    const E2_above = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(d1 + sigSqrtT);  // E[S_T^2 1_{S>K}]
-    const E1_below = S0 * expST * Phi(-d1);                // E[S_T 1_{S<K}]
-    const E2_below = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(-(d1 + sigSqrtT)); // E[S_T^2 1_{S<K}]
+    const E1_above = S0 * expST * Phi(d1);
+    const E2_above = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(d1 + sigSqrtT);
+    const E1_below = S0 * expST * Phi(-d1);
+    const E2_below = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(-(d1 + sigSqrtT));
 
     let E2pay;
     if (type === "call") {
-      // E[(S-K)^2 1_{S>K}] = E[S^2 1_{>K}] - 2K E[S 1_{>K}] + K^2 P(S>K)
       E2pay = E2_above - 2*K*E1_above + K*K*PgtK;
     } else {
-      // E[(K-S)^2 1_{S<K}] = K^2 P(S<K) - 2K E[S 1_{<K}] + E[S^2 1_{<K}]
       E2pay = K*K*PltK - 2*K*E1_below + E2_below;
     }
     const varPay = Math.max(0, E2pay - Epay*Epay);
     const sdPay = Math.sqrt(varPay);
 
-    // Expected profit/return by position
     const expProfitLong  = Epay - premium;
     const expProfitShort = premium - Epay;
     const expProfit = pos === "long" ? expProfitLong : expProfitShort;
@@ -342,15 +330,15 @@ export default function ChainTable({
     } catch { return null; }
   }
 
-  // Derived context AFTER visible exists (avoid TDZ)
+  // Effective time & drift parameters from StatsRail (fallbacks for safety)
   const effDays = ctx?.days ?? daysToExpiryISO(meta?.expiry);
   const effBasis = ctx?.basis ?? 365;
   const T = Number.isFinite(effDays) ? Math.max(1, effDays) / effBasis : null;
-  const fallbackSigma = Number.isFinite(atmRow?.ivPct) ? atmRow.ivPct / 100 : null;
-  const sigma = Number.isFinite(ctx?.sigma) ? ctx.sigma : fallbackSigma;
+  const sigma = ctx?.sigma ?? (Number.isFinite(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
   const drift = ctx?.driftMode === "CAPM"
     ? (Number(ctx?.muCapm) || 0)
     : ((Number(ctx?.rf) || 0) - (Number(ctx?.q) || 0));
+
   const S0 = Number(meta?.spot) || Number(ctx?.spot) || null;
 
   return (
@@ -444,14 +432,19 @@ export default function ChainTable({
             const putPrem  = (putMid ?? r?.put?.price  ?? null);
 
             // Compute metrics only when expanded (perf)
-            let longMetrics = null, shortMetrics = null, beForChart = null, typeForChart = null, premForChart = null;
+            let longMetrics = null, shortMetrics = null,
+                beForChart = null, typeForChart = null, premForChart = null;
             if (open && S0 && T && sigma && Number.isFinite(r.strike)) {
               if (focus === "put") {
-                typeForChart = "put"; premForChart = putPrem; beForChart = Number.isFinite(putPrem) ? Math.max(1e-9, r.strike - putPrem) : null;
+                typeForChart = "put";
+                premForChart = putPrem;
+                beForChart   = Number.isFinite(putPrem) ? Math.max(1e-9, r.strike - putPrem) : null;
                 longMetrics  = Number.isFinite(putPrem) ? metricsForOption({ type:"put", pos:"long",  S0, K:r.strike, premium: putPrem, sigma, T, drift }) : null;
                 shortMetrics = Number.isFinite(putPrem) ? metricsForOption({ type:"put", pos:"short", S0, K:r.strike, premium: putPrem, sigma, T, drift }) : null;
               } else {
-                typeForChart = "call"; premForChart = callPrem; beForChart = Number.isFinite(callPrem) ? (r.strike + callPrem) : null;
+                typeForChart = "call";
+                premForChart = callPrem;
+                beForChart   = Number.isFinite(callPrem) ? (r.strike + callPrem) : null;
                 longMetrics  = Number.isFinite(callPrem) ? metricsForOption({ type:"call", pos:"long",  S0, K:r.strike, premium: callPrem, sigma, T, drift }) : null;
                 shortMetrics = Number.isFinite(callPrem) ? metricsForOption({ type:"call", pos:"short", S0, K:r.strike, premium: callPrem, sigma, T, drift }) : null;
               }
@@ -491,14 +484,6 @@ export default function ChainTable({
                       </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
-                          {/* legend chips */}
-                          <div className="chart-legend">
-                            <span className="chip chip-spot">Spot {fmtMoney(S0)}</span>
-                            <span className="chip chip-strike">Strike {fmtMoney(r.strike)}</span>
-                            {Number.isFinite(beForChart) && (
-                              <span className="chip chip-be">BE {fmtMoney(beForChart)}</span>
-                            )}
-                          </div>
                           <MiniPL
                             S0={S0}
                             K={r.strike}
@@ -506,17 +491,17 @@ export default function ChainTable({
                             type={typeForChart}
                             pos="short"
                             BE={beForChart}
+                            drift={drift}
                             sigma={sigma}
                             T={T}
-                            drift={drift}
                           />
                         </div>
                         <div className="metrics">
-                          <Metric label="Break-even"       value={fmtMoney(shortMetrics?.be)} />
-                          <Metric label="Prob. Profit"     value={fmtPct(shortMetrics?.pop)} />
-                          <Metric label="Expected Return"  value={fmtPct(shortMetrics?.expR)} />
-                          <Metric label="Expected Profit"  value={fmtMoney(shortMetrics?.expP)} />
-                          <Metric label="Sharpe"           value={fmt(shortMetrics?.sharpe, 2)} />
+                          <Metric label="Break-even"       kind="money" ccy={effCurrency} num={shortMetrics?.be} />
+                          <Metric label="Prob. Profit"     kind="prob"  num={shortMetrics?.pop} />
+                          <Metric label="Expected Return"  kind="pct"   num={shortMetrics?.expR} />
+                          <Metric label="Expected Profit"  kind="money" ccy={effCurrency} num={shortMetrics?.expP} />
+                          <Metric label="Sharpe"           kind="num"   num={shortMetrics?.sharpe} />
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put"
@@ -536,14 +521,6 @@ export default function ChainTable({
                       </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
-                          {/* legend chips */}
-                          <div className="chart-legend">
-                            <span className="chip chip-spot">Spot {fmtMoney(S0)}</span>
-                            <span className="chip chip-strike">Strike {fmtMoney(r.strike)}</span>
-                            {Number.isFinite(beForChart) && (
-                              <span className="chip chip-be">BE {fmtMoney(beForChart)}</span>
-                            )}
-                          </div>
                           <MiniPL
                             S0={S0}
                             K={r.strike}
@@ -551,17 +528,17 @@ export default function ChainTable({
                             type={typeForChart}
                             pos="long"
                             BE={beForChart}
+                            drift={drift}
                             sigma={sigma}
                             T={T}
-                            drift={drift}
                           />
                         </div>
                         <div className="metrics">
-                          <Metric label="Break-even"       value={fmtMoney(longMetrics?.be)} />
-                          <Metric label="Prob. Profit"     value={fmtPct(longMetrics?.pop)} />
-                          <Metric label="Expected Return"  value={fmtPct(longMetrics?.expR)} />
-                          <Metric label="Expected Profit"  value={fmtMoney(longMetrics?.expP)} />
-                          <Metric label="Sharpe"           value={fmt(longMetrics?.sharpe, 2)} />
+                          <Metric label="Break-even"       kind="money" ccy={effCurrency} num={longMetrics?.be} />
+                          <Metric label="Prob. Profit"     kind="prob"  num={longMetrics?.pop} />
+                          <Metric label="Expected Return"  kind="pct"   num={longMetrics?.expR} />
+                          <Metric label="Expected Profit"  kind="money" ccy={effCurrency} num={longMetrics?.expP} />
+                          <Metric label="Sharpe"           kind="num"   num={longMetrics?.sharpe} />
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put"
@@ -586,11 +563,17 @@ export default function ChainTable({
           --strikeCol: #F2AE2E;
           --ivCol:     #F27405;
           --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
-          --spotOrange: #f59e0b;
+          --spotBlue:  #60a5fa; /* for spot line */
+          --profit:    rgba(34,197,94,.16);  /* soft green */
+          --loss:      rgba(239,68,68,.16);  /* soft red */
+          --pdf:       rgba(252,211,77,.9);  /* warm yellow */
+          --pill-bg:   rgba(255,255,255,.08);
+          --pill-bd:   rgba(255,255,255,.14);
+          --pill-neg:  #ef4444;
+          --pill-pos:  #22c55e;
 
-          --sk-base: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
+          --sk-base: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #0b0d12));
           --sk-sheen: color-mix(in srgb, #ffffff 40%, transparent);
-
           margin-top:10px;
         }
 
@@ -600,7 +583,7 @@ export default function ChainTable({
         }
         .h-left, .h-right{
           font-weight:800; font-size:22px; letter-spacing:.2px;
-          color: var(--text, #0f172a);
+          color: var(--text, #e9edf6);
         }
         .h-mid{ flex:1; }
 
@@ -617,10 +600,10 @@ export default function ChainTable({
 
         .head-row{
           padding: 8px 0 10px;
-          border-top:1px solid var(--border, #E6E9EF);
-          border-bottom:1px solid var(--border, #E6E9EF);
+          border-top:1px solid rgba(255,255,255,.06);
+          border-bottom:1px solid rgba(255,255,255,.06);
           font-weight:700; font-size:13.5px;
-          color: var(--text, #2b3442);
+          color:#c7cedd;
         }
 
         .head-row .strike-hdr{
@@ -633,53 +616,49 @@ export default function ChainTable({
           outline: 2px solid color-mix(in srgb, var(--strikeCol) 60%, transparent);
           outline-offset: 2px;
         }
-        .head-row .iv-hdr{
-          color: var(--ivCol);
-          font-weight:800; letter-spacing:.01em;
-        }
+        .head-row .iv-hdr{ color: var(--ivCol); font-weight:800; letter-spacing:.01em; }
 
         .cell{ height:26px; display:flex; align-items:center; }
-        .c{ justify-content:center; text-align:center; }
-        .p{ justify-content:center; text-align:center; }
-        .mid{ justify-content:center; text-align:center; }
+        .c,.p,.mid{ justify-content:center; text-align:center; }
         .arrow{ margin-right:6px; font-weight:900; color: currentColor; }
 
         .card{
-          border:1px solid var(--border, #E6E9EF);
-          border-radius:14px;
-          background: var(--card, #fff);
-          color: var(--text, #0f172a);
+          border:1px solid rgba(255,255,255,.08);
+          border-radius:18px;
+          background: radial-gradient(1200px 400px at -10% -10%, rgba(255,255,255,.04), transparent),
+                      #0c0f14;
+          color:#e9edf6;
           padding:16px 18px;
           margin-top:14px;
+          box-shadow:
+            0 30px 60px rgba(0,0,0,.45),
+            0 1px 0 rgba(255,255,255,.05) inset;
         }
         .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
         .sub{ opacity:.75; font-size:13px; }
 
         .body .row{
           padding: 8px 0;
-          border-bottom:1px solid color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
+          border-bottom:1px solid rgba(255,255,255,.06);
           transition: background-color .18s ease, box-shadow .18s ease;
         }
         .clickable{ cursor: pointer; }
         .body .row:last-child{ border-bottom:0; }
-        .body .row:hover{ background-color: var(--rowHover); }
+        .body .row:hover{ background-color: rgba(255,255,255,.03); }
         .body .row.is-spot{
-          background-color: color-mix(in srgb, var(--spotOrange) 20%, transparent);
-          border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
+          background-color: rgba(245,158,11,.10);
+          border-bottom-color: rgba(245,158,11,.35);
         }
 
-        .val{ font-weight:700; font-size:13.5px; color: var(--text, #0f172a); }
+        .val{ font-weight:700; font-size:13.5px; color:#e9edf6; }
         .body .row .strike-val{ color: var(--strikeCol); }
         .body .row .iv-val{     color: var(--ivCol); }
 
         /* Focus highlighting per side (only the side the user clicked) */
-        .body .row.is-open.focus-call .c.cell{
-          background: color-mix(in srgb, var(--text, #0f172a) 12%, transparent);
-          border-radius: 8px;
-        }
-        .body .row.is-open.focus-put .p.cell{
-          background: color-mix(in srgb, var(--text, #0f172a) 12%, transparent);
-          border-radius: 8px;
+        .body .row.is-open.focus-call .c.cell,
+        .body .row.is-open.focus-put  .p.cell{
+          background: rgba(255,255,255,.04);
+          border-radius: 10px;
         }
 
         /* Expanded panel */
@@ -688,128 +667,79 @@ export default function ChainTable({
           max-height: 0;
           opacity: 0;
           transform: translateY(-4px);
-          transition: max-height .30s ease, opacity .30s ease, transform .30s ease;
+          transition: max-height .28s ease, opacity .28s ease, transform .28s ease;
           border-bottom:1px solid transparent;
         }
         .details.open{
-          max-height: 700px;
+          max-height: 640px;
           opacity: 1;
           transform: translateY(0);
-          border-bottom-color: color-mix(in srgb, var(--border, #0b1220) 86%, transparent);
+          border-bottom-color: rgba(255,255,255,.06);
         }
-
-        /* Premium container */
         .details-inner{
-          padding: 18px 14px 20px;
+          padding: 18px 12px 22px;
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 16px;
-          background: linear-gradient(180deg, #0a0c12, #090b10 40%, #080a0e);
+          gap: 18px;
+          background: rgba(255,255,255,.03);
           border-radius: 16px;
-          box-shadow:
-            0 24px 60px rgba(0,0,0,.35),
-            0 1px 0 rgba(255,255,255,.03) inset;
+          box-shadow: 0 18px 40px rgba(0,0,0,.30), 0 2px 0 rgba(255,255,255,.02) inset;
         }
-
-        /* Dark cards */
         .panel-col{
-          display:flex; flex-direction:column; gap:14px;
-          padding: 14px;
-          border:1px solid #1a2030;
-          border-radius:14px;
-          background: radial-gradient(120% 140% at 30% -10%, rgba(255,255,255,.04), transparent 60%), #0b0d12;
-          box-shadow:
-            0 8px 18px rgba(0,0,0,.35),
-            0 1px 0 rgba(255,255,255,.02) inset;
-          transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+          display:flex; flex-direction:column; gap:12px;
+          padding: 12px;
+          border:1px solid rgba(255,255,255,.08);
+          border-radius:14px; background: #0d1117;
         }
-        .panel-col:hover{
-          transform: translateY(-1px);
-          border-color:#273047;
-          box-shadow:
-            0 10px 22px rgba(0,0,0,.40),
-            0 1px 0 rgba(255,255,255,.03) inset;
-        }
-        .panel-head{ font-weight:800; font-size:15px; opacity:.95; letter-spacing:.2px; }
+        .panel-head{ font-weight:800; font-size:18px; opacity:.95; }
 
-        /* Bigger chart */
-        .panel-grid{ display:grid; grid-template-rows: 220px auto; gap:14px; }
-
-        /* Chart surface */
+        .panel-grid{ display:grid; grid-template-rows: 200px auto; gap:14px; }
         .chart{
-          position: relative;
-          border-radius:12px;
-          background: #0b0f17;
-          box-shadow: inset 0 0 0 1px #171d2b, inset 0 -30px 50px rgba(0,0,0,.35);
-          overflow: hidden;
+          position:relative;
+          border-radius:12px; border:1px solid rgba(255,255,255,.08);
+          background: radial-gradient(1000px 300px at 10% -20%, rgba(255,255,255,.03), transparent),
+                      #0b0f15;
+          display:flex; align-items:center; justify-content:center;
+          overflow:hidden;
         }
 
-        /* Legend chips inside chart */
-        .chart-legend{
-          position:absolute; top:8px; left:8px; display:flex; gap:8px; flex-wrap:wrap; z-index:2;
-        }
-        .chip{
-          padding: 4px 8px;
-          border-radius: 999px;
-          font-size: 12px; font-weight:700;
-          letter-spacing:.1px;
-          background: #0e1422;
-          border:1px solid #1c263b;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
-        }
-        .chip-spot{ color:#93c5fd; border-color:#223152; }
-        .chip-strike{ color:#fbbf24; border-color:#3b2c12; }
-        .chip-be{ color:#34d399; border-color:#113428; }
-
-        /* Metrics + value pills */
-        .metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:14px 18px; }
-        .metric{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
-        .metric .k{ opacity:.78; font-size:13px; }
-        .pill{
+        /* Metrics layout + pills */
+        .metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:14px 22px; }
+        .metric{ display:flex; align-items:center; justify-content:space-between; gap:18px; }
+        .metric .k{ opacity:.85; font-size:16px; letter-spacing:.2px; }
+        .metric .pill{
+          margin-left:10px;
           padding: 6px 10px;
-          min-width: 88px;
-          text-align: right;
-          border-radius: 999px;
-          font-weight:800; font-size:14px; font-variant-numeric: tabular-nums;
-          background:#0f1421; color:#e5e7eb;
-          border:1px solid #1b2335;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
-          transition: transform .12s ease, background .12s ease, border-color .12s ease;
+          border-radius: 9999px;
+          background: var(--pill-bg);
+          border: 1px solid var(--pill-bd);
+          font-weight:700; font-variant-numeric: tabular-nums;
+          min-width: 68px; text-align:center;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+          line-height: 1.2;
         }
-        .pill:hover{ transform: translateY(-1px); }
-        .pill.pos{ background: color-mix(in srgb, #10b981 22%, #0f1421); border-color:#134e40; color:#dbffe9; }
-        .pill.neg{ background: color-mix(in srgb, #ef4444 20%, #0f1421); border-color:#4a1010; color:#ffe1e1; }
-        .pill.neutral{}
+        .metric .pill.pos { color: var(--pill-pos); }
+        .metric .pill.neg { color: var(--pill-neg); }
 
-        /* Greeks row */
-        .greeks{ grid-column: 1 / -1; margin-top: 2px;
-          display:grid; grid-template-columns: repeat(5, minmax(90px,1fr)); gap:8px; }
+        .greeks{ grid-column: 1 / -1; margin-top: 6px; display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
         .greek{
-          font-size:12px; opacity:.9; display:flex; align-items:center; justify-content:center;
-          border:1px solid #1a2030; border-radius:9px; padding:6px 8px; background:#0c1019;
+          font-size:12px; opacity:.85; display:flex; align-items:center; justify-content:center;
+          border:1px solid rgba(255,255,255,.12); border-radius:8px; padding:6px 8px;
+          background: rgba(255,255,255,.03);
         }
 
         /* ---------- Shimmer styles ---------- */
         .is-loading .row:hover{ background: transparent; }
-
         .skl{
-          display:inline-block;
-          height: 14px;
-          border-radius: 8px;
-          background: var(--sk-base);
-          position: relative;
-          overflow: hidden;
+          display:inline-block; height: 14px; border-radius: 8px;
+          background: var(--sk-base); position: relative; overflow: hidden;
         }
         .skl::after{
-          content:"";
-          position:absolute; inset:0;
-          transform: translateX(-100%);
+          content:""; position:absolute; inset:0; transform: translateX(-100%);
           background: linear-gradient(90deg, transparent, var(--sk-sheen), transparent);
           animation: shimmer 1.15s ease-in-out infinite;
         }
-        .w-45{ width:45%; } .w-50{ width:50%; } .w-60{ width:60%; }
-        .w-70{ width:70%; }
-
+        .w-45{ width:45%; } .w-50{ width:50%; } .w-60{ width:60%; } .w-70{ width:70%; }
         @keyframes shimmer{ 100% { transform: translateX(100%); } }
 
         @media (max-width: 980px){
@@ -818,31 +748,30 @@ export default function ChainTable({
           .cell{ height:24px; }
           .val{ font-size:13px; }
           .details-inner{ grid-template-columns: 1fr; }
+          .panel-grid{ grid-template-rows: 210px auto; }
         }
       `}</style>
     </div>
   );
 }
 
-/* ---------- Small presentational helpers (with value pills) ---------- */
-function Metric({ label, value }) {
-  const tone = useMemo(() => {
-    if (value == null || value === "—") return "neutral";
-    const raw = String(value).replace(/[,\s$€£¥%]/g, "");
-    const num = Number(raw);
-    if (!Number.isFinite(num)) return "neutral";
-    const lower = label.toLowerCase();
+/* ------------------------ Metric pill w/ sign color ----------------------- */
 
-    if (lower.includes("prob")) return num >= 50 ? "pos" : "neg"; // 50% threshold
-    if (lower.includes("return") || lower.includes("profit")) return num >= 0 ? "pos" : "neg";
-    if (lower.includes("sharpe")) return num >= 0 ? "pos" : "neg";
-    return "neutral";
-  }, [label, value]);
-
+function Metric({ label, kind = "num", num, ccy = "USD" }) {
+  const sign = Number.isFinite(num) ? (num > 0 ? "pos" : num < 0 ? "neg" : "") : "";
+  const moneySign = (ccy) =>
+    ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
+  const format = () => {
+    if (!Number.isFinite(num)) return "—";
+    if (kind === "money") return `${moneySign(ccy)}${num.toFixed(2)}`;
+    if (kind === "pct")   return `${(num * 100).toFixed(2)}%`;
+    if (kind === "prob")  return `${(num * 100).toFixed(2)}%`;
+    return String(num.toFixed(2));
+  };
   return (
     <div className="metric">
       <span className="k">{label}</span>
-      <span className={`pill ${tone}`}>{value ?? "—"}</span>
+      <span className={`pill ${sign}`}>{format()}</span>
     </div>
   );
 }
@@ -861,176 +790,263 @@ function GreekList({ greeks }) {
 }
 function fmtG(v){ return Number.isFinite(v) ? Number(v).toFixed(2) : "—"; }
 
-/* ---------- Mini payoff chart with profit/loss fill + density + tooltip ---------- */
-function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
-  const [tip, setTip] = useState(null); // {x, y, price, pdf}
+/* -------------------- Inline worker for Monte Carlo PDF ------------------- */
 
-  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
-    return <span className="chart-hint">Chart</span>;
-  }
+function createMCWorker() {
+  const code = `
+    self.onmessage = (e) => {
+      const { S0, sigma, drift, T, xmin, xmax, paths = 500000, bins = 220 } = e.data;
+      const N = Math.max(500000, paths|0);
+      const B = Math.max(120, Math.min(600, bins|0));
+      const counts = new Float64Array(B);
+      const width  = (xmax - xmin) / B;
 
-  const xmin = Math.max(0, S0 * 0.4);
-  const xmax = S0 * 1.8;
-  const W = 520, H = 220, pad = 14;
+      // tiny PRNG (Mulberry32)
+      let seed = Math.floor((S0*1000) % 0xFFFFFFFF) ^ 0x9E3779B9;
+      const rnd = () => {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
 
-  // sample payoff points
-  const N = 140;
-  const pts = [];
-  for (let i = 0; i <= N; i++) {
-    const s = xmin + (i / N) * (xmax - xmin);
-    const intrinsic = type === "call" ? Math.max(s - K, 0) : Math.max(K - s, 0);
-    const p = pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
-    pts.push([s, p]);
-  }
-  const ys = pts.map((p) => p[1]);
-  const yMin = Math.min(...ys, -premium * 1.3);
-  const yMax = Math.max(...ys, premium * 1.3);
+      // Box-Muller
+      const mu = (drift - 0.5 * sigma * sigma) * T;
+      const vol = sigma * Math.sqrt(T);
 
-  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
-  const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
-  const yZero = ymap(0);
+      for (let i = 0; i < N; i += 2) {
+        const u1 = Math.max(1e-12, rnd());
+        const u2 = rnd();
+        const R = Math.sqrt(-2 * Math.log(u1));
+        const z1 = R * Math.cos(2 * Math.PI * u2);
+        const z2 = R * Math.sin(2 * Math.PI * u2);
 
-  // build payoff line path + profit/loss area paths
-  const screenPts = pts.map(([s, p]) => ({ x: xmap(s), y: ymap(p), p, s }));
-  let dLine = "";
-  let dPos = "", dNeg = "";
-  let cur = null, xStart = null;
-  for (let i = 0; i < screenPts.length; i++) {
-    const { x, y, p } = screenPts[i];
-    dLine += `${i ? "L" : "M"} ${x.toFixed(1)} ${y.toFixed(1)} `;
+        const s1 = S0 * Math.exp(mu + vol * z1);
+        const s2 = S0 * Math.exp(mu + vol * z2);
 
-    const sign = p >= 0 ? "pos" : "neg";
-    if (cur == null) {
-      cur = sign; xStart = x;
-      if (cur === "pos") dPos += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
-      else dNeg += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
-      continue;
-    }
-
-    const prev = screenPts[i - 1];
-    if ((p >= 0 && cur === "pos") || (p < 0 && cur === "neg")) {
-      if (cur === "pos") dPos += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
-      else dNeg += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
-    } else {
-      // sign change — compute intersection with y=0
-      const t = (0 - prev.p) / (p - prev.p);
-      const xInt = prev.x + t * (x - prev.x);
-      const yInt = yZero;
-
-      if (cur === "pos") {
-        dPos += `L ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${xInt.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
-      } else {
-        dNeg += `L ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${xInt.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
+        const i1 = Math.floor((s1 - xmin) / (xmax - xmin) * B);
+        if (i1 >= 0 && i1 < B) counts[i1] += 1;
+        const i2 = Math.floor((s2 - xmin) / (xmax - xmin) * B);
+        if (i2 >= 0 && i2 < B) counts[i2] += 1;
       }
 
-      // new segment
-      cur = sign; xStart = xInt;
-      if (cur === "pos") { dPos += `M ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)} `; }
-      else { dNeg += `M ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)} `; }
-    }
+      // convert to density
+      const total = counts.reduce((a, b) => a + b, 0);
+      const density = new Float64Array(B);
+      const xs = new Float64Array(B);
+      for (let i = 0; i < B; i++) {
+        xs[i] = xmin + (i + 0.5) * width;
+        density[i] = total > 0 ? counts[i] / (total * width) : 0;
+      }
+
+      // light smoothing (moving average)
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 1; i < B - 1; i++) {
+          density[i] = (density[i-1] + density[i] + density[i+1]) / 3;
+        }
+      }
+
+      self.postMessage({ xs, density });
+    };
+  `;
+  const blob = new Blob([code], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  const w = new Worker(url, { type: "module" });
+  return w;
+}
+
+/* --------------------------- Mini payoff chart --------------------------- */
+
+function MiniPL({ S0, K, premium, type, pos, BE, drift, sigma, T }) {
+  const hostRef = useRef(null);
+  const [pdf, setPdf] = useState(null); // { xs: Float64Array, density: Float64Array }
+  const [tooltip, setTooltip] = useState(null); // { x, y, s, prob }
+  const workerRef = useRef(null);
+
+  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
+    return <span className="chart-hint" style={{opacity:.5,color:"#9aa5b1"}}>Chart</span>;
   }
-  // close last segment to baseline
-  const last = screenPts[screenPts.length - 1];
-  if (cur === "pos") dPos += `L ${last.x.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
-  if (cur === "neg") dNeg += `L ${last.x.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
 
-  // density (lognormal pdf) as a thin yellow line
-  let dDen = "";
-  if (Number.isFinite(sigma) && Number.isFinite(T) && T > 0 && sigma > 0) {
-    const mu = Math.log(S0) + (Number(drift) - 0.5 * sigma * sigma) * T;
-    const v = sigma * sigma * T;
-    const pdf = (s) => (1 / (s * Math.sqrt(2 * Math.PI * v))) *
-      Math.exp(-Math.pow(Math.log(s) - mu, 2) / (2 * v));
-    // sample & scale
-    const M = 160;
-    const den = [];
-    let maxPdf = 0;
-    for (let i = 0; i <= M; i++) {
-      const s = xmin + (i / M) * (xmax - xmin);
-      const y = pdf(s);
-      if (y > maxPdf) maxPdf = y;
-      den.push([s, y]);
+  // Slight zoom to make PDF stand out
+  const xmin = Math.max(0, S0 * 0.60);
+  const xmax = S0 * 1.60;
+
+  const W = 520, H = 200, pad = 14;
+
+  // Monte Carlo PDF (>= 500k paths) based on selected drift
+  useEffect(() => {
+    if (!(S0>0) || !(sigma>0) || !(T>0)) { setPdf(null); return; }
+    try {
+      if (!workerRef.current) workerRef.current = createMCWorker();
+      const w = workerRef.current;
+      const onMsg = (ev) => setPdf(ev.data);
+      w.addEventListener("message", onMsg, { once: true });
+      w.postMessage({ S0, sigma, drift, T, xmin, xmax, paths: 500000, bins: 220 });
+      return () => w.removeEventListener("message", onMsg);
+    } catch {
+      setPdf(null);
     }
-    const scale = 0.60; // use 60% of drawable height
-    for (let i = 0; i < den.length; i++) {
-      const [s, y] = den[i];
-      const x = xmap(s);
-      const yy = pad + (H - 2 * pad) * (1 - (y / maxPdf) * scale);
-      dDen += `${i ? "L" : "M"} ${x.toFixed(1)} ${yy.toFixed(1)} `;
+  }, [S0, sigma, drift, T, xmin, xmax]);
+
+  // Build payoff path & areas
+  const N = 120;
+  const xs = [];
+  for (let i = 0; i <= N; i++) xs.push(xmin + (i/N) * (xmax - xmin));
+
+  const payoff = xs.map((s) => {
+    let intrinsic = type === "call" ? Math.max(s - K, 0) : Math.max(K - s, 0);
+    return pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
+  });
+
+  const yMin = Math.min(...payoff, -premium * 1.25);
+  const yMax = Math.max(...payoff,  premium * 1.25);
+
+  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2*pad);
+  const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2*pad);
+
+  const dPay = payoff.map((p, i) =>
+    `${i ? "L" : "M"} ${xmap(xs[i]).toFixed(1)} ${ymap(p).toFixed(1)}`
+  ).join(" ");
+
+  // Areas split into positive / negative fills
+  const baseY = ymap(0);
+  const pathArea = (sign) => {
+    let d = "";
+    let open = false;
+    for (let i = 0; i <= N; i++) {
+      const s = xs[i];
+      const p = payoff[i];
+      const isPos = p >= 0;
+      if ((sign === "pos" && isPos) || (sign === "neg" && !isPos)) {
+        const X = xmap(s); const Y = ymap(p);
+        if (!open) { d += `M ${X} ${baseY} L ${X} ${Y} `; open = true; }
+        else d += `L ${X} ${Y} `;
+        if (i === N) d += `L ${X} ${baseY} Z`;
+      } else if (open) {
+        const X = xmap(xs[i-1]); const Y = ymap(payoff[i-1]);
+        d += `L ${X} ${baseY} Z`;
+        open = false;
+      }
     }
-  }
-
-  const strikeX = xmap(K);
-  const beX = Number.isFinite(BE) ? xmap(BE) : null;
-  const spotX = xmap(S0);
-
-  const handleMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const clamped = Math.max(pad, Math.min(W - pad, px));
-    const s = xmin + ((clamped - pad) / (W - 2 * pad)) * (xmax - xmin);
-
-    let pdfVal = null;
-    if (Number.isFinite(sigma) && Number.isFinite(T) && T > 0 && sigma > 0) {
-      const mu = Math.log(S0) + (Number(drift) - 0.5 * sigma * sigma) * T;
-      const v = sigma * sigma * T;
-      pdfVal = (1 / (s * Math.sqrt(2 * Math.PI * v))) *
-        Math.exp(-Math.pow(Math.log(s) - mu, 2) / (2 * v));
-    }
-    setTip({ x: clamped, y: pad + 8, price: s, pdf: pdfVal });
+    return d;
   };
 
+  // Minimal axes ticks: x at {xmin, S0, K, BE, xmax}, y at {0}
+  const ticksX = [xmin, S0, K, ...(Number.isFinite(BE)?[BE]:[]), xmax]
+    .filter((v, i, a) => a.findIndex(z => Math.abs(z - v) < 1e-6) === i)
+    .sort((a, b) => a - b);
+
+  const onMove = (evt) => {
+    const rect = hostRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const px = evt.clientX - rect.left;
+    const py = evt.clientY - rect.top;
+
+    // nearest price
+    const s = xmin + ((px - pad) / (W - 2*pad)) * (xmax - xmin);
+    const sClamped = Math.max(xmin, Math.min(xmax, s));
+
+    let prob = null;
+    if (pdf?.xs && pdf?.density) {
+      // find nearest bin
+      const B = pdf.xs.length;
+      let lo = 0, hi = B - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (pdf.xs[mid] < sClamped) lo = mid; else hi = mid;
+      }
+      const i = Math.abs(pdf.xs[lo]-sClamped) < Math.abs(pdf.xs[hi]-sClamped) ? lo : hi;
+      prob = pdf.density[i];
+    }
+
+    // tooltip placement (keep inside & slightly below cursor)
+    const ttW = 120, ttH = 46, offset = 14;
+    let tx = px + 12, ty = py + offset;
+    if (tx + ttW > W - 6) tx = W - ttW - 6;
+    if (ty + ttH > H - 6) ty = H - ttH - 6;
+    if (tx < 6) tx = 6;
+    if (ty < 6) ty = 6;
+    setTooltip({ x: tx, y: ty, s: sClamped, prob });
+  };
+  const onLeave = () => setTooltip(null);
+
+  // Build PDF path (scaled to 75% chart height)
+  let dPdf = null;
+  if (pdf?.xs && pdf?.density) {
+    const peak = Math.max(...pdf.density);
+    const scale = (H - 2*pad) * 0.75 / (peak > 0 ? peak : 1);
+    dPdf = pdf.xs.map((s, i) => {
+      const X = xmap(s).toFixed(1);
+      const Y = (H - pad - pdf.density[i] * scale).toFixed(1);
+      return `${i ? "L" : "M"} ${X} ${Y}`;
+    }).join(" ");
+  }
+
+  const spotX = xmap(S0);
+  const strikeX = xmap(K);
+  const beX = Number.isFinite(BE) ? xmap(BE) : null;
+
   return (
-    <div className="pl-root" onMouseMove={handleMove} onMouseLeave={() => setTip(null)}>
-      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-        {/* profit / loss background fills */}
-        <path d={dPos} fill="rgba(34,197,94,.18)" />
-        <path d={dNeg} fill="rgba(239,68,68,.16)" />
+    <div ref={hostRef} style={{position:"relative", width:"100%", height:"100%"}}>
+      <svg
+        width="100%" height="100%"
+        viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+        onMouseMove={onMove} onMouseLeave={onLeave}
+      >
+        {/* grid & axes */}
+        <rect x="0" y="0" width={W} height={H} fill="transparent" />
+        <line x1={pad} y1={ymap(0)} x2={W-pad} y2={ymap(0)} stroke="#e5e7eb" opacity="0.18" />
+        {/* X ticks */}
+        {ticksX.map((t,i) => (
+          <g key={i} opacity="0.55">
+            <line x1={xmap(t)} y1={H-pad} x2={xmap(t)} y2={H-pad+6} stroke="#e5e7eb" opacity="0.25" />
+            <text x={xmap(t)} y={H-pad+18} textAnchor="middle" fontSize="10" fill="#cbd5e1">{t.toFixed(0)}</text>
+          </g>
+        ))}
+        {/* Y tick at 0 */}
+        <text x={pad-6} y={ymap(0)-4} textAnchor="end" fontSize="10" fill="#cbd5e1">0</text>
 
-        {/* zero line */}
-        <line x1={pad} y1={yZero} x2={W-pad} y2={yZero} stroke="#9ca3af" opacity="0.18" />
+        {/* profit / loss areas */}
+        <path d={pathArea("pos")} fill="var(--profit)" />
+        <path d={pathArea("neg")} fill="var(--loss)" />
 
-        {/* payoff line */}
-        <path d={dLine} fill="none" stroke="#e5e7eb" strokeWidth="1.6" />
+        {/* payoff */}
+        <path d={dPay} fill="none" stroke="#e5e7eb" strokeWidth="1.6" />
 
-        {/* vertical guides */}
-        <line x1={strikeX} y1={pad} x2={strikeX} y2={H-pad} stroke="#fbbf24" strokeWidth="1" opacity=".9" />
-        {Number.isFinite(beX) && <line x1={beX} y1={pad} x2={beX} y2={H-pad} stroke="#34d399" strokeWidth="1" opacity=".9" />}
-        <line x1={spotX} y1={pad} x2={spotX} y2={H-pad} stroke="#93c5fd" strokeWidth="1" opacity=".95" />
+        {/* reference lines (no labels) */}
+        <line x1={spotX}   y1={pad} x2={spotX}   y2={H-pad} stroke="var(--spotBlue)" strokeWidth="1" opacity="0.85" />
+        <line x1={strikeX} y1={pad} x2={strikeX} y2={H-pad} stroke="#f59e0b" strokeWidth="1" opacity="0.9" />
+        {Number.isFinite(beX) && <line x1={beX} y1={pad} x2={beX} y2={H-pad} stroke="#10b981" strokeWidth="1" opacity="0.9" />}
 
-        {/* density curve */}
-        {dDen && <path d={dDen} fill="none" stroke="rgba(250,204,21,.9)" strokeWidth="1.5" opacity=".9" />}
+        {/* Monte Carlo density (on top) */}
+        {dPdf && <path d={dPdf} fill="none" stroke="var(--pdf)" strokeWidth="1.5" opacity="0.9" />}
+
       </svg>
 
-      {/* tooltip (optional) */}
-      {tip && (
-        <div className="tooltip" style={{ left: tip.x, top: tip.y }}>
-          <div className="tt-line">
-            <span className="tt-k">Price</span>
-            <span className="tt-v">${tip.price.toFixed(2)}</span>
-          </div>
-          {Number.isFinite(tip.pdf) && (
-            <div className="tt-line">
-              <span className="tt-k">Density</span>
-              <span className="tt-v">{tip.pdf.toExponential(2)}</span>
-            </div>
+      {/* Floating tooltip (clamped inside, below pointer) */}
+      {tooltip && (
+        <div
+          style={{
+            position:"absolute", left: tooltip.x, top: tooltip.y,
+            padding:"8px 10px", borderRadius:10, fontSize:12, lineHeight:1.2,
+            background:"rgba(20,24,31,.92)", color:"#e5e7eb",
+            border:"1px solid rgba(255,255,255,.12)",
+            boxShadow:"0 8px 20px rgba(0,0,0,.45)", pointerEvents:"none",
+            width:120
+          }}
+        >
+          <div style={{opacity:.7}}>Price</div>
+          <div style={{fontWeight:800, fontVariantNumeric:"tabular-nums"}}>${tooltip.s.toFixed(2)}</div>
+          {Number.isFinite(tooltip.prob) && (
+            <>
+              <div style={{opacity:.7, marginTop:4}}>Density</div>
+              <div style={{fontWeight:800, fontVariantNumeric:"tabular-nums"}}>
+                {tooltip.prob.toExponential(2)}
+              </div>
+            </>
           )}
         </div>
       )}
-
-      <style jsx>{`
-        .pl-root{ position:relative; width:100%; height:100%; }
-        .tooltip{
-          position:absolute; transform: translate(-50%, -100%);
-          background:#0b0f17; border:1px solid #1a2030; border-radius:10px;
-          padding:8px 10px; font-size:12px; font-weight:700; color:#e5e7eb;
-          box-shadow: 0 8px 18px rgba(0,0,0,.35);
-          pointer-events:none; min-width:120px;
-        }
-        .tt-line{ display:flex; justify-content:space-between; gap:12px; }
-        .tt-k{ opacity:.75; }
-        .tt-v{ font-variant-numeric: tabular-nums; }
-      `}</style>
     </div>
   );
 }
