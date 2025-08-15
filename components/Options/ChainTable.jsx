@@ -1,7 +1,7 @@
 // components/Options/ChainTable.jsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 
 export default function ChainTable({
   symbol,
@@ -16,6 +16,7 @@ export default function ChainTable({
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null);      // {spot, currency, expiry}
   const [rows, setRows] = useState([]);        // merged by strike: { strike, call, put, ivPct }
+  const [expanded, setExpanded] = useState(null); // strike of expanded row (single-open)
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
 
@@ -29,6 +30,9 @@ export default function ChainTable({
     if (mode === "custom") return Math.max(1, Number(settings?.customRows) || 25);
     return 20;
   }, [settings?.showBy, settings?.customRows]);
+
+  const showGreeks =
+    settings?.showGreeks === true || settings?.cols?.greeks === true || false;
 
   // --- helpers to mirror the month labeling from OptionsTab (Jan shows year, others don't)
   const monthLabel = (d) => {
@@ -57,7 +61,23 @@ export default function ChainTable({
     }
   }
 
-  // Merge calls & puts by strike; compute a center IV (%) as mid(callIV, putIV) when both exist
+  const pick = (x) => (Number.isFinite(x) ? x : null);
+  const midFrom = (ask, bid, price) => {
+    const a = pick(ask), b = pick(bid), p = pick(price);
+    if (a != null && b != null) return (a + b) / 2;
+    if (p != null) return p;
+    return a ?? b ?? null;
+  };
+
+  const takeGreeks = (o) => ({
+    delta: pick(o?.delta),
+    gamma: pick(o?.gamma),
+    theta: pick(o?.theta),
+    vega:  pick(o?.vega),
+    rho:   pick(o?.rho),
+  });
+
+  // Merge calls & puts by strike; compute center IV (%) as mid(callIV, putIV)
   const buildRows = (calls, puts) => {
     const byStrike = new Map();
     const add = (side, o) => {
@@ -66,21 +86,30 @@ export default function ChainTable({
       if (!byStrike.has(k)) byStrike.set(k, { strike: k, call: null, put: null, ivPct: null });
       const row = byStrike.get(k);
       row[side] = {
-        price: Number.isFinite(o.price) ? o.price : null,
-        ask: Number.isFinite(o.ask) ? o.ask : null,
-        bid: Number.isFinite(o.bid) ? o.bid : null,
-        ivPct: Number.isFinite(o.ivPct) ? o.ivPct : null,
+        price: pick(o.price),
+        ask: pick(o.ask),
+        bid: pick(o.bid),
+        ivPct: pick(o.ivPct),
+        greeks: takeGreeks(o),
       };
-      const cIV = row.call?.ivPct;
-      const pIV = row.put?.ivPct;
-      row.ivPct =
-        Number.isFinite(cIV) && Number.isFinite(pIV)
-          ? (cIV + pIV) / 2
-          : (Number.isFinite(cIV) ? cIV : (Number.isFinite(pIV) ? pIV : null));
     };
     for (const c of calls || []) add("call", c);
     for (const p of puts || []) add("put", p);
-    return Array.from(byStrike.values()).sort((a, b) => a.strike - b.strike);
+
+    // finalize iv midpoint + compute mids
+    const out = Array.from(byStrike.values());
+    for (const r of out) {
+      const cIV = r.call?.ivPct;
+      const pIV = r.put?.ivPct;
+      r.ivPct =
+        Number.isFinite(cIV) && Number.isFinite(pIV)
+          ? (cIV + pIV) / 2
+          : (Number.isFinite(cIV) ? cIV : (Number.isFinite(pIV) ? pIV : null));
+      if (r.call) r.call.mid = midFrom(r.call.ask, r.call.bid, r.call.price);
+      if (r.put)  r.put.mid  = midFrom(r.put.ask, r.put.bid, r.put.price);
+    }
+
+    return out.sort((a, b) => a.strike - b.strike);
   };
 
   // Load chain when symbol/expiry changes
@@ -90,6 +119,7 @@ export default function ChainTable({
       setError(null);
       setMeta(null);
       setRows([]);
+      setExpanded(null);
 
       if (!symbol || !expiry?.m || !expiry?.d) { setStatus("idle"); return; }
       if (provider && provider !== "api") { setStatus("idle"); return; } // not implemented yet
@@ -117,7 +147,7 @@ export default function ChainTable({
         const mergedAsc = buildRows(calls, puts);
 
         if (cancelled) return;
-        setMeta({ spot: m.spot ?? null, currency: m.currency || currency, expiry: m.expiry || dateISO });
+        setMeta({ spot: pick(m.spot), currency: m.currency || currency, expiry: m.expiry || dateISO });
         setRows(mergedAsc);
         setStatus("ready");
       } catch (e) {
@@ -142,8 +172,8 @@ export default function ChainTable({
 
     // Always include ATM; distribute remaining rows around it
     const remaining = N - 1;
-    let below = Math.floor(remaining / 2);    // e.g., N=10 -> 4
-    let above = remaining - below;            // e.g., N=10 -> 5
+    let below = Math.floor(remaining / 2);
+    let above = remaining - below;
 
     // Initial window (inclusive)
     let start = atm - below;
@@ -215,6 +245,11 @@ export default function ChainTable({
     if (rowLimit === Infinity) return 12;
     return Math.max(8, Math.min(14, rowLimit || 12));
   }, [rowLimit]);
+
+  // toggle expansion (single-open)
+  const onToggleRow = useCallback((strike) => {
+    setExpanded((cur) => (cur === strike ? null : strike));
+  }, []);
 
   return (
     <div className="wrap" aria-live="polite">
@@ -294,21 +329,85 @@ export default function ChainTable({
         <div className="body">
           {visible.map((r) => {
             const isSpot = closestStrike != null && Number(r.strike) === Number(closestStrike);
+            const isOpen = expanded === r.strike;
+
+            // NOTE: we show **mid** in the Price column
+            const callPrice = r?.call ? midFrom(r.call.ask, r.call.bid, r.call.price) : null;
+            const putPrice  = r?.put  ? midFrom(r.put.ask,  r.put.bid,  r.put.price)  : null;
+
             return (
-              <div className={`grid row ${isSpot ? "is-spot" : ""}`} role="row" key={r.strike}>
-                {/* Calls (left) */}
-                <div className="c cell val">{fmt(r?.call?.price)}</div>
-                <div className="c cell val">{fmt(r?.call?.ask)}</div>
-                <div className="c cell val">{fmt(r?.call?.bid)}</div>
+              <div key={r.strike}>
+                <div
+                  className={`grid row ${isSpot ? "is-spot" : ""} ${isOpen ? "is-open" : ""}`}
+                  role="row"
+                  tabIndex={0}
+                  aria-expanded={isOpen ? "true" : "false"}
+                  onClick={() => onToggleRow(r.strike)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleRow(r.strike); }
+                  }}
+                >
+                  {/* Calls (left) */}
+                  <div className="c cell val">{fmt(callPrice)}</div>
+                  <div className="c cell val">{fmt(r?.call?.ask)}</div>
+                  <div className="c cell val">{fmt(r?.call?.bid)}</div>
 
-                {/* Center */}
-                <div className="mid cell val strike-val">{fmt(r.strike)}</div>
-                <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
+                  {/* Center */}
+                  <div className="mid cell val strike-val">{fmt(r.strike)}</div>
+                  <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
-                {/* Puts (right) */}
-                <div className="p cell val">{fmt(r?.put?.bid)}</div>
-                <div className="p cell val">{fmt(r?.put?.ask)}</div>
-                <div className="p cell val">{fmt(r?.put?.price)}</div>
+                  {/* Puts (right) */}
+                  <div className="p cell val">{fmt(r?.put?.bid)}</div>
+                  <div className="p cell val">{fmt(r?.put?.ask)}</div>
+                  <div className="p cell val">{fmt(putPrice)}</div>
+                </div>
+
+                {/* Expanded details */}
+                <div className={`details ${isOpen ? "open" : ""}`} role="region" aria-label={`Details for strike ${r.strike}`}>
+                  <div className="details-inner">
+                    {/* LEFT — SHORT */}
+                    <div className="panel-col">
+                      <div className="panel-head">Short</div>
+                      <div className="panel-grid">
+                        <div className="chart" aria-hidden="true"><span className="chart-hint">Chart</span></div>
+                        <div className="metrics">
+                          <Metric label="Break-even" value="—" />
+                          <Metric label="Prob. Profit" value="—" />
+                          <Metric label="Expected Return" value="—" />
+                          <Metric label="Expected Profit" value="—" />
+                          <Metric label="Sharpe" value="—" />
+                          {showGreeks && (
+                            <div className="greeks">
+                              <GreekList greeks={r?.call?.greeks} side="Call" />
+                              <GreekList greeks={r?.put?.greeks}  side="Put" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT — LONG */}
+                    <div className="panel-col">
+                      <div className="panel-head">Long</div>
+                      <div className="panel-grid">
+                        <div className="chart" aria-hidden="true"><span className="chart-hint">Chart</span></div>
+                        <div className="metrics">
+                          <Metric label="Break-even" value="—" />
+                          <Metric label="Prob. Profit" value="—" />
+                          <Metric label="Expected Return" value="—" />
+                          <Metric label="Expected Profit" value="—" />
+                          <Metric label="Sharpe" value="—" />
+                          {showGreeks && (
+                            <div className="greeks">
+                              <GreekList greeks={r?.call?.greeks} side="Call" />
+                              <GreekList greeks={r?.put?.greeks}  side="Put" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -317,13 +416,11 @@ export default function ChainTable({
 
       <style jsx>{`
         .wrap{
-          /* brand colors for mid columns */
-          --strikeCol: #F2AE2E; /* Strike */
-          --ivCol:     #F27405; /* IV, %  */
+          --strikeCol: #F2AE2E;
+          --ivCol:     #F27405;
           --rowHover: color-mix(in srgb, var(--text, #0f172a) 10%, transparent);
           --spotOrange: #f59e0b;
 
-          /* shimmer palette (theme-aware, subtle) */
           --sk-base: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
           --sk-sheen: color-mix(in srgb, #ffffff 40%, transparent);
 
@@ -351,7 +448,6 @@ export default function ChainTable({
           align-items:center;
         }
 
-        /* Header row */
         .head-row{
           padding: 8px 0 10px;
           border-top:1px solid var(--border, #E6E9EF);
@@ -360,7 +456,6 @@ export default function ChainTable({
           color: var(--text, #2b3442);
         }
 
-        /* Color the two center headers */
         .head-row .strike-hdr{
           color: var(--strikeCol);
           font-weight:800; letter-spacing:.01em;
@@ -376,16 +471,12 @@ export default function ChainTable({
           font-weight:800; letter-spacing:.01em;
         }
 
-        /* Center-align columns */
         .cell{ height:26px; display:flex; align-items:center; }
         .c{ justify-content:center; text-align:center; }
         .p{ justify-content:center; text-align:center; }
         .mid{ justify-content:center; text-align:center; }
-
-        /* Arrow inherits header color (Strike) */
         .arrow{ margin-right:6px; font-weight:900; color: currentColor; }
 
-        /* Status card */
         .card{
           border:1px solid var(--border, #E6E9EF);
           border-radius:14px;
@@ -397,11 +488,11 @@ export default function ChainTable({
         .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
         .sub{ opacity:.75; font-size:13px; }
 
-        /* Body rows + hover + spot highlight */
         .body .row{
           padding: 8px 0;
           border-bottom:1px solid color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
           transition: background-color .18s ease;
+          cursor: pointer;
         }
         .body .row:last-child{ border-bottom:0; }
         .body .row:hover{ background-color: var(--rowHover); }
@@ -410,16 +501,62 @@ export default function ChainTable({
           border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
         }
 
-        /* Apply brand colors to Strike & IV values */
+        .val{ font-weight:700; font-size:13.5px; color: var(--text, #0f172a); }
         .body .row .strike-val{ color: var(--strikeCol); }
         .body .row .iv-val{     color: var(--ivCol); }
 
-        .val{
-          font-weight:700; font-size:13.5px; color: var(--text, #0f172a);
+        /* Expanded panel */
+        .details{
+          overflow: hidden;
+          max-height: 0;
+          opacity: 0;
+          transform: translateY(-4px);
+          transition: max-height .28s ease, opacity .28s ease, transform .28s ease;
+          border-bottom:1px solid transparent;
         }
+        .details.open{
+          max-height: 520px; /* enough for content */
+          opacity: 1;
+          transform: translateY(0);
+          border-bottom-color: color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
+        }
+        .details-inner{
+          padding: 14px 10px 18px;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px;
+          background: color-mix(in srgb, var(--text, #0f172a) 5%, transparent);
+          border-radius: 10px;
+        }
+        .panel-col{
+          display:flex; flex-direction:column; gap:10px;
+          padding: 10px; border:1px solid var(--border, #E6E9EF);
+          border-radius:12px; background: var(--card, #fff);
+        }
+        .panel-head{ font-weight:800; font-size:14px; opacity:.9; }
+
+        .panel-grid{
+          display:grid; grid-template-rows: 150px auto; gap:12px;
+        }
+        .chart{
+          border-radius:10px; border:1px dashed var(--border, #E6E9EF);
+          background: color-mix(in srgb, var(--text, #0f172a) 4%, transparent);
+          display:flex; align-items:center; justify-content:center;
+          font-size:12px; opacity:.6;
+        }
+        .chart-hint{ user-select:none; }
+
+        .metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px; }
+        .metric{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .metric .k{ opacity:.7; font-size:12.5px; }
+        .metric .v{ font-weight:800; font-variant-numeric: tabular-nums; }
+
+        .greeks{ grid-column: 1 / -1; margin-top: 6px; display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
+        .greek{ font-size:12px; opacity:.85; display:flex; align-items:center; justify-content:center;
+          border:1px solid var(--border, #E6E9EF); border-radius:8px; padding:6px 8px; }
 
         /* ---------- Shimmer styles ---------- */
-        .is-loading .row:hover{ background: transparent; } /* keep calm during loading */
+        .is-loading .row:hover{ background: transparent; }
 
         .skl{
           display:inline-block;
@@ -436,21 +573,43 @@ export default function ChainTable({
           background: linear-gradient(90deg, transparent, var(--sk-sheen), transparent);
           animation: shimmer 1.15s ease-in-out infinite;
         }
-
         .w-45{ width:45%; } .w-50{ width:50%; } .w-60{ width:60%; }
         .w-70{ width:70%; }
 
-        @keyframes shimmer{
-          100% { transform: translateX(100%); }
-        }
+        @keyframes shimmer{ 100% { transform: translateX(100%); } }
 
         @media (max-width: 980px){
           .h-left, .h-right{ font-size:20px; }
           .head-row{ font-size:13px; }
           .cell{ height:24px; }
           .val{ font-size:13px; }
+          .details-inner{ grid-template-columns: 1fr; }
         }
       `}</style>
     </div>
   );
 }
+
+/* ---------- Small presentational helpers (kept here for copy-paste simplicity) ---------- */
+function Metric({ label, value }) {
+  return (
+    <div className="metric">
+      <span className="k">{label}</span>
+      <span className="v">{value}</span>
+    </div>
+  );
+}
+
+function GreekList({ greeks, side }) {
+  const g = greeks || {};
+  return (
+    <>
+      <div className="greek">Δ {fmtG(g.delta)}</div>
+      <div className="greek">Γ {fmtG(g.gamma)}</div>
+      <div className="greek">Θ {fmtG(g.theta)}</div>
+      <div className="greek">V {fmtG(g.vega)}</div>
+      <div className="greek">ρ {fmtG(g.rho)}</div>
+    </>
+  );
+}
+function fmtG(v){ return Number.isFinite(v) ? Number(v).toFixed(2) : "—"; }
