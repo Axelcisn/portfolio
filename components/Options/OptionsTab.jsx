@@ -1,14 +1,13 @@
 // components/Options/OptionsTab.jsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
 import YahooHealthButton from "./YahooHealthButton";
 import RefreshExpiriesButton from "./RefreshExpiriesButton";
 import YahooHealthToaster from "./YahooHealthToaster";
-import useExpiries from "./useExpiries"; // ← single source of truth
 
 /* ---------------- helpers ---------------- */
 const normalizeExpiries = (xs) => {
@@ -85,12 +84,13 @@ export default function OptionsTab({
   symbol = "",
   currency = "USD",
 
-  // Preferred shared contract (optional)
-  expiries,               // string[] ISO (if given, overrides hook)
-  selectedExpiry,         // ISO
-  onChangeExpiry,         // (iso) => void
-  onExpiryChange,         // legacy alias
-  onDaysChange,           // (days) => void
+  /* parent-controlled expiries */
+  expiries = [],                 // string[] ISO
+  selectedExpiry,                // ISO (controlled)
+  onChangeExpiry,                // (iso) => void
+  onDaysChange,                  // (days) => void
+  loadingExpiries = false,       // boolean
+  onRefreshExpiries,             // () => Promise<void> | void
 }) {
   /* Provider & grouping */
   const [provider, setProvider] = useState("api");
@@ -152,7 +152,67 @@ export default function OptionsTab({
     return () => window.removeEventListener("storage", onStorage);
   }, [liveCurrency]);
 
-  /* Settings popover */
+  /* -------------------- Expiries (parent-driven) -------------------- */
+  const isoList = useMemo(() => normalizeExpiries(expiries), [expiries]);
+
+  // Skeleton groups when empty
+  const fallbackGroups = useMemo(
+    () => [
+      { m: "Aug", items: [15, 22, 29].map((d) => ({ day: d, iso: null })), k: "f-1" },
+      { m: "Sep", items: [5, 12, 19, 26].map((d) => ({ day: d, iso: null })), k: "f-2" },
+      { m: "Oct", items: [17].map((d) => ({ day: d, iso: null })), k: "f-3" },
+      { m: "Nov", items: [21].map((d) => ({ day: d, iso: null })), k: "f-4" },
+      { m: "Dec", items: [19].map((d) => ({ day: d, iso: null })), k: "f-5" },
+      { m: "Jan ’26", items: [16].map((d) => ({ day: d, iso: null })), k: "f-6" },
+      { m: "Feb", items: [20].map((d) => ({ day: d, iso: null })), k: "f-7" },
+      { m: "Mar", items: [20].map((d) => ({ day: d, iso: null })), k: "f-8" },
+      { m: "May", items: [15].map((d) => ({ day: d, iso: null })), k: "f-9" },
+      { m: "Jun", items: [18].map((d) => ({ day: d, iso: null })), k: "f-10" },
+    ],
+    []
+  );
+
+  const groups = useMemo(() => {
+    if (!isoList.length) return fallbackGroups;
+    return groupsFromIsoList(isoList);
+  }, [isoList, fallbackGroups]);
+
+  /* -------------------- Selection (controlled/uncontrolled) -------------------- */
+  const nearestIso = useMemo(() => pickNearest(isoList), [isoList]);
+
+  const [selLocal, setSelLocal] = useState(() =>
+    nearestIso ? toSelFromIso(nearestIso) : { m: "Jan ’26", d: 16, iso: null }
+  );
+
+  // Keep local selection valid when list changes (only if uncontrolled)
+  useEffect(() => {
+    if (selectedExpiry && isoList.includes(selectedExpiry)) return; // controlled externally
+    if (!isoList.length) return;
+    const valid = selLocal?.iso && isoList.includes(selLocal.iso);
+    if (!valid) {
+      const iso = nearestIso;
+      if (iso) setSelLocal(toSelFromIso(iso));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isoList, nearestIso, selectedExpiry]);
+
+  const controlledIso =
+    selectedExpiry && isoList.includes(selectedExpiry) ? selectedExpiry : null;
+  const sel = controlledIso ? toSelFromIso(controlledIso) : selLocal;
+
+  const handlePick = (iso) => {
+    if (!iso) return;
+    if (controlledIso) onChangeExpiry?.(iso);
+    else setSelLocal(toSelFromIso(iso));
+  };
+
+  // propagate DTE to parent
+  useEffect(() => {
+    const d = daysToExpiry(sel?.iso);
+    if (d > 0) onDaysChange?.(d);
+  }, [sel?.iso, onDaysChange]);
+
+  /* -------------------- Settings portal -------------------- */
   const [settingsOpen, setSettingsOpen] = useState(false);
   const gearRef = useRef(null);
   const [anchorRect, setAnchorRect] = useState(null);
@@ -188,96 +248,6 @@ export default function OptionsTab({
     };
   }, [settingsOpen]);
 
-  /* -------------------- Expiries (unified) -------------------- */
-  const propIso = normalizeExpiries(expiries);
-  const { list: hookList = [], loading: hookLoading = false, refresh: hookRefresh } = useExpiries(symbol);
-  const hookIso = normalizeExpiries(hookList);
-  const isoList = propIso.length ? propIso : hookIso;
-
-  const refreshExpiries = useCallback(() => hookRefresh?.(), [hookRefresh]);
-
-  // Skeleton groups (only when list empty)
-  const fallbackGroups = useMemo(
-    () => [
-      { m: "Aug", items: [15, 22, 29].map((d) => ({ day: d, iso: null })), k: "f-1" },
-      { m: "Sep", items: [5, 12, 19, 26].map((d) => ({ day: d, iso: null })), k: "f-2" },
-      { m: "Oct", items: [17].map((d) => ({ day: d, iso: null })), k: "f-3" },
-      { m: "Nov", items: [21].map((d) => ({ day: d, iso: null })), k: "f-4" },
-      { m: "Dec", items: [19].map((d) => ({ day: d, iso: null })), k: "f-5" },
-      { m: "Jan ’26", items: [16].map((d) => ({ day: d, iso: null })), k: "f-6" },
-      { m: "Feb", items: [20].map((d) => ({ day: d, iso: null })), k: "f-7" },
-      { m: "Mar", items: [20].map((d) => ({ day: d, iso: null })), k: "f-8" },
-      { m: "May", items: [15].map((d) => ({ day: d, iso: null })), k: "f-9" },
-      { m: "Jun", items: [18].map((d) => ({ day: d, iso: null })), k: "f-10" },
-    ],
-    []
-  );
-
-  const groups = useMemo(() => {
-    if (!isoList.length) return fallbackGroups;
-    return groupsFromIsoList(isoList);
-  }, [isoList, fallbackGroups]);
-
-  /* -------------------- Selection (controlled/uncontrolled) -------------------- */
-  const nearestIso = useMemo(() => pickNearest(isoList), [isoList]);
-
-  const [selLocal, setSelLocal] = useState(() =>
-    nearestIso ? toSelFromIso(nearestIso) : { m: "Jan ’26", d: 16, iso: null }
-  );
-
-  useEffect(() => {
-    if (selectedExpiry && isoList.includes(selectedExpiry)) return; // controlled externally
-    if (!isoList.length) return;
-    const valid = selLocal?.iso && isoList.includes(selLocal.iso);
-    if (!valid) {
-      const iso = nearestIso;
-      if (iso) setSelLocal(toSelFromIso(iso));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isoList, nearestIso, selectedExpiry]);
-
-  const controlledIso =
-    selectedExpiry && isoList.includes(selectedExpiry) ? selectedExpiry : null;
-  const sel = controlledIso ? toSelFromIso(controlledIso) : selLocal;
-
-  const emitExpiry = (iso) => (onChangeExpiry || onExpiryChange)?.(iso);
-
-  const handlePick = (iso) => {
-    if (!iso) return;
-    if (controlledIso) emitExpiry(iso);
-    else setSelLocal(toSelFromIso(iso));
-  };
-
-  // propagate DTE
-  useEffect(() => {
-    const d = daysToExpiry(sel?.iso);
-    if (d > 0) onDaysChange?.(d);
-  }, [sel?.iso, onDaysChange]);
-
-  /* -------------------- Settings portal -------------------- */
-  const settingsPortal =
-    mounted && settingsOpen && anchorRect
-      ? createPortal(
-          <div
-            id="chain-settings-popover"
-            className="popover"
-            style={{
-              position: "fixed",
-              zIndex: 1000,
-              top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
-              left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
-              width: 360,
-            }}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Chain table settings"
-          >
-            <ChainSettings settings={chainSettings} onChange={setChainSettings} onClose={() => setSettingsOpen(false)} />
-          </div>,
-          document.body
-        )
-      : null;
-
   /* -------------------- UI -------------------- */
   return (
     <section className="opt">
@@ -292,10 +262,25 @@ export default function OptionsTab({
           <button type="button" className={`seg ${groupBy === "strike" ? "is-on" : ""}`} onClick={() => setGroupBy("strike")}>By strike</button>
 
           <YahooHealthButton />
-          <RefreshExpiriesButton onRefresh={refreshExpiries} busy={hookLoading} title="Refresh expiries (does not reset your selection)" />
-          <button ref={gearRef} type="button" className="gear" aria-label="Chain table settings" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}>
+          <RefreshExpiriesButton
+            onRefresh={onRefreshExpiries}
+            busy={!!loadingExpiries}
+            title="Refresh expiries (does not reset your selection)"
+          />
+          <button
+            ref={gearRef}
+            type="button"
+            className="gear"
+            aria-label="Chain table settings"
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((v) => !v)}
+          >
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="currentColor" d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c.1-.42.14-.85.14-1.28" />
+              <path
+                fill="currentColor"
+                d="M12 8.8a3.2 3.2 0 1 0 0 6.4a3.2 3.2 0 0 0 0-6.4m8.94 3.2a7.2 7.2 0 0 0-.14-1.28l2.07-1.61l-2-3.46l-2.48.98a7.36 7.36 0 0 0-2.22-1.28L14.8 1h-5.6l-.37 3.35c-.79.28-1.53.7-2.22 1.28l-2.48-.98l-2 3.46l2.07 1.61c.1-.42.14-.85.14-1.28"
+              />
             </svg>
           </button>
         </div>
@@ -304,14 +289,14 @@ export default function OptionsTab({
       <YahooHealthToaster />
 
       <div className="expiry-wrap">
-        <div className="expiry" aria-busy={hookLoading ? "true" : "false"}>
-          {(groups?.length ? groups : fallbackGroups).map((g) => (
+        <div className="expiry" aria-busy={loadingExpiries ? "true" : "false"}>
+          {(isoList.length ? groups : fallbackGroups).map((g) => (
             <div className="group" key={g.k || g.m}>
               <div className="m">{g.m}</div>
               <div className="days">
                 {g.items.map((it) => {
                   const active = sel?.m === g.m && sel?.d === it.day;
-                  const disabled = !it.iso;
+                  const disabled = !it.iso; // only skeleton has no iso
                   return (
                     <button
                       key={`${g.k}-${it.day}-${it.iso || "x"}`}
@@ -341,7 +326,25 @@ export default function OptionsTab({
         onToggleSort={onToggleSort}
       />
 
-      {settingsPortal}
+      {mounted && settingsOpen && anchorRect && createPortal(
+        <div
+          id="chain-settings-popover"
+          className="popover"
+          style={{
+            position: "fixed",
+            zIndex: 1000,
+            top: Math.min(anchorRect.bottom + 8, window.innerHeight - 16),
+            left: Math.min(Math.max(12, anchorRect.right - 360), window.innerWidth - 360 - 12),
+            width: 360,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chain table settings"
+        >
+          <ChainSettings settings={chainSettings} onChange={setChainSettings} onClose={() => setSettingsOpen(false)} />
+        </div>,
+        document.body
+      )}
 
       <style jsx>{`
         .opt { margin-top: 6px; }
