@@ -11,6 +11,7 @@ import OptionsTab from "../../components/Options/OptionsTab";
 import useExpiries from "../../components/Options/useExpiries";
 
 import useDebounce from "../../hooks/useDebounce";
+import useStrategyMemory from "../../components/state/useStrategyMemory";
 
 /* Exchange pretty labels used in the hero pill */
 const EX_NAMES = {
@@ -23,34 +24,18 @@ const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
 export default function Strategy() {
   /* ===== 00 — Local state ===== */
-
-  // Tabs (declare early so load/save effects can call setTab safely)
-  const [tab, setTab] = useState("overview");
-  const TABS = [
-    { key: "overview",   label: "Overview" },
-    { key: "financials", label: "Financials" },
-    { key: "news",       label: "News" },
-    { key: "options",    label: "Options" },
-    { key: "bonds",      label: "Bonds" },
-  ];
-
-  // Core selection
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
 
-  // IV controls
   const [ivSource, setIvSource] = useState("live");
   const [ivValue, setIvValue] = useState(null);
 
-  // Market basics
   const [market, setMarket] = useState({ riskFree: null, mrp: null, indexAnn: null });
 
-  // Strategy legs / UI
   const [netPremium, setNetPremium] = useState(0);
   const [legsUi, setLegsUi] = useState(null);
 
-  // Monte Carlo results
   const [mcStats, setMcStats] = useState(null);
   const [probProfit, setProbProfit] = useState(null);
   const [expectancy, setExpectancy] = useState(null);
@@ -59,62 +44,22 @@ export default function Strategy() {
   // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
-  /* ===== expiries hook (must be inside the component) ===== */
-  // This custom hook fetches the same expiries list OptionsTab uses.
-  const { list: expiries = [] } = useExpiries(company?.symbol);
+  // Expiries shared with StatsRail – identical to Options logic
+  const { list: expiries } = useExpiries(company?.symbol);
 
-  // Selected expiry (single source of truth for selected ISO date string)
-  const [selectedExpiry, setSelectedExpiry] = useState(null);
+  /* ===== Memory (persists by symbol) ===== */
+  const { data: mem, loaded: memReady, save: memSave } = useStrategyMemory(company?.symbol);
 
-  /* ===== per-company persistent settings (localStorage) ===== */
-  // localStorage keys are per-symbol: "strategy:settings:<SYMBOL>"
-  const STORAGE_KEY = "strategy:settings";
-  const loadSettingsFor = (sym) => {
-    if (!sym) return null;
-    try {
-      const raw = localStorage.getItem(`${STORAGE_KEY}:${sym}`);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  };
-  const saveSettingsFor = (sym, obj) => {
-    if (!sym) return;
-    try { localStorage.setItem(`${STORAGE_KEY}:${sym}`, JSON.stringify(obj)); } catch {}
-  };
-
-  /* When company selection changes, hydrate UI state from saved settings (if any). */
+  // hydrate from memory when available
   useEffect(() => {
-    if (!company?.symbol) return;
-    try {
-      const s = loadSettingsFor(company.symbol);
-      if (s) {
-        if (typeof s.horizon === 'number') setHorizon(s.horizon);
-        if (typeof s.ivSource === 'string') setIvSource(s.ivSource);
-        if (s.ivValue != null) setIvValue(s.ivValue);
-        if (s.legsUi != null) setLegsUi(s.legsUi);
-        if (s.netPremium != null) setNetPremium(s.netPremium);
-        if (s.selectedExpiry != null) setSelectedExpiry(s.selectedExpiry);
-        if (typeof s.tab === 'string') setTab(s.tab);
-      }
-    } catch {
-      /* ignore errors reading storage */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [company?.symbol]);
-
-  /* Persist relevant settings per-company whenever they change */
-  useEffect(() => {
-    if (!company?.symbol) return;
-    const payload = {
-      horizon,
-      ivSource,
-      ivValue,
-      legsUi,
-      netPremium,
-      selectedExpiry,
-      tab,
-    };
-    try { saveSettingsFor(company.symbol, payload); } catch {}
-  }, [company?.symbol, horizon, ivSource, ivValue, legsUi, netPremium, selectedExpiry, tab]);
+    if (!memReady) return;
+    if (mem.horizon != null) setHorizon(mem.horizon);
+    if (mem.ivSource) setIvSource(mem.ivSource);
+    if (mem.ivValue != null) setIvValue(mem.ivValue);
+    if (mem.legsUi) setLegsUi(mem.legsUi);
+    if (mem.netPremium != null) setNetPremium(mem.netPremium);
+    if (mem.tab) setTab(mem.tab);
+  }, [memReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
@@ -260,27 +205,31 @@ export default function Strategy() {
   const handleApply = (legsObj, netPrem) => {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
+    if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
   };
 
-  /* keep selectedExpiry in sync with expiries list (nearest/upcoming) */
-  useEffect(() => {
-    if (!Array.isArray(expiries) || expiries.length === 0) {
-      setSelectedExpiry(null);
-      return;
-    }
-    if (!selectedExpiry || !expiries.includes(selectedExpiry)) {
-      const todayISO = new Date().toISOString().slice(0, 10);
-      const nearest = expiries.find((e) => e >= todayISO) || expiries[expiries.length - 1];
-      setSelectedExpiry(nearest);
-    }
-  }, [expiries, selectedExpiry]);
+  /* ===== 06 — Tabs state (pure CSS underline) ===== */
+  const [tab, setTab] = useState("overview");
+  const TABS = [
+    { key: "overview",   label: "Overview" },
+    { key: "financials", label: "Financials" },
+    { key: "news",       label: "News" },
+    { key: "options",    label: "Options" },
+    { key: "bonds",      label: "Bonds" },
+  ];
 
   const tabTitle = useMemo(() => {
     const base = TABS.find(t => t.key === tab)?.label || "Overview";
     return company?.symbol ? `${company.symbol} ${base.toLowerCase()}` : base;
   }, [tab, company?.symbol]);
 
-  /* ===== 06 — Render ===== */
+  // persist key state to memory
+  useEffect(() => { if (memReady && company?.symbol) memSave({ horizon }); }, [memReady, company?.symbol, horizon, memSave]);
+  useEffect(() => { if (memReady && company?.symbol) memSave({ ivSource, ivValue }); }, [memReady, company?.symbol, ivSource, ivValue, memSave]);
+  useEffect(() => { if (memReady && company?.symbol) memSave({ legsUi, netPremium }); }, [memReady, company?.symbol, legsUi, netPremium, memSave]);
+  useEffect(() => { if (memReady && company?.symbol) memSave({ tab }); }, [memReady, company?.symbol, tab, memSave]);
+
+  /* ===== 07 — Render ===== */
   return (
     <div className="container">
       {/* Hero */}
@@ -336,9 +285,9 @@ export default function Strategy() {
         value={company}
         market={market}
         onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
-        onHorizonChange={(d) => setHorizon(d)}
-        onIvSourceChange={(s) => setIvSource(s)}
-        onIvValueChange={(v) => setIvValue(v)}
+        onHorizonChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
+        onIvSourceChange={(s) => { setIvSource(s); if (company?.symbol) memSave({ ivSource: s }); }}
+        onIvValueChange={(v) => { setIvValue(v); if (company?.symbol) memSave({ ivValue: v }); }}
       />
 
       {/* Tabs header */}
@@ -350,7 +299,7 @@ export default function Strategy() {
             role="tab"
             aria-selected={tab === t.key}
             className={`tab ${tab === t.key ? "is-active" : ""}`}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); if (company?.symbol) memSave({ tab: t.key }); }}
           >
             {t.label}
           </button>
@@ -378,13 +327,12 @@ export default function Strategy() {
 
               /* expiry list shared with Options tab */
               expiries={expiries}
-              selectedExpiry={selectedExpiry}
-              onExpiryChange={setSelectedExpiry}
-              onDaysChange={(d) => setHorizon(d)}
+              onDaysChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
+              onExpiryChange={(iso) => { if (company?.symbol) memSave({ expiry: iso || null }); }}
 
               /* let StatsRail stamp days on legs if needed */
               legs={legsUi}
-              onLegsChange={setLegsUi}
+              onLegsChange={(v) => { setLegsUi(v); if (company?.symbol) memSave({ legsUi: v }); }}
             />
           </div>
 
@@ -420,8 +368,6 @@ export default function Strategy() {
         <OptionsTab
           symbol={company?.symbol || ""}
           currency={company?.currency || currency}
-          /* If you want OptionsTab to share the same expiry selection,
-             you can accept and forward selectedExpiry + setSelectedExpiry here. */
         />
       )}
 
