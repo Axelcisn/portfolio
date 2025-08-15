@@ -687,7 +687,7 @@ function GreekList({ greeks }) {
 }
 function fmtG(v){ return isNum(v) ? Number(v).toFixed(2) : "—"; }
 
-/* ---------- Mini payoff chart (zoomable, proper fills, extra lines) ---------- */
+/* ---------- Mini payoff chart (button zoom, proper fills, extra lines) ---------- */
 function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
     return <span className="chart-hint">Chart</span>;
@@ -700,7 +700,10 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   const centerPx = Number.isFinite(BE) ? BE : S0;
   const baseSpan = 0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0)); // default coverage
 
-  const [zoom, setZoom] = useState(1);                // 1 = default; larger → closer
+  const [zoom, setZoom] = useState(1);                // 1 = default; larger → closer (slow steps)
+  const zoomIn  = () => setZoom((z) => Math.min(20, Math.round((z * 1.12) * 100) / 100));
+  const zoomOut = () => setZoom((z) => Math.max(0.5, Math.round((z / 1.12) * 100) / 100));
+
   const span = baseSpan / zoom;
   const xmin = Math.max(0.01, centerPx - span);
   const xmax = centerPx + span;
@@ -751,8 +754,6 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   const pdf = (s) =>
     (1 / (s * v * Math.sqrt(2 * Math.PI))) *
     Math.exp(-0.5 * Math.pow((Math.log(s) - m) / v, 2));
-
-  // scale the pdf to a nice height
   const pdfVals = xs.map(pdf);
   const pdfMax = Math.max(...pdfVals) || 1;
   const amp = 0.55 * (H - 2 * pad); // occupy ~55% vertical space
@@ -763,26 +764,19 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
     })
     .join(" ");
 
-  // extra reference lines
+  // vertical guides
   const xBE = Number.isFinite(BE) ? xmap(BE) : null;
   const xSpot = xmap(S0);
   const meanPrice = S0 * Math.exp(Number(mu) * T);
   const xMean = xmap(meanPrice);
 
-  // bottom ticks: left/center/right (rounded)
+  // ticks
   const tickFmt = (s) => Math.round(s).toString();
-  const leftTick = tickFmt(xmin);
-  const midTick = tickFmt(centerPx);
+  const leftTick  = tickFmt(xmin);
+  const midTick   = tickFmt(centerPx);
   const rightTick = tickFmt(xmax);
 
-  // Trackpad zoom — slow & precise, BE stays centered
-  const onWheel = useCallback((e) => {
-    e.preventDefault();
-    const factor = Math.exp(-e.deltaY * 0.0015); // slow sensitivity
-    setZoom((z) => Math.min(20, Math.max(0.5, z * factor)));
-  }, []);
-
-  // simple tooltip that never cuts off at the top
+  // tooltip
   const [tip, setTip] = useState(null); // {x,y,price,pr}
   const onMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -790,70 +784,121 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
     const price = xmin + ((x - pad) / (W - 2 * pad)) * (xmax - xmin);
     const pr = payoffAt(price);
     const y = ymap(pr);
-    const top = Math.min(H - 26, Math.max(10, y + 12)); // keep fully visible
+    const top = Math.min(H - 26, Math.max(10, y + 12));
     const left = Math.min(W - 120, Math.max(10, x + 10));
     setTip({ x: left, y: top, price, pr });
   };
   const onLeave = () => setTip(null);
 
   return (
-    <svg
-      width="100%"
-      height="100%"
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-      onWheel={onWheel}
-      onMouseMove={onMove}
-      onMouseLeave={onLeave}
-      style={{ touchAction: "none" }}
-      shapeRendering="geometricPrecision"
-    >
-      {/* clip regions to avoid any fill gaps */}
-      <defs>
-        <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
-        <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
-      </defs>
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        onMouseMove={onMove}
+        onMouseLeave={onLeave}
+        style={{ touchAction: "none" }}
+        shapeRendering="geometricPrecision"
+      >
+        {/* clip regions to avoid any fill gaps */}
+        <defs>
+          <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
+          <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
+        </defs>
 
-      {/* subtle frame */}
-      <rect x="1" y="1" width={W - 2} height={H - 2} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,.04)" />
+        {/* subtle frame */}
+        <rect x="1" y="1" width={W - 2} height={H - 2} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,.04)" />
 
-      {/* zero (P&L) line */}
-      <line x1={12} y1={baselineY} x2={W - 12} y2={baselineY} stroke="currentColor" opacity="0.18" />
+        {/* zero (P&L) line */}
+        <line x1={12} y1={baselineY} x2={W - 12} y2={baselineY} stroke="currentColor" opacity="0.18" />
 
-      {/* profit / loss areas (one path, clipped) */}
-      <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
-      <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
+        {/* profit / loss areas (one path, clipped) */}
+        <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
+        <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
 
-      {/* payoff line */}
-      <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+        {/* payoff line */}
+        <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
 
-      {/* probability overlay */}
-      <path d={pdfPath} fill="none" stroke="#facc15" strokeWidth="2" opacity="0.95" vectorEffect="non-scaling-stroke" />
+        {/* probability overlay */}
+        <path d={pdfPath} fill="none" stroke="#facc15" strokeWidth="2" opacity="0.95" vectorEffect="non-scaling-stroke" />
 
-      {/* vertical guides */}
-      {Number.isFinite(xBE) && (
-        <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.9" />
-      )}
-      <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
-      <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
+        {/* vertical guides */}
+        {Number.isFinite(xBE) && (
+          <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.9" />
+        )}
+        <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
+        <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
 
-      {/* ticks (bottom) */}
-      <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
-        <text x={12} y={H - 6}>{leftTick}</text>
-        <text x={(W / 2)} y={H - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
-        <text x={W - 12} y={H - 6} textAnchor="end">{rightTick}</text>
-      </g>
-
-      {/* tooltip */}
-      {tip && (
-        <g transform={`translate(${tip.x},${tip.y})`}>
-          <rect x="0" y="-16" rx="8" ry="8" width="120" height="22" fill="rgba(17,24,39,.85)" stroke="rgba(255,255,255,.14)" />
-          <text x="8" y="0" fontSize="12" fill="#e5e7eb" fontWeight="700">
-            ${tip.price.toFixed(2)} • {tip.pr >= 0 ? "+" : ""}{tip.pr.toFixed(2)}
-          </text>
+        {/* ticks (bottom) */}
+        <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
+          <text x={12} y={H - 6}>{leftTick}</text>
+          <text x={(W / 2)} y={H - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
+          <text x={W - 12} y={H - 6} textAnchor="end">{rightTick}</text>
         </g>
-      )}
-    </svg>
+
+        {/* tooltip */}
+        {tip && (
+          <g transform={`translate(${tip.x},${tip.y})`}>
+            <rect x="0" y="-16" rx="8" ry="8" width="120" height="22" fill="rgba(17,24,39,.85)" stroke="rgba(255,255,255,.14)" />
+            <text x="8" y="0" fontSize="12" fill="#e5e7eb" fontWeight="700">
+              ${tip.price.toFixed(2)} • {tip.pr >= 0 ? "+" : ""}{tip.pr.toFixed(2)}
+            </text>
+          </g>
+        )}
+      </svg>
+
+      {/* Zoom buttons */}
+      <div
+        aria-label="Zoom controls"
+        style={{
+          position: "absolute",
+          right: 8,
+          bottom: 8,
+          display: "flex",
+          gap: 8,
+          zIndex: 2,
+        }}
+      >
+        <button
+          type="button"
+          onClick={zoomOut}
+          aria-label="Zoom out"
+          title="Zoom out"
+          style={btnStyle}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={zoomIn}
+          aria-label="Zoom in"
+          title="Zoom in"
+          style={btnStyle}
+        >
+          +
+        </button>
+      </div>
+    </div>
   );
 }
+
+const btnStyle = {
+  width: 28,
+  height: 28,
+  lineHeight: "26px",
+  borderRadius: 999,
+  border: "1px solid rgba(255,255,255,.16)",
+  background: "rgba(255,255,255,.08)",
+  color: "#e5e7eb",
+  fontWeight: 800,
+  fontSize: 16,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+  userSelect: "none",
+  boxShadow: "0 2px 6px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.06)",
+};
