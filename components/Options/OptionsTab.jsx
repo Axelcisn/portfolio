@@ -96,10 +96,14 @@ export default function OptionsTab({
   symbol = "",
   currency = "USD",
 
-  /* NEW — shared expiry contract with the page (optional but preferred) */
+  /* Shared expiry contract with page (preferred) */
   expiries,                  // array of ISO strings (YYYY-MM-DD); if present, overrides internal fetch
   selectedExpiry,            // ISO string selected by page (controlled)
-  onExpiryChange,            // (iso) => void
+
+  /* NOTE: accept BOTH names to avoid mismatch bugs */
+  onChangeExpiry,            // (iso) => void   ← preferred (matches Strategy)
+  onExpiryChange,            // (iso) => void   ← legacy alias
+
   onDaysChange,              // (days) => void
 }) {
   // Provider + grouping
@@ -262,7 +266,11 @@ export default function OptionsTab({
     []
   );
 
-  // Live expiries from /api/expiries
+  // If parent provides an expiries prop (even an empty array during load),
+  // treat it as the single source of truth and SKIP internal fetching.
+  const usePropExpiries = typeof expiries !== "undefined";
+
+  // Live expiries from /api/expiries (only when not controlled by props)
   const [apiExpiries, setApiExpiries] = useState(null); // null = not loaded, [] = none
   const [loadingExp, setLoadingExp] = useState(false);
 
@@ -271,6 +279,7 @@ export default function OptionsTab({
   const refreshExpiries = () => setExpRefreshKey((k) => k + 1);
 
   useEffect(() => {
+    if (usePropExpiries) return; // controlled by parent
     let cancelled = false;
     const load = async () => {
       if (!symbol) { setApiExpiries(null); return; }
@@ -287,7 +296,7 @@ export default function OptionsTab({
     };
     load();
     return () => { cancelled = true; };
-  }, [symbol, expRefreshKey]); // ← include refresh key
+  }, [symbol, expRefreshKey, usePropExpiries]);
 
   /* -------------------- Volume-based filtering -------------------- */
 
@@ -296,6 +305,7 @@ export default function OptionsTab({
   const [volLoading, setVolLoading] = useState(false);
 
   useEffect(() => {
+    if (usePropExpiries) return; // parent controls expiries; don't fetch
     let cancelled = false;
     const probe = async () => {
       if (!symbol) { setVolAllow(null); return; }
@@ -314,7 +324,7 @@ export default function OptionsTab({
     };
     probe();
     return () => { cancelled = true; };
-  }, [symbol, expRefreshKey]);
+  }, [symbol, expRefreshKey, usePropExpiries]);
 
   /* -------------------- Build groups (prop list wins) -------------------- */
 
@@ -360,9 +370,14 @@ export default function OptionsTab({
 
   const sel = controlledIso ? toSelFromIso(controlledIso) : selLocal;
 
+  const emitExpiry = (iso) => {
+    const fn = onChangeExpiry || onExpiryChange;
+    fn?.(iso);
+  };
+
   const handlePick = (iso) => {
     if (!iso) return;
-    if (controlledIso) onExpiryChange?.(iso);
+    if (controlledIso) emitExpiry(iso);
     else setSelLocal(toSelFromIso(iso));
   };
 
@@ -445,7 +460,11 @@ export default function OptionsTab({
 
           {/* Health + Refresh + Gear */}
           <YahooHealthButton />
-          <RefreshExpiriesButton onRefresh={refreshExpiries} busy={loadingExp || volLoading} />
+          <RefreshExpiriesButton
+            onRefresh={refreshExpiries}
+            busy={loadingExp || volLoading}
+            title="Refresh expiries (does not reset your selection)"
+          />
           <button
             ref={gearRef}
             type="button"
@@ -470,8 +489,11 @@ export default function OptionsTab({
 
       {/* Expiry strip */}
       <div className="expiry-wrap">
-        <div className="expiry" aria-busy={(loadingExp || volLoading) ? "true" : "false"}>
-          { (groups?.length ? groups : fallbackGroups).map((g) => (
+        <div
+          className="expiry"
+          aria-busy={(loadingExp || volLoading) ? "true" : "false"}
+        >
+          {(groups?.length ? groups : fallbackGroups).map((g) => (
             <div className="group" key={g.k || g.m}>
               <div className="m">{g.m}</div>
               <div className="days">
