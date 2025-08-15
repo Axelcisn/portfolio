@@ -684,146 +684,179 @@ function GreekList({ greeks }) {
 }
 function fmtG(v){ return isNum(v) ? Number(v).toFixed(2) : "—"; }
 
-/* ---------- Mini payoff + PDF overlay (Apple-style) ---------- */
-function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
-  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos || !(sigma > 0) || !(T > 0)) {
-    return <span className="chart-hint" style={{opacity:.5,color:"#9fb1c7"}}>Chart</span>;
+/* ---------- Mini payoff chart (zoomable, proper fills, extra lines) ---------- */
+function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
+  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
+    return <span className="chart-hint">Chart</span>;
   }
 
-  // Slight zoom toward center
-  const half = 0.35; // ±35% around spot
-  const xmin = Math.max(1e-6, S0 * (1 - half));
-  const xmax = S0 * (1 + half);
+  // ----- sizing -----
+  const W = 520, H = 190, pad = 12;
 
-  const W = 560, H = 220, pad = 14;
-  const N = 220;
+  // ----- zoom anchored at BE (or S0 if BE missing) -----
+  const centerPx = Number.isFinite(BE) ? BE : S0;
+  const baseSpan =
+    0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0)); // sensible default coverage
 
-  // helpers
-  const payoff = (s) => {
+  const [zoom, setZoom] = React.useState(1);              // 1 = default; larger → closer
+  const span = baseSpan / zoom;
+  const xmin = Math.max(0.01, centerPx - span);
+  const xmax = centerPx + span;
+
+  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
+  const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
+
+  // Trackpad zoom — slow & precise, BE stays centered
+  const onWheel = React.useCallback((e) => {
+    e.preventDefault();
+    // small steps; deltaY>0 -> zoom out; deltaY<0 -> zoom in
+    const factor = Math.exp(-e.deltaY * 0.0015);          // slow sensitivity
+    setZoom((z) => Math.min(20, Math.max(0.5, z * factor)));
+  }, []);
+
+  // ----- payoff samples -----
+  const N = 160;
+  const xs = [];
+  for (let i = 0; i <= N; i++) {
+    xs.push(xmin + (i / N) * (xmax - xmin));
+  }
+  const pay = xs.map((s) => {
     if (type === "call") {
       const intr = Math.max(s - K, 0);
-      return pos === "long" ? (intr - premium) : (premium - intr);
-    } else {
-      const intr = Math.max(K - s, 0);
-      return pos === "long" ? (intr - premium) : (premium - intr);
+      return pos === "long" ? intr - premium : premium - intr;
     }
-  };
-  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2*pad);
-  // y scale
-  const ypMin = -premium * 1.4;          // show a bit below max loss
-  const ypMax =  Math.max(premium * 1.2, Math.abs((xmax - K) - premium));
-  const ymap = (p) => (H - pad) - ((p - ypMin) / (ypMax - ypMin)) * (H - 2*pad);
+    const intr = Math.max(K - s, 0);
+    return pos === "long" ? intr - premium : premium - intr;
+  });
 
-  // points for payoff
-  const xs = [];
-  for (let i = 0; i <= N; i++) xs.push(xmin + (i/N) * (xmax - xmin));
-  const pts = xs.map((s) => [xmap(s), ymap(payoff(s))]);
+  // y-range padded so fills never clip
+  const yMin = Math.min(...pay, -premium * 1.35);
+  const yMax = Math.max(...pay, premium * 1.35);
 
-  // SVG path for payoff
-  const dPay = pts.map(([x,y], i) => `${i ? "L" : "M"} ${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+  // payoff polyline
+  const lineD = xs
+    .map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`)
+    .join(" ");
 
-  // Profit/loss fills (single-kink options let us do analytic polygons)
-  const zeroY = ymap(0);
-  const beX   = isNum(BE) ? xmap(clamp(BE, xmin, xmax)) : null;
-  const atX   = (s) => xmap(clamp(s, xmin, xmax));
-  const payAt = (s) => ymap(payoff(clamp(s, xmin, xmax)));
+  // single area path (to baseline), then clip above/below to avoid any seams/gaps
+  const baselineY = ymap(0);
+  const areaD = [
+    `M ${xmap(xs[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
+    ...xs.map((s, i) => `L ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`),
+    `L ${xmap(xs[xs.length - 1]).toFixed(2)} ${baselineY.toFixed(2)} Z`,
+  ].join(" ");
 
-  let dProfit = "", dLoss = "";
-  if (isNum(beX)) {
-    if (type === "call" && pos === "long") {
-      const yMaxR = payAt(xmax);
-      dProfit = `M ${beX} ${zeroY} L ${W-pad} ${zeroY} L ${W-pad} ${yMaxR} L ${beX} ${zeroY} Z`;
-      dLoss   = `M ${pad} ${zeroY} L ${beX} ${zeroY} L ${beX} ${ymap(0)} L ${pad} ${ymap(-premium)} Z`;
-    }
-    if (type === "call" && pos === "short") {
-      const yLeft = ymap(premium);
-      dProfit = `M ${pad} ${zeroY} L ${beX} ${zeroY} L ${beX} ${ymap(0)} L ${pad} ${yLeft} Z`;
-      dLoss   = `M ${beX} ${zeroY} L ${W-pad} ${zeroY} L ${W-pad} ${ymap(-(xmax-K) + premium)} L ${beX} ${zeroY} Z`;
-    }
-    if (type === "put" && pos === "long") {
-      const yLeft = payAt(xmin);
-      dProfit = `M ${pad} ${zeroY} L ${beX} ${zeroY} L ${beX} ${ymap(0)} L ${pad} ${yLeft} Z`;
-      dLoss   = `M ${beX} ${zeroY} L ${W-pad} ${zeroY} L ${W-pad} ${ymap(-premium)} L ${beX} ${zeroY} Z`;
-    }
-    if (type === "put" && pos === "short") {
-      const yRight = ymap(premium);
-      dProfit = `M ${beX} ${zeroY} L ${W-pad} ${zeroY} L ${W-pad} ${yRight} L ${beX} ${zeroY} Z`;
-      dLoss   = `M ${pad} ${zeroY} L ${beX} ${zeroY} L ${beX} ${ymap(0)} L ${pad} ${ymap((K-xmin)-premium)} Z`;
-    }
-  }
+  // ----- probability overlay (lognormal PDF using chosen drift mu) -----
+  // pdf(s) for GBM: ln S_T ~ N(ln S0 + (mu - 0.5*sigma^2)T, sigma^2 T)
+  const m = Math.log(S0) + (Number(mu) - 0.5 * sigma * sigma) * T;
+  const v = sigma * Math.sqrt(T);
+  const pdf = (s) =>
+    (1 / (s * v * Math.sqrt(2 * Math.PI))) *
+    Math.exp(-0.5 * Math.pow((Math.log(s) - m) / v, 2));
 
-  // Lognormal PDF overlay — exact (smooth) “MC density”
-  const m = Math.log(S0) + (drift - 0.5*sigma*sigma) * T;
-  const sdev = sigma * Math.sqrt(T);
-  const pdf = (s) => (1 / (s * sdev * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((Math.log(s) - m) / sdev, 2));
-  const dens = xs.map((s) => pdf(s));
-  const dMax = Math.max(...dens);
-  const amp  = 0.18 * (H - 2*pad) / (dMax || 1);          // 18% of height
-  const densPts = xs.map((s, i) => [xmap(s), zeroY - dens[i] * amp]);
-  const dPDF = densPts.map(([x,y], i) => `${i ? "L" : "M"} ${x.toFixed(1)} ${y.toFixed(2)}`).join(" ");
+  // scale the pdf to a nice height
+  const pdfVals = xs.map(pdf);
+  const pdfMax = Math.max(...pdfVals) || 1;
+  const amp = 0.55 * (H - 2 * pad); // occupy ~55% vertical space
+  const pdfPath = xs
+    .map((s, i) => {
+      const y = baselineY - (pdfVals[i] / pdfMax) * amp;
+      return `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
 
-  // axes ticks (minimal)
-  const xSpot  = xmap(S0);
-  const tickY  = H - pad + 10;
+  // extra reference lines
+  const xStrike = xmap(K);
+  const xBE = Number.isFinite(BE) ? xmap(BE) : null;
+  const xSpot = xmap(S0);
+  const meanPrice = S0 * Math.exp(Number(mu) * T);
+  const xMean = xmap(meanPrice);
 
-  // Tooltip
-  const ref = useRef(null);
-  const tipRef = useRef(null);
+  // bottom ticks: left/center/right (rounded)
+  const tickFmt = (s) => Math.round(s).toString();
+  const leftTick = tickFmt(xmin);
+  const midTick = tickFmt(centerPx);
+  const rightTick = tickFmt(xmax);
+
+  // simple tooltip that never cuts off at the top
+  const [tip, setTip] = React.useState(null); // {x,y,price,profit}
   const onMove = (e) => {
-    const box = ref.current?.getBoundingClientRect?.();
-    if (!box) return;
-    const x = clamp(e.clientX - box.left, pad, W - pad);
-    const s = xmin + ((x - pad) / (W - 2*pad)) * (xmax - xmin);
-    const p = payoff(s);
-    const d = pdf(s);
-    const y = ymap(p);
-    const el = tipRef.current;
-    if (el) {
-      el.style.opacity = "1";
-      const left = clamp(x + 12, 6, W - 160);
-      const top  = clamp(y + 12, 6, H - 48);
-      el.style.transform = `translate(${left}px, ${top}px)`;
-      el.innerHTML = `<div class="tline"><span>S</span><b>${moneySign("USD")}${s.toFixed(2)}</b></div>
-                      <div class="tline"><span>P/L</span><b>${(p>=0?"+":"")}${p.toFixed(2)}</b></div>
-                      <div class="tline"><span>pdf</span><b>${d.toExponential(2)}</b></div>`;
-    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const price = xmin + ((x - pad) / (W - 2 * pad)) * (xmax - xmin);
+    const pr = (() => {
+      if (type === "call") {
+        const intr = Math.max(price - K, 0);
+        return pos === "long" ? intr - premium : premium - intr;
+      }
+      const intr = Math.max(K - price, 0);
+      return pos === "long" ? intr - premium : premium - intr;
+    })();
+    const y = ymap(pr);
+    const top = Math.min(H - 26, Math.max(10, y + 12)); // keep fully visible
+    const left = Math.min(W - 120, Math.max(10, x + 10));
+    setTip({ x: left, y: top, price, pr });
   };
-  const onLeave = () => { if (tipRef.current) tipRef.current.style.opacity = "0"; };
+  const onLeave = () => setTip(null);
 
   return (
-    <svg ref={ref} width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-         onPointerMove={onMove} onPointerLeave={onLeave} style={{display:"block"}}>
-      {/* axes */}
-      <line x1={pad} y1={zeroY} x2={W-pad} y2={zeroY} stroke="#a7b2c3" opacity="0.20" />
-      <line x1={pad} y1={pad}  x2={pad}   y2={H-pad} stroke="#a7b2c3" opacity="0.12" />
-      {/* profit/loss fills */}
-      {dLoss && <path d={dLoss} fill="rgba(239,68,68,.10)" stroke="none" />}
-      {dProfit && <path d={dProfit} fill="rgba(16,185,129,.12)" stroke="none" />}
-      {/* BE line */}
-      {isNum(BE) && <line x1={beX} y1={pad} x2={beX} y2={H-pad} stroke="#10b981" strokeWidth="1" opacity="0.65" />}
-      {/* payoff */}
-      <path d={dPay || `M ${pad} ${zeroY} L ${W-pad} ${zeroY}`} fill="none" stroke="#eef1f6" strokeWidth="1.6" />
-      {/* pdf overlay */}
-      <path d={dPDF} fill="none" stroke="rgba(252,211,77,.95)" strokeWidth="1.2" opacity="0.95" />
-      {/* x ticks (left / spot / right) */}
-      <text x={pad} y={tickY} fontSize="11" fill="#cdd6e3" opacity="0.55">{(xmin).toFixed(0)}</text>
-      <text x={xSpot} y={tickY} fontSize="11" fill="#9cc6ff" textAnchor="middle">{S0.toFixed(0)}</text>
-      <text x={W-pad} y={tickY} fontSize="11" fill="#cdd6e3" opacity="0.55" textAnchor="end">{(xmax).toFixed(0)}</text>
+    <svg
+      width="100%"
+      height="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      onWheel={onWheel}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
+      style={{ touchAction: "none" }}
+      shapeRendering="geometricPrecision"
+    >
+      {/* clip regions to avoid any fill gaps */}
+      <defs>
+        <clipPath id="clipAbove"><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
+        <clipPath id="clipBelow"><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
+      </defs>
 
-      {/* tooltip (HTML in foreignObject for nice pill style) */}
-      <foreignObject x="0" y="0" width={W} height={H} pointerEvents="none">
-        <div ref={tipRef} style={{position:"absolute", transform:"translate(-9999px,-9999px)", opacity:0, transition:"opacity .12s ease"}}>
-          <style>{`
-            .tline{ display:flex; gap:6px; justify-content:space-between; font: 600 12px/1.1 ui-sans-serif,system-ui; 
-                    color:#eaf0f7; padding:6px 8px; border:1px solid rgba(255,255,255,.12);
-                    border-radius:10px; background: rgba(18,24,33,.92); backdrop-filter: blur(6px);
-                    box-shadow:0 8px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05); }
-            .tline + .tline{ margin-top:4px; }
-            .tline span{ opacity:.75; }
-            .tline b{ font-weight:800; }
-          `}</style>
-        </div>
-      </foreignObject>
+      {/* subtle frame */}
+      <rect x="1" y="1" width={W - 2} height={H - 2} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,.04)" />
+
+      {/* zero (P&L) line */}
+      <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="currentColor" opacity="0.18" />
+
+      {/* profit / loss areas (one path, clipped) */}
+      <path d={areaD} fill="rgba(16,185,129,.12)" clipPath="url(#clipAbove)" />
+      <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath="url(#clipBelow)" />
+
+      {/* payoff line */}
+      <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+
+      {/* probability overlay */}
+      <path d={pdfPath} fill="none" stroke="#facc15" strokeWidth="2" opacity="0.95" vectorEffect="non-scaling-stroke" />
+
+      {/* vertical guides */}
+      {Number.isFinite(xBE) && (
+        <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.9" />
+      )}
+      <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
+      <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
+
+      {/* ticks (bottom) */}
+      <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
+        <text x={pad} y={H - 6}>{leftTick}</text>
+        <text x={(W / 2)} y={H - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
+        <text x={W - pad} y={H - 6} textAnchor="end">{rightTick}</text>
+      </g>
+
+      {/* tooltip */}
+      {tip && (
+        <g transform={`translate(${tip.x},${tip.y})`}>
+          <rect x="0" y="-16" rx="8" ry="8" width="110" height="22" fill="rgba(17,24,39,.85)" stroke="rgba(255,255,255,.14)" />
+          <text x="8" y="0" fontSize="12" fill="#e5e7eb" fontWeight="700">
+            ${tip.price.toFixed(2)} • {tip.pr >= 0 ? "+" : ""}{tip.pr.toFixed(2)}
+          </text>
+        </g>
+      )}
     </svg>
   );
 }
