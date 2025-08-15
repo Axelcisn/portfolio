@@ -1,3 +1,4 @@
+// app/strategy/page.jsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -6,9 +7,8 @@ import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
-import ExpiryStrip from "../../components/Options/ExpiryStrip";
-import OptionsTab from "../../components/Options/OptionsTab";
-import useExpiries from "../../components/Options/useExpiries";
+import OptionsTab from "../../components/Options/OptionsTab"; // NEW
+import useExpiries from "../../components/Options/useExpiries"; // NEW
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -22,10 +22,10 @@ const EX_NAMES = {
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
 export default function Strategy() {
+  /* ===== 00 — Local state ===== */
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
   const [horizon, setHorizon] = useState(30);
-  const [selectedExpiry, setSelectedExpiry] = useState(null); // shared expiry
 
   const [ivSource, setIvSource] = useState("live");
   const [ivValue, setIvValue] = useState(null);
@@ -40,19 +40,24 @@ export default function Strategy() {
   const [expectancy, setExpectancy] = useState(null);
   const [expReturn, setExpReturn] = useState(null);
 
+  // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
+  // Expiries shared with StatsRail – identical to Options logic
   const { list: expiries } = useExpiries(company?.symbol);
 
+  /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
   const sigma = ivValue ?? null;
   const T = horizon > 0 ? horizon / 365 : null;
 
+  // Choose effective spot (company spot if valid, else fallback)
   const spotEff = useMemo(
     () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
     [rawSpot, fallbackSpot]
   );
 
+  /* ===== 02 — Helpers ===== */
   const num = (v) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : NaN;
@@ -71,6 +76,7 @@ export default function Strategy() {
     return { lc, sc, lp, sp };
   }, [legsUi]);
 
+  /* ===== 03 — Monte Carlo payload & call ===== */
   const mcInput = useMemo(() => {
     if (!(spotEff > 0) || !(T > 0) || !(sigma >= 0)) return null;
     return {
@@ -132,6 +138,7 @@ export default function Strategy() {
     return () => { aborted = true; };
   }, [debouncedPayload]);
 
+  /* ===== 04 — Fallback last close when company spot is 0 ===== */
   useEffect(() => {
     let cancel = false;
     setFallbackSpot(null);
@@ -167,6 +174,7 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol, rawSpot]);
 
+  /* ===== 05 — Hero helpers ===== */
   const exLabel = useMemo(() => {
     const raw =
       company?.exchange ||
@@ -184,6 +192,7 @@ export default function Strategy() {
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
   };
 
+  /* ===== 06 — Tabs state (pure CSS underline) ===== */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -198,8 +207,10 @@ export default function Strategy() {
     return company?.symbol ? `${company.symbol} ${base.toLowerCase()}` : base;
   }, [tab, company?.symbol]);
 
+  /* ===== 07 — Render ===== */
   return (
     <div className="container">
+      {/* Hero */}
       {company?.symbol ? (
         <section className="hero">
           <div className="hero-id">
@@ -219,10 +230,21 @@ export default function Strategy() {
               </div>
             </div>
           </div>
+
           <div className="hero-price">
             <div className="p-big">
               {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
               <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
+            </div>
+            <div className="p-sub">
+              At close •{" "}
+              {new Date().toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZoneName: "short",
+              })}
             </div>
           </div>
         </section>
@@ -236,6 +258,7 @@ export default function Strategy() {
         </header>
       )}
 
+      {/* Company (full width) */}
       <CompanyCard
         value={company}
         market={market}
@@ -245,6 +268,7 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
+      {/* Tabs header */}
       <nav className="tabs" role="tablist" aria-label="Sections">
         {TABS.map(t => (
           <button
@@ -260,47 +284,47 @@ export default function Strategy() {
         ))}
       </nav>
 
+      {/* Title between tabs and cards */}
       <h2 className="tab-title">{tabTitle}</h2>
 
+      {/* Tabbed content */}
       {tab === "overview" && (
-        <>
-          <ExpiryStrip
-            expiries={expiries}
-            value={selectedExpiry}
-            onChange={setSelectedExpiry}
-          />
-          <div className="layout-2col">
-            <div className="g-item">
-              <MarketCard onRates={(r) => setMarket(r)} />
-            </div>
-            <div className="g-item">
-              <StatsRail
-                spot={spotEff}
-                currency={company?.currency || currency}
-                company={company}
-                iv={sigma}
-                market={market}
-                expiries={expiries}
-                selectedExpiry={selectedExpiry}
-                onExpiryChange={setSelectedExpiry}
-                onDaysChange={(d) => setHorizon(d)}
-                legs={legsUi}
-                onLegsChange={setLegsUi}
-              />
-            </div>
-            <div className="g-span">
-              <StrategyGallery
-                spot={spotEff}
-                currency={currency}
-                sigma={sigma}
-                T={T}
-                riskFree={market.riskFree ?? 0}
-                mcStats={mcStats}
-                onApply={handleApply}
-              />
-            </div>
+        <div className="layout-2col">
+          <div className="g-item">
+            <MarketCard onRates={(r) => setMarket(r)} />
           </div>
-        </>
+
+          <div className="g-item">
+            <StatsRail
+              /* pricing context */
+              spot={spotEff}
+              currency={company?.currency || currency}
+              company={company}
+              iv={sigma}
+              market={market}
+
+              /* expiry list shared with Options tab */
+              expiries={expiries}
+              onDaysChange={(d) => setHorizon(d)}
+
+              /* let StatsRail stamp days on legs if needed */
+              legs={legsUi}
+              onLegsChange={setLegsUi}
+            />
+          </div>
+
+          <div className="g-span">
+            <StrategyGallery
+              spot={spotEff}
+              currency={currency}
+              sigma={sigma}
+              T={T}
+              riskFree={market.riskFree ?? 0}
+              mcStats={mcStats}
+              onApply={handleApply}
+            />
+          </div>
+        </div>
       )}
 
       {tab === "financials" && (
@@ -330,6 +354,72 @@ export default function Strategy() {
           <p className="muted">Coming soon.</p>
         </section>
       )}
+
+      <style jsx>{`
+        /* Tabs */
+        .tabs{
+          display:flex; gap:6px;
+          margin:12px 0 16px;
+          border-bottom:1px solid var(--border);
+        }
+        .tab{
+          height:42px; padding:0 14px; border:0; background:transparent;
+          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
+          border-bottom:2px solid transparent; margin-bottom:-1px;
+        }
+        .tab:hover{ opacity:1; }
+        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+
+        /* Title between tabs and cards */
+        .tab-title{
+          margin: 2px 0 18px;
+          font-size: 22px;
+          line-height: 1.2;
+          font-weight: 800;
+          letter-spacing: -.2px;
+        }
+
+        /* Hero */
+        .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
+        .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
+        .hero-logo{
+          width:84px; height:84px; border-radius:20px;
+          background: radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.08), rgba(0,0,0,.35));
+          border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
+          font-weight:700; font-size:36px;
+        }
+        .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .hero-pill{
+          display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 14px;
+          border-radius:9999px; border:1px solid var(--border); background:var(--card); font-weight:600;
+          width:fit-content;
+        }
+        .hero-pill .dot{ opacity:.6; }
+
+        .hero-price{ margin-top:12px; }
+        .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
+        .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
+        .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
+
+        /* Grid below — stretch so both cards share the same height */
+        .layout-2col{ display:grid; grid-template-columns: 1fr 320px; gap: var(--row-gap); align-items: stretch; }
+        .g-item{ min-width:0; }
+        .g-span{ grid-column: 1 / -1; min-width:0; }
+        .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
+
+        .section-title{ font-weight:800; margin:8px 0; }
+        .muted{ opacity:.7; }
+
+        @media (max-width:1100px){
+          .layout-2col{ grid-template-columns: 1fr; }
+          .g-span{ grid-column: 1 / -1; }
+          .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
+          .hero-name{ font-size:32px; }
+          .p-big{ font-size:40px; }
+          .tab-title{ font-size:20px; }
+        }
+      `}</style>
     </div>
   );
 }
