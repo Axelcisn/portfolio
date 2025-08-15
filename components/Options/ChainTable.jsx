@@ -8,16 +8,20 @@ import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
 const isNum = (x) => Number.isFinite(x);
 const pick = (x) => (isNum(x) ? x : null);
 const moneySign = (ccy) => (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$");
-const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 
 /* erf / Phi for PoP and PDF math */
 function erf(x) {
   const sign = x < 0 ? -1 : 1;
-  const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429, p=0.3275911;
+  const a1 = 0.254829592,
+    a2 = -0.284496736,
+    a3 = 1.421413741,
+    a4 = -1.453152027,
+    a5 = 1.061405429,
+    p = 0.3275911;
   x = Math.abs(x);
-  const t = 1/(1+p*x);
-  const y = 1 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*Math.exp(-x*x);
-  return sign*y;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
 }
 const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
 
@@ -36,7 +40,7 @@ export default function ChainTable({
   const [rows, setRows] = useState([]);             // merged by strike
   const [expanded, setExpanded] = useState(null);   // { strike, side:'call'|'put' } | null
 
-  // StatsRail (days/basis/sigma/drift…) — guarded subscribe to avoid invalid cleanup (#310 hard-crash)
+  // StatsRail (days/basis/sigma/drift…) — guarded subscribe to avoid invalid cleanup
   const [ctx, setCtx] = useState(() => (typeof window !== "undefined" ? snapshotStatsCtx() : null));
   useEffect(() => {
     const unsub = subscribeStatsCtx(setCtx);
@@ -243,24 +247,24 @@ export default function ChainTable({
     }
     const sqrtT = Math.sqrt(T), sigSqrtT = sigma * sqrtT;
 
-    // break-even (same as before)
+    // break-even
     const BE = type === "call" ? (K + premium) : Math.max(1e-9, K - premium);
 
-    // PoP using lognormal threshold (matches your notes)
+    // PoP using lognormal threshold
     const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const needsAbove = (type === "call" && pos === "long") || (type === "put" && pos === "short");
     const PoP = needsAbove ? (1 - Phi(z)) : Phi(z);
 
-    // d~ with chosen drift (real-world when CAPM, risk-neutral when rf-q)
+    // d~ with chosen drift
     const d1 = (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const d2 = d1 - sigSqrtT;
 
     const expST = Math.exp(drift * T);
     let Epay;
     if (type === "call")      Epay = S0 * expST * Phi(d1) - K * Phi(d2);
-    else /* type === put */   Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
+    else /* put */            Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
 
-    // variance via truncated moments (stable)
+    // variance via truncated moments
     const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const PgtK = Phi(dbar), PltK = 1 - PgtK;
     const E1_above = S0 * expST * Phi(d1);
@@ -424,14 +428,14 @@ export default function ChainTable({
                           <MiniPL
                             S0={S0} K={r.strike} premium={premForChart}
                             type={typeForChart} pos="short" BE={beForChart}
-                            sigma={sigma} T={T} drift={drift}
+                            sigma={sigma} T={T} mu={drift}
                           />
                         </div>
                         <div className="metrics">
-                          <Metric label="Break-even"      value={fmtMoney(shortM?.be)}                   num={shortM?.be} kind="money" />
-                          <Metric label="Prob. Profit"    value={fmtPct(shortM?.pop)}                    num={(shortM?.pop ?? null) - 0.5} goodWhenHigh />
-                          <Metric label="Expected Return" value={fmtPct(shortM?.expR)}                   num={shortM?.expR} kind="pct" />
-                          <Metric label="Expected Profit" value={fmtMoney(shortM?.expP)}                 num={shortM?.expP} kind="money" />
+                          <Metric label="Break-even"      value={fmtMoney(shortM?.be)}                   num={shortM?.be} />
+                          <Metric label="Prob. Profit"    value={fmtPct(shortM?.pop)}                    num={(shortM?.pop ?? null) - 0.5} />
+                          <Metric label="Expected Return" value={fmtPct(shortM?.expR)}                   num={shortM?.expR} />
+                          <Metric label="Expected Profit" value={fmtMoney(shortM?.expP)}                 num={shortM?.expP} />
                           <Metric label="Sharpe"          value={fmt(shortM?.sharpe, 2)}                 num={shortM?.sharpe} />
                           {showGreeks && (
                             <div className="greeks">
@@ -450,14 +454,14 @@ export default function ChainTable({
                           <MiniPL
                             S0={S0} K={r.strike} premium={premForChart}
                             type={typeForChart} pos="long" BE={beForChart}
-                            sigma={sigma} T={T} drift={drift}
+                            sigma={sigma} T={T} mu={drift}
                           />
                         </div>
                         <div className="metrics">
-                          <Metric label="Break-even"      value={fmtMoney(longM?.be)}                    num={longM?.be} kind="money" />
-                          <Metric label="Prob. Profit"    value={fmtPct(longM?.pop)}                     num={(longM?.pop ?? null) - 0.5} goodWhenHigh />
-                          <Metric label="Expected Return" value={fmtPct(longM?.expR)}                    num={longM?.expR} kind="pct" />
-                          <Metric label="Expected Profit" value={fmtMoney(longM?.expP)}                  num={longM?.expP} kind="money" />
+                          <Metric label="Break-even"      value={fmtMoney(longM?.be)}                    num={longM?.be} />
+                          <Metric label="Prob. Profit"    value={fmtPct(longM?.pop)}                     num={(longM?.pop ?? null) - 0.5} />
+                          <Metric label="Expected Return" value={fmtPct(longM?.expR)}                    num={longM?.expR} />
+                          <Metric label="Expected Profit" value={fmtMoney(longM?.expP)}                  num={longM?.expP} />
                           <Metric label="Sharpe"          value={fmt(longM?.sharpe, 2)}                  num={longM?.sharpe} />
                           {showGreeks && (
                             <div className="greeks">
@@ -655,10 +659,9 @@ export default function ChainTable({
 }
 
 /* ---------- Metric pill (auto tone: pos / neg / neutral) ---------- */
-function Metric({ label, value, num, kind, goodWhenHigh }) {
+function Metric({ label, value, num }) {
   let tone = "neu";
   if (isNum(num)) {
-    // For PoP we pass (pop - 0.5) so positive means "good"
     if (num > 0) tone = "pos";
     else if (num < 0) tone = "neg";
   }
@@ -695,43 +698,38 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
 
   // ----- zoom anchored at BE (or S0 if BE missing) -----
   const centerPx = Number.isFinite(BE) ? BE : S0;
-  const baseSpan =
-    0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0)); // sensible default coverage
+  const baseSpan = 0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0)); // default coverage
 
-  const [zoom, setZoom] = React.useState(1);              // 1 = default; larger → closer
+  const [zoom, setZoom] = useState(1);                // 1 = default; larger → closer
   const span = baseSpan / zoom;
   const xmin = Math.max(0.01, centerPx - span);
   const xmax = centerPx + span;
 
-  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
-  const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
+  const idRef = useRef(`pl_${Math.random().toString(36).slice(2)}`);
+  const aboveId = `${idRef.current}_above`;
+  const belowId = `${idRef.current}_below`;
 
-  // Trackpad zoom — slow & precise, BE stays centered
-  const onWheel = React.useCallback((e) => {
-    e.preventDefault();
-    // small steps; deltaY>0 -> zoom out; deltaY<0 -> zoom in
-    const factor = Math.exp(-e.deltaY * 0.0015);          // slow sensitivity
-    setZoom((z) => Math.min(20, Math.max(0.5, z * factor)));
-  }, []);
+  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
 
   // ----- payoff samples -----
   const N = 160;
   const xs = [];
-  for (let i = 0; i <= N; i++) {
-    xs.push(xmin + (i / N) * (xmax - xmin));
-  }
-  const pay = xs.map((s) => {
+  for (let i = 0; i <= N; i++) xs.push(xmin + (i / N) * (xmax - xmin));
+
+  const payoffAt = (s) => {
     if (type === "call") {
       const intr = Math.max(s - K, 0);
       return pos === "long" ? intr - premium : premium - intr;
     }
     const intr = Math.max(K - s, 0);
     return pos === "long" ? intr - premium : premium - intr;
-  });
+  };
+  const pay = xs.map(payoffAt);
 
   // y-range padded so fills never clip
   const yMin = Math.min(...pay, -premium * 1.35);
-  const yMax = Math.max(...pay, premium * 1.35);
+  const yMax = Math.max(...pay,  premium * 1.35);
+  const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
 
   // payoff polyline
   const lineD = xs
@@ -747,7 +745,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   ].join(" ");
 
   // ----- probability overlay (lognormal PDF using chosen drift mu) -----
-  // pdf(s) for GBM: ln S_T ~ N(ln S0 + (mu - 0.5*sigma^2)T, sigma^2 T)
+  // ln S_T ~ N(ln S0 + (mu - 0.5*sigma^2)T, sigma^2 T)
   const m = Math.log(S0) + (Number(mu) - 0.5 * sigma * sigma) * T;
   const v = sigma * Math.sqrt(T);
   const pdf = (s) =>
@@ -766,7 +764,6 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
     .join(" ");
 
   // extra reference lines
-  const xStrike = xmap(K);
   const xBE = Number.isFinite(BE) ? xmap(BE) : null;
   const xSpot = xmap(S0);
   const meanPrice = S0 * Math.exp(Number(mu) * T);
@@ -778,20 +775,20 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   const midTick = tickFmt(centerPx);
   const rightTick = tickFmt(xmax);
 
+  // Trackpad zoom — slow & precise, BE stays centered
+  const onWheel = useCallback((e) => {
+    e.preventDefault();
+    const factor = Math.exp(-e.deltaY * 0.0015); // slow sensitivity
+    setZoom((z) => Math.min(20, Math.max(0.5, z * factor)));
+  }, []);
+
   // simple tooltip that never cuts off at the top
-  const [tip, setTip] = React.useState(null); // {x,y,price,profit}
+  const [tip, setTip] = useState(null); // {x,y,price,pr}
   const onMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const price = xmin + ((x - pad) / (W - 2 * pad)) * (xmax - xmin);
-    const pr = (() => {
-      if (type === "call") {
-        const intr = Math.max(price - K, 0);
-        return pos === "long" ? intr - premium : premium - intr;
-      }
-      const intr = Math.max(K - price, 0);
-      return pos === "long" ? intr - premium : premium - intr;
-    })();
+    const pr = payoffAt(price);
     const y = ymap(pr);
     const top = Math.min(H - 26, Math.max(10, y + 12)); // keep fully visible
     const left = Math.min(W - 120, Math.max(10, x + 10));
@@ -814,19 +811,19 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
     >
       {/* clip regions to avoid any fill gaps */}
       <defs>
-        <clipPath id="clipAbove"><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
-        <clipPath id="clipBelow"><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
+        <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
+        <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
       </defs>
 
       {/* subtle frame */}
       <rect x="1" y="1" width={W - 2} height={H - 2} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,.04)" />
 
       {/* zero (P&L) line */}
-      <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="currentColor" opacity="0.18" />
+      <line x1={12} y1={baselineY} x2={W - 12} y2={baselineY} stroke="currentColor" opacity="0.18" />
 
       {/* profit / loss areas (one path, clipped) */}
-      <path d={areaD} fill="rgba(16,185,129,.12)" clipPath="url(#clipAbove)" />
-      <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath="url(#clipBelow)" />
+      <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
+      <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
 
       {/* payoff line */}
       <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
@@ -843,15 +840,15 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
 
       {/* ticks (bottom) */}
       <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
-        <text x={pad} y={H - 6}>{leftTick}</text>
+        <text x={12} y={H - 6}>{leftTick}</text>
         <text x={(W / 2)} y={H - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
-        <text x={W - pad} y={H - 6} textAnchor="end">{rightTick}</text>
+        <text x={W - 12} y={H - 6} textAnchor="end">{rightTick}</text>
       </g>
 
       {/* tooltip */}
       {tip && (
         <g transform={`translate(${tip.x},${tip.y})`}>
-          <rect x="0" y="-16" rx="8" ry="8" width="110" height="22" fill="rgba(17,24,39,.85)" stroke="rgba(255,255,255,.14)" />
+          <rect x="0" y="-16" rx="8" ry="8" width="120" height="22" fill="rgba(17,24,39,.85)" stroke="rgba(255,255,255,.14)" />
           <text x="8" y="0" fontSize="12" fill="#e5e7eb" fontWeight="700">
             ${tip.price.toFixed(2)} • {tip.pr >= 0 ? "+" : ""}{tip.pr.toFixed(2)}
           </text>
