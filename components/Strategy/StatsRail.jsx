@@ -2,18 +2,17 @@
 "use client";
 
 /**
- * Key Stats + Expiry control.
- * - Accepts controlled selectedExpiry from parent (page.jsx) and won't override it.
- * - Dropdown options EXACTLY match ExpiryStrip (both read the `expiries` prop).
- * - Stamps `days` onto legs/rows so Chart.jsx gets correct T.
+ * Key Stats + Expiry control (CONTROLLED).
+ * - `selectedExpiry` is controlled by the parent (page).
+ * - We NEVER overwrite parent selection on mount or list refresh.
+ * - We only call `onExpiryChange(iso)` when the USER changes it.
+ * - `onDaysChange(days)` fires whenever selected expiry → days changes.
+ * - Expiry list MUST be the same list the Options tab uses.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ExpiryStrip from "../Options/ExpiryStrip";
 import { useTimeBasis } from "../ui/TimeBasisContext";
-
-/* ===== config ===== */
-const CM_DAYS = 30;
 
 /* ===== helpers ===== */
 const moneySign = (ccy) =>
@@ -23,40 +22,7 @@ const parsePctInput = (str) => {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
 };
-const lastFromArray = (arr) => {
-  if (!Array.isArray(arr) || !arr.length) return NaN;
-  for (let i = arr.length - 1; i >= 0; i--) {
-    const n = Number(arr[i]);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return NaN;
-};
-function pickLastClose(j) {
-  const arrs = [
-    j?.data?.c, j?.c, j?.close,
-    j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
-    j?.result?.[0]?.indicators?.quote?.[0]?.close,
-  ];
-  for (const a of arrs) {
-    const last = lastFromArray(a);
-    if (Number.isFinite(last)) return last;
-  }
-  const metaPx =
-    j?.meta?.regularMarketPrice ??
-    j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
-    j?.regularMarketPrice;
-  return Number.isFinite(metaPx) ? metaPx : null;
-}
-function daysToExpiry(expiryISO, tz = "Europe/Rome") {
-  if (!expiryISO) return null;
-  try {
-    const endLocalString = new Date(`${expiryISO}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
-    const end = new Date(endLocalString);
-    const now = new Date();
-    const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
-    return Math.max(1, d);
-  } catch { return null; }
-}
+
 function normalizeExpiries(expiries) {
   if (!Array.isArray(expiries)) return [];
   const iso = expiries
@@ -73,46 +39,50 @@ function normalizeExpiries(expiries) {
     .filter(Boolean);
   return Array.from(new Set(iso)).sort();
 }
-function pickNearest(expiryList) {
-  if (!expiryList.length) return null;
-  const todayISO = new Date().toISOString().slice(0, 10);
-  for (const e of expiryList) if (e >= todayISO) return e;
-  return expiryList[expiryList.length - 1];
-}
-function stampDaysOnRows(rows, days) {
-  if (!Array.isArray(rows)) return rows;
-  return rows.map((r) => {
-    const t = String(r?.type || "").toLowerCase();
-    const isOption = /^(lc|lp|sc|sp)$/.test(t);
-    return isOption ? { ...r, days } : r;
-  });
-}
-function stampDaysOnLegs(legs, days) {
-  if (!legs || typeof legs !== "object") return legs;
-  const out = { ...legs };
-  ["lc", "lp", "sc", "sp"].forEach((k) => { if (out[k]) out[k] = { ...out[k], days }; });
-  return out;
+
+/** Compute Days-To-Expiry (calendar days) to end-of-day in Europe/Rome. */
+function daysToExpiry(expiryISO, tz = "Europe/Rome") {
+  if (!expiryISO) return null;
+  try {
+    const endLocalString = new Date(`${expiryISO}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
+    const end = new Date(endLocalString);
+    const now = new Date();
+    const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
+    return Math.max(1, d);
+  } catch { return null; }
 }
 
-/* ===== server calls (unchanged) ===== */
+/* ===== tiny fetchers (unchanged behavior) ===== */
 async function fetchSpotFromChart(sym) {
   try {
     const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
     const r = await fetch(u, { cache: "no-store" });
     const j = await r.json();
-    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Chart ${r.status}`);
-    const last = pickLastClose(j);
-    return Number.isFinite(last) ? last : null;
+    const arrs = [
+      j?.data?.c, j?.c, j?.close,
+      j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+      j?.result?.[0]?.indicators?.quote?.[0]?.close,
+    ].filter(Boolean);
+    for (const a of arrs) {
+      if (Array.isArray(a) && a.length) {
+        const n = Number(a[a.length - 1]);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+    }
+    const metaPx =
+      j?.meta?.regularMarketPrice ??
+      j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
+      j?.regularMarketPrice;
+    return Number.isFinite(metaPx) ? metaPx : null;
   } catch { return null; }
 }
 async function fetchCompany(sym) {
   const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
   const j = await r.json();
-  if (!r.ok || j?.ok === false) throw new Error(j?.error || `Company ${r.status}`);
-  const currency =
-    j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
   let spot = Number(j?.regularMarketPrice);
   if (!Number.isFinite(spot) || spot <= 0) spot = await fetchSpotFromChart(j.symbol || sym);
+  const currency =
+    j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
   return {
     symbol: j.symbol || sym,
     currency,
@@ -125,7 +95,6 @@ async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback =
     const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(currency)}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
     const r = await fetch(u, { cache: "no-store" });
     const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || `Market ${r.status}`);
     return {
       rAnnual: typeof j?.riskFree?.r === "number" ? j.riskFree.r : null,
       erp: typeof j?.mrp === "number" ? j.mrp : null,
@@ -138,7 +107,6 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
     const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(benchmark)}&range=5y&interval=1mo`;
     const r = await fetch(u, { cache: "no-store" });
     const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || `Beta ${r.status}`);
     const b = typeof j?.beta === "number" ? j.beta : null;
     if (b == null) throw new Error("no_beta");
     return b;
@@ -146,7 +114,6 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
     try {
       const rc = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
       const jc = await rc.json();
-      if (!rc.ok) throw new Error(jc?.error || `Company ${rc.status}`);
       return typeof jc?.beta === "number" ? jc.beta : null;
     } catch { return null; }
   }
@@ -168,21 +135,17 @@ const capmMu = (rf, beta, erp, q = 0) =>
 
 /* ===== component ===== */
 export default function StatsRail({
-  /* Option expiries: SAME array used by Options/ExpiryStrip */
-  expiries = [],
+  /* expiry control (CONTROLLED) */
+  expiries = [],                 // same array used by Options/ExpiryStrip
+  selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
+  onExpiryChange,                // (iso) => void
+  onDaysChange,                  // (days) => void
 
-  /* Controlled expiry from parent (new) */
-  selectedExpiry: selectedExpiryProp = null,
-  onExpiryChange,              // (iso) => void
+  /* optional strategy plumbing */
+  rows = null, onRowsChange,
+  legs = null, onLegsChange,
 
-  /* Optional strategy plumbing */
-  rows = null,
-  onRowsChange,
-  legs = null,
-  onLegsChange,
-  onDaysChange,
-
-  /* Existing props */
+  /* pricing context */
   spot: propSpot,
   currency: propCcy,
   company,
@@ -191,12 +154,34 @@ export default function StatsRail({
 }) {
   const { basis, setBasis } = useTimeBasis();
 
-  /* selection & basics */
+  /* selection list */
+  const expiryList = useMemo(() => normalizeExpiries(expiries), [expiries]);
+
+  // internal only when uncontrolled
+  const [internalIso, setInternalIso] = useState(null);
+  const isControlled = !!selectedExpiry;
+  const iso = isControlled ? selectedExpiry : internalIso;
+
+  // when list first appears and we are UNCONTROLLED, pick nearest only once
+  useEffect(() => {
+    if (isControlled) return;
+    if (!expiryList.length) { setInternalIso(null); return; }
+    if (!internalIso || !expiryList.includes(internalIso)) {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const nearest = expiryList.find((e) => e >= todayISO) || expiryList[expiryList.length - 1];
+      setInternalIso(nearest);
+    }
+  }, [expiryList, internalIso, isControlled]);
+
+  const days = useMemo(() => daysToExpiry(iso, "Europe/Rome"), [iso]);
+
+  // propagate days only (never touch parent's ISO here)
+  useEffect(() => { if (days != null) onDaysChange?.(days); }, [days, onDaysChange]);
+
+  /* market/vol stuff (kept as-is from your version) */
   const [symbol, setSymbol] = useState(company?.symbol || "");
   const [currency, setCurrency] = useState(propCcy || company?.currency || "");
   const [spot, setSpot] = useState(propSpot ?? null);
-
-  /* market/capm */
   const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
   const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
   const [beta, setBeta] = useState(Number.isFinite(company?.beta) ? company.beta : null);
@@ -205,47 +190,17 @@ export default function StatsRail({
     const n = parsePctInput(divPct);
     return Number.isFinite(n) ? n : 0;
   }, [divPct]);
-
-  /* volatility */
-  const [volSrc, setVolSrc] = useState("iv");
+  const [volSrc, setVolSrc] = useState("iv"); // iv | hist
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
   const [volLoading, setVolLoading] = useState(false);
   const volAbortRef = useRef(null);
   const volSeqRef = useRef(0);
   const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
+  const CM_DAYS = 30;
 
-  /* expiry state (controlled/uncontrolled) */
-  const expiryList = useMemo(() => normalizeExpiries(expiries), [expiries]);
-
-  // uncontrolled local state (used only if parent doesn't control selectedExpiry)
-  const [selectedLocal, setSelectedLocal] = useState(null);
-
-  // initialize/keep nearest only when uncontrolled
-  useEffect(() => {
-    const isControlled = selectedExpiryProp != null;
-    if (isControlled) return;
-    if (!expiryList.length) { setSelectedLocal(null); return; }
-    if (!selectedLocal || !expiryList.includes(selectedLocal)) {
-      setSelectedLocal(pickNearest(expiryList));
-    }
-  }, [expiryList, selectedLocal, selectedExpiryProp]);
-
-  const isControlled = selectedExpiryProp != null;
-  const selectedExpiry = isControlled && expiryList.includes(selectedExpiryProp)
-    ? selectedExpiryProp
-    : selectedLocal;
-
-  const setSelected = isControlled
-    ? (iso) => onExpiryChange?.(iso)
-    : setSelectedLocal;
-
-  const days = useMemo(() => daysToExpiry(selectedExpiry, "Europe/Rome"), [selectedExpiry]);
-
-  /* derived */
   const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
 
-  /* listen to navbar ticker selections */
   useEffect(() => {
     const onPick = (e) => {
       const it = e?.detail || {};
@@ -257,7 +212,6 @@ export default function StatsRail({
     return () => window.removeEventListener("app:ticker-picked", onPick);
   }, []);
 
-  /* hydrate when symbol known */
   useEffect(() => {
     if (!symbol) return;
     let mounted = true;
@@ -293,19 +247,17 @@ export default function StatsRail({
             if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
           }
         }
-      } catch { /* leave as "—" */ }
+      } catch {}
     })();
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
-  /* honor market props if provided */
   useEffect(() => {
     if (typeof market?.riskFree === "number") setRf(market.riskFree);
     if (typeof market?.mrp === "number") setErp(market.mrp);
   }, [market?.riskFree, market?.mrp]);
 
-  /* re-fetch vol on source change */
   useEffect(() => {
     if (!symbol || volSrc === "manual") { cancelVol(); return; }
     (async () => {
@@ -327,7 +279,6 @@ export default function StatsRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volSrc, symbol]);
 
-  /* live price pulse */
   useEffect(() => {
     if (!symbol) return;
     let stop = false, id;
@@ -340,64 +291,67 @@ export default function StatsRail({
     return () => { stop = true; clearTimeout(id); };
   }, [symbol]);
 
-  /* propagate DTE into strategy state whenever it changes */
-  const propagateDays = useCallback(
-    (d) => {
-      if (!(d > 0)) return;
-      if (Array.isArray(rows) && typeof onRowsChange === "function") {
-        onRowsChange(stampDaysOnRows(rows, d));
-      }
-      if (legs && typeof onLegsChange === "function") {
-        onLegsChange(stampDaysOnLegs(legs, d));
-      }
-      onDaysChange?.(d);
-    },
-    [rows, legs, onRowsChange, onLegsChange, onDaysChange]
-  );
-
+  // optional stamping
+  const stampDaysOnRows = useCallback((rows, days) => {
+    if (!Array.isArray(rows)) return rows;
+    return rows.map((r) => {
+      const t = String(r?.type || "").toLowerCase();
+      const isOption = /^(lc|lp|sc|sp)$/.test(t);
+      return isOption ? { ...r, days } : r;
+    });
+  }, []);
+  const stampDaysOnLegs = useCallback((legs, days) => {
+    if (!legs || typeof legs !== "object") return legs;
+    const out = { ...legs };
+    ["lc", "lp", "sc", "sp"].forEach((k) => { if (out[k]) out[k] = { ...out[k], days }; });
+    return out;
+  }, []);
   useEffect(() => {
-    if (days != null) {
-      propagateDays(days);
-      onExpiryChange?.(selectedExpiry || null); // keep parent in sync
+    if (!(days > 0)) return;
+    if (Array.isArray(rows) && typeof onRowsChange === "function") {
+      onRowsChange(stampDaysOnRows(rows, days));
     }
-  }, [days, selectedExpiry, propagateDays, onExpiryChange]);
+    if (legs && typeof onLegsChange === "function") {
+      onLegsChange(stampDaysOnLegs(legs, days));
+    }
+  }, [days, rows, legs, onRowsChange, onLegsChange, stampDaysOnRows, stampDaysOnLegs]);
 
-  const showVolSkeleton =
-    volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
-
+  const showVolSkeleton = volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
   const volKind = volMeta?.sourceUsed === "hist" ? "Hist" : "Imp";
-  const volHorizon = volMeta?.sourceUsed === "hist" ? (volMeta?.days ?? 30) : (volMeta?.cmDays ?? CM_DAYS);
+  const volHorizon = volMeta?.sourceUsed === "hist" ? (volMeta?.days ?? 30) : (volMeta?.cmDays ?? 30);
   const volDiag = (volKind ? `${volKind} (${volHorizon}d)` : "") + (volMeta?.fallback ? " · fallback" : "");
 
   const fmtLong = (iso) => {
     const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return String(iso || "");
     const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return d.toLocaleDateString(undefined, {
-      weekday: "short", year: "numeric", month: "short", day: "numeric",
-    });
+    return d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+  };
+
+  const handlePick = (nextIso) => {
+    if (!nextIso) return;
+    if (isControlled) onExpiryChange?.(nextIso);
+    else setInternalIso(nextIso);
   };
 
   return (
     <aside className="card">
       <h3>Key stats</h3>
 
-      {/* Expiration (T) */}
+      {/* Expiration (T) — controlled */}
       <div className="row">
         <div className="k">Expiration (T)</div>
         <div className="v v-expiry">
           <select
             className="select"
-            value={selectedExpiry || ""}
-            onChange={(e) => setSelected(e.target.value || null)}
+            value={iso || ""}
+            onChange={(e) => handlePick(e.target.value || null)}
             title="Pick expiry"
           >
             {!expiryList.length ? (
               <option value="">No expiries</option>
             ) : (
-              expiryList.map((iso) => (
-                <option key={iso} value={iso}>{fmtLong(iso)}</option>
-              ))
+              expiryList.map((d) => <option key={d} value={d}>{fmtLong(d)}</option>)
             )}
           </select>
           <span className="dte-pill" title="Days to expiry (Europe/Rome end-of-day)">
@@ -435,12 +389,7 @@ export default function StatsRail({
       <div className="row">
         <div className="k">Volatility</div>
         <div className="v v-vol">
-          <select
-            className="select"
-            value={volSrc}
-            onChange={(e) => setVolSrc(e.target.value)}
-            title="Volatility source"
-          >
+          <select className="select" value={volSrc} onChange={(e) => setVolSrc(e.target.value)} title="Vol source">
             <option value="iv">Imp</option>
             <option value="hist">Hist</option>
           </select>
@@ -468,7 +417,8 @@ export default function StatsRail({
             value={divPct}
             onChange={(e) => {
               const raw = e.target.value.replace(/[^\d.]/g, "");
-              if (raw === "" || /^\d{0,3}(\.\d{0,2})?$/.test(raw)) setDivPct(raw);
+              if (raw === "" || /^\d{0,3}(\.\d{0,2})?$/.test(raw)) e.target.value && setDivPct(raw);
+              if (raw === "") setDivPct("");
             }}
             onBlur={() => {
               const v = parsePctInput(divPct);
@@ -484,26 +434,26 @@ export default function StatsRail({
         <div className="v value">{Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}</div>
       </div>
 
-      {/* Drift */}
+      {/* Drift chooser */}
       <div className="row">
         <div className="k">Drift</div>
         <div className="v">
-          <select className="select" defaultValue="CAPM" title="Choose which drift to apply elsewhere">
+          <select className="select" defaultValue="CAPM" title="Choose drift">
             <option value="CAPM">CAPM</option>
             <option value="RF">Risk-Free Rate</option>
           </select>
         </div>
       </div>
 
-      {/* Strip mirrors the same selection */}
+      {/* Optional: mirror strip here to guarantee same state */}
       {expiryList.length > 0 && (
         <div className="row">
           <div className="k">Strip</div>
           <div className="v v-expiry">
             <ExpiryStrip
               expiries={expiryList}
-              value={selectedExpiry || undefined}
-              onChange={(iso) => setSelected(String(iso).slice(0, 10))}
+              value={iso || undefined}
+              onChange={(d) => handlePick(String(d).slice(0, 10))}
             />
           </div>
         </div>
@@ -571,7 +521,6 @@ export default function StatsRail({
           background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
           animation:shimmer 1.15s ease-in-out infinite;
         }
-        @keyframes shimmer{ 100% { transform: translateX(100%); } }
         .is-pending{ opacity:.6; }
         @media (prefers-color-scheme: light){
           .select, .input{
