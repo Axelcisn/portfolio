@@ -687,20 +687,20 @@ function GreekList({ greeks }) {
 }
 function fmtG(v){ return isNum(v) ? Number(v).toFixed(2) : "—"; }
 
-/* ---------- Mini payoff chart (button zoom, proper fills, extra lines) ---------- */
-function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
+/* ---------- Mini payoff chart (button zoom, frosted footer, CI band, axis ticks on baseline) ---------- */
+function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
   if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
     return <span className="chart-hint">Chart</span>;
   }
 
   // ----- sizing -----
-  const W = 520, H = 190, pad = 12;
+  const W = 520, H = 210, pad = 12;
 
   // ----- zoom anchored at BE (or S0 if BE missing) -----
   const centerPx = Number.isFinite(BE) ? BE : S0;
   const baseSpan = 0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0)); // default coverage
 
-  const [zoom, setZoom] = useState(1);                // 1 = default; larger → closer (slow steps)
+  const [zoom, setZoom] = useState(1); // 1 = default; larger → closer
   const zoomIn  = () => setZoom((z) => Math.min(20, Math.round((z * 1.12) * 100) / 100));
   const zoomOut = () => setZoom((z) => Math.max(0.5, Math.round((z / 1.12) * 100) / 100));
 
@@ -735,11 +735,11 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
 
   // payoff polyline
-  const lineD = xs
-    .map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`)
-    .join(" ");
+  const lineD = xs.map((s, i) =>
+    `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`
+  ).join(" ");
 
-  // single area path (to baseline), then clip above/below to avoid any seams/gaps
+  // one area path to baseline, then clip above/below to avoid seams
   const baselineY = ymap(0);
   const areaD = [
     `M ${xmap(xs[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
@@ -747,30 +747,36 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
     `L ${xmap(xs[xs.length - 1]).toFixed(2)} ${baselineY.toFixed(2)} Z`,
   ].join(" ");
 
-  // ----- probability overlay (lognormal PDF using chosen drift mu) -----
-  // ln S_T ~ N(ln S0 + (mu - 0.5*sigma^2)T, sigma^2 T)
-  const m = Math.log(S0) + (Number(mu) - 0.5 * sigma * sigma) * T;
+  // ----- probability overlay (lognormal PDF using selected drift) -----
+  // ln S_T ~ N(ln S0 + (drift - 0.5*sigma^2)T, (sigma^2)T)
+  const mu = Number(drift || 0);
+  const m = Math.log(S0) + (mu - 0.5 * sigma * sigma) * T;
   const v = sigma * Math.sqrt(T);
   const pdf = (s) =>
     (1 / (s * v * Math.sqrt(2 * Math.PI))) *
     Math.exp(-0.5 * Math.pow((Math.log(s) - m) / v, 2));
   const pdfVals = xs.map(pdf);
   const pdfMax = Math.max(...pdfVals) || 1;
-  const amp = 0.55 * (H - 2 * pad); // occupy ~55% vertical space
-  const pdfPath = xs
-    .map((s, i) => {
-      const y = baselineY - (pdfVals[i] / pdfMax) * amp;
-      return `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
+  const amp = 0.55 * (H - 2 * pad); // ~55% height
+  const pdfPath = xs.map((s, i) => {
+    const y = baselineY - (pdfVals[i] / pdfMax) * amp;
+    return `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${y.toFixed(2)}`;
+  }).join(" ");
+
+  // ----- 95% confidence interval (in price space) -----
+  const sCIlo = Math.exp(m - 1.96 * v);
+  const sCIhi = Math.exp(m + 1.96 * v);
+  const xCIL = xmap(Math.max(xmin, Math.min(xmax, sCIlo)));
+  const xCIH = xmap(Math.max(xmin, Math.min(xmax, sCIhi)));
+  const ciWidth = Math.max(0, xCIH - xCIL);
 
   // vertical guides
   const xBE = Number.isFinite(BE) ? xmap(BE) : null;
   const xSpot = xmap(S0);
-  const meanPrice = S0 * Math.exp(Number(mu) * T);
+  const meanPrice = S0 * Math.exp(mu * T);
   const xMean = xmap(meanPrice);
 
-  // ticks
+  // ticks aligned to the X-axis (baseline)
   const tickFmt = (s) => Math.round(s).toString();
   const leftTick  = tickFmt(xmin);
   const midTick   = tickFmt(centerPx);
@@ -792,6 +798,25 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      {/* frosted/dark "glass" footer */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 28,
+          background: "rgba(8,12,20,.45)",
+          backdropFilter: "blur(8px) saturate(120%)",
+          WebkitBackdropFilter: "blur(8px) saturate(120%)",
+          borderTop: "1px solid rgba(255,255,255,.08)",
+          boxShadow: "0 -20px 30px rgba(0,0,0,.35) inset",
+          borderBottomLeftRadius: 12,
+          borderBottomRightRadius: 12,
+          pointerEvents: "none",
+          zIndex: 0,
+        }}
+      />
       <svg
         width="100%"
         height="100%"
@@ -800,7 +825,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
         aria-hidden="true"
         onMouseMove={onMove}
         onMouseLeave={onLeave}
-        style={{ touchAction: "none" }}
+        style={{ touchAction: "none", position: "relative", zIndex: 1 }}
         shapeRendering="geometricPrecision"
       >
         {/* clip regions to avoid any fill gaps */}
@@ -812,10 +837,24 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
         {/* subtle frame */}
         <rect x="1" y="1" width={W - 2} height={H - 2} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,.04)" />
 
+        {/* 95% CI band (soft purple) — drawn behind lines */}
+        {ciWidth > 0 && (
+          <rect
+            x={xCIL}
+            y={pad}
+            width={ciWidth}
+            height={H - 2 * pad}
+            fill="rgba(196,181,253,.16)"              // #c4b5fd @ 16%
+            stroke="rgba(196,181,253,.35)"
+            strokeDasharray="6 6"
+            rx="4"
+          />
+        )}
+
         {/* zero (P&L) line */}
         <line x1={12} y1={baselineY} x2={W - 12} y2={baselineY} stroke="currentColor" opacity="0.18" />
 
-        {/* profit / loss areas (one path, clipped) */}
+        {/* profit / loss areas (single path, clipped) */}
         <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
         <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
 
@@ -832,11 +871,11 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
         <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
         <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
 
-        {/* ticks (bottom) */}
+        {/* ticks aligned with the X-axis */}
         <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
-          <text x={12} y={H - 6}>{leftTick}</text>
-          <text x={(W / 2)} y={H - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
-          <text x={W - 12} y={H - 6} textAnchor="end">{rightTick}</text>
+          <text x={12} y={baselineY - 6}>{leftTick}</text>
+          <text x={(W / 2)} y={baselineY - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
+          <text x={W - 12} y={baselineY - 6} textAnchor="end">{rightTick}</text>
         </g>
 
         {/* tooltip */}
@@ -862,24 +901,8 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
           zIndex: 2,
         }}
       >
-        <button
-          type="button"
-          onClick={zoomOut}
-          aria-label="Zoom out"
-          title="Zoom out"
-          style={btnStyle}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          onClick={zoomIn}
-          aria-label="Zoom in"
-          title="Zoom in"
-          style={btnStyle}
-        >
-          +
-        </button>
+        <button type="button" onClick={zoomOut} aria-label="Zoom out" title="Zoom out" style={btnStyle}>−</button>
+        <button type="button" onClick={zoomIn}  aria-label="Zoom in"  title="Zoom in"  style={btnStyle}>+</button>
       </div>
     </div>
   );
