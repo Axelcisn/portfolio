@@ -4,6 +4,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
 import analyticPop from "./math/analyticPop";
+// ✅ centralized leg mapper (no local duplicates)
+import { rowsToApiLegs } from "./utils";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -74,25 +76,6 @@ function rowsFromLegs(legs,days=30){
     out.push({id:k,type:t,K:+L.K,qty:+L.qty,premium:Number.isFinite(L.premium)?+L.premium:null,days,enabled:!!L.enabled});
   };
   push("lc","lc"); push("sc","sc"); push("lp","lp"); push("sp","sp"); return out;
-}
-
-/** Convert builder rows -> API legs for BE & analyticPoP */
-function rowsToApiLegs(rows = []) {
-  const legs = [];
-  for (const r of rows || []) {
-    if (!r?.enabled) continue;
-    const t = String(r.type || "").toLowerCase();
-    const qty = Number.isFinite(Number(r.qty)) ? Math.max(0, Number(r.qty)) : 1;
-    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : undefined;
-
-    if (t === "lc") legs.push({ type: "call", side: "long", strike: Number(r.K), premium: prem, qty });
-    else if (t === "sc") legs.push({ type: "call", side: "short", strike: Number(r.K), premium: prem, qty });
-    else if (t === "lp") legs.push({ type: "put",  side: "long", strike: Number(r.K), premium: prem, qty });
-    else if (t === "sp") legs.push({ type: "put",  side: "short", strike: Number(r.K), premium: prem, qty });
-    else if (t === "ls") legs.push({ type: "stock", side: "long", price: Number(r.K), qty });
-    else if (t === "ss") legs.push({ type: "stock", side: "short", price: Number(r.K), qty });
-  }
-  return legs;
 }
 
 /* --------- payoff / greek aggregation --------- */
