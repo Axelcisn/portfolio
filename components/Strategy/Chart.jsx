@@ -3,6 +3,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
+import analyticPop from "./math/analyticPop";
+import rowsToApiLegs from "./hooks/rowsToApiLegs";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -226,6 +228,7 @@ export default function Chart({
   const greekWhich=(greekProp||"vega").toLowerCase();
   const gVals = useMemo(()=>xs.map(S=>greekTotal(greekWhich, S, rowsEff, env, contractSize)), [xs, rowsEff, env, contractSize, greekWhich]);
 
+  // ✨ numeric break-evens used for PoP input as well
   const be = useMemo(()=>{
     const out=[]; for(let i=1;i<xs.length;i++){ const y0=yExp[i-1], y1=yExp[i];
       if((y0>0&&y1<0)||(y0<0&&y1>0)){ const t=(-y0)/(y1-y0); out.push(xs[i-1]+t*(xs[i]-xs[i-1])); }
@@ -321,6 +324,20 @@ export default function Chart({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // ✨ NEW: Analytical probability of profit (Win rate)
+  const apiLegs = useMemo(() => rowsToApiLegs(rowsEff), [rowsEff]);
+  const popRes = useMemo(() => {
+    if (!Number.isFinite(Number(spot))) return { pop: null };
+    return analyticPop({
+      S: Number(spot),
+      sigma: sVol,
+      T: Tyrs,
+      legs: apiLegs,
+      be,
+      r: riskFree,
+    });
+  }, [spot, sVol, Tyrs, apiLegs, be, riskFree]);
 
   return (
     <Wrapper className={wrapClass} ref={ref} style={{ position: "relative" }}>
@@ -484,10 +501,9 @@ export default function Chart({
           <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
           <div className="m">
             <div className="k">Win rate</div>
-            <div className="v">{(() => {
-              let m=0,t=0; for(let i=1;i<xs.length;i++){ const xm=.5*(xs[i]+xs[i-1]); const p=lognormPdf(xm); const y=.5*(yExp[i]+yExp[i-1]); const dx=xs[i]-xs[i-1]; t+=p*dx; if(y>0)m+=p*dx; }
-              return t>0?`${(m/t*100).toFixed(2)}%`:"—";
-            })()}</div>
+            <div className="v">
+              {Number.isFinite(popRes?.pop) ? `${(popRes.pop * 100).toFixed(2)}%` : "—"}
+            </div>
           </div>
 
           {/* Breakeven cell uses the shared API-based badge */}
