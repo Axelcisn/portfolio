@@ -28,7 +28,6 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   const listId = useRef(`tsu-${Math.random().toString(36).slice(2, 8)}`);
   const optId = (i) => `${listId.current}-opt-${i}`;
 
-  // forward ref
   useEffect(() => {
     if (!forwardedRef) return;
     if (typeof forwardedRef === "function") forwardedRef(inputRef.current);
@@ -55,7 +54,6 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   const fetchResults = useCallback(
     async (qstr) => {
       if (!qstr || qstr.length < minLen) { setResults([]); setLoading(false); return; }
-
       const key = `${endpoint}|${qstr}|${limit}`;
       if (cache.current.has(key)) { setResults(cache.current.get(key)); setLoading(false); setOpen(true); return; }
 
@@ -87,7 +85,6 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     [endpoint, limit, minLen, normalize]
   );
 
-  // debounce input
   useEffect(() => {
     clearTimeout(debounceRef.current);
     if (!q || q.length < minLen) { setResults([]); setOpen(false); setLoading(false); return; }
@@ -95,7 +92,6 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     return () => clearTimeout(debounceRef.current);
   }, [q, fetchResults, debounceMs, minLen]);
 
-  // outside click
   useEffect(() => {
     const onDoc = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", onDoc);
@@ -124,7 +120,6 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     else if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
   };
 
-  // keep highlighted item in view
   useEffect(() => {
     if (active < 0) return;
     document.getElementById(optId(active))?.scrollIntoView?.({ block: "nearest" });
@@ -132,18 +127,15 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
 
   return (
     <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%", zIndex: 1200 }}>
-      {/* left SVG magnifier */}
-      <span
-        aria-hidden
-        style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", opacity: .9, pointerEvents: "none" }}
-      >
+      {/* SVG magnifier */}
+      <span aria-hidden style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", opacity: .9, pointerEvents: "none" }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="11" cy="11" r="7"></circle>
           <path d="M21 21l-4.35-4.35"></path>
         </svg>
       </span>
 
-      {/* input fills container height */}
+      {/* input matches container height */}
       <input
         ref={inputRef}
         aria-label="Search tickers"
@@ -161,13 +153,13 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
         autoComplete="off"
         inputMode="search"
         style={{
-          height: "100%", width: "100%", background: "transparent", border: 0, outline: 0,
-          color: "var(--foreground,#e5e7eb)", fontSize: 14.5,
-          paddingLeft: 38, paddingRight: 36, boxSizing: "border-box",
+          height: "100%", width: "100%", background: "transparent",
+          border: 0, outline: 0, color: "var(--foreground,#e5e7eb)",
+          fontSize: 14.5, paddingLeft: 38, paddingRight: 36, boxSizing: "border-box",
         }}
       />
 
-      {/* clear (SVG, single ring) */}
+      {/* clear button — single ring, no glow */}
       {!!q && (
         <button
           type="button"
@@ -178,7 +170,8 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
             position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
             width: 22, height: 22, display: "grid", placeItems: "center",
             borderRadius: 11, border: "1px solid var(--border,#2a2f3a)",
-            background: "transparent", cursor: "pointer", opacity: .9
+            background: "transparent", cursor: "pointer", opacity: .9,
+            outline: "none", boxShadow: "none", WebkitTapHighlightColor: "transparent",
           }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
