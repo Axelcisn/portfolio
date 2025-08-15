@@ -303,6 +303,7 @@ export default function OptionsTab({
                       className={`day ${active ? "is-active" : ""}`}
                       onClick={() => !disabled && handlePick(it.iso)}
                       aria-pressed={active}
+                      aria-current={active ? "date" : undefined}
                       disabled={disabled}
                       title={it.iso || "Loading…"}
                     >
