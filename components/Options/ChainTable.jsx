@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
 
 export default function ChainTable({
   symbol,
@@ -18,6 +19,10 @@ export default function ChainTable({
   const [rows, setRows] = useState([]);        // merged by strike: { strike, call, put, ivPct }
   const [expanded, setExpanded] = useState(null); // { strike, side: 'call'|'put' } | null
 
+  // StatsRail context (days/basis/sigma/drift…)
+  const [ctx, setCtx] = useState(() => (typeof window !== "undefined" ? snapshotStatsCtx() : null));
+  useEffect(() => subscribeStatsCtx(setCtx), []);
+
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
   const moneySign = (ccy) =>
     ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
@@ -25,6 +30,7 @@ export default function ChainTable({
   const effCurrency = meta?.currency || currency || "USD";
   const fmtMoney = (v, d = 2) =>
     Number.isFinite(v) ? `${moneySign(effCurrency)}${Number(v).toFixed(d)}` : "—";
+  const fmtPct = (p, d = 2) => (Number.isFinite(p) ? `${(p * 100).toFixed(d)}%` : "—");
 
   // Settings — safe defaults
   const sortDir = (settings?.sort === "desc" ? "desc" : "asc");
@@ -246,6 +252,102 @@ export default function ChainTable({
   const isOpen = (strike) => expanded && expanded.strike === strike;
   const focusSide = (strike) => (isOpen(strike) ? expanded.side : null);
 
+  // ===== Math helpers (normal CDF & lognormal tools) =====
+  function erf(x) {
+    const sign = x < 0 ? -1 : 1;
+    const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429, p=0.3275911;
+    x = Math.abs(x);
+    const t = 1/(1+p*x);
+    const y = 1 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*Math.exp(-x*x);
+    return sign*y;
+  }
+  const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
+
+  function metricsForOption({ type, pos, S0, K, premium, sigma, T, drift }) {
+    // Guards
+    if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !(sigma > 0) || !(T > 0)) {
+      return { be: null, pop: null, expP: null, expR: null, sharpe: null };
+    }
+
+    const sqrtT = Math.sqrt(T);
+    const sigSqrtT = sigma * sqrtT;
+
+    // Break-even
+    const BE = type === "call" ? (K + premium) : Math.max(1e-9, K - premium);
+
+    // PoP via lognormal threshold
+    const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
+    const needsAbove = (type === "call" && pos === "long") || (type === "put" && pos === "short");
+    const PoP = needsAbove ? (1 - Phi(z)) : Phi(z);
+
+    // d~ with chosen drift (not risk-neutral unless drift = rf - q)
+    const d1 = (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / (sigSqrtT);
+    const d2 = d1 - sigSqrtT;
+
+    // Expected payoff under lognormal with selected drift
+    const expST = Math.exp(drift * T); // factor for E[S_T] = S0 * exp(drift T)
+    let Epay;
+    if (type === "call") {
+      Epay = S0 * expST * Phi(d1) - K * Phi(d2);
+    } else {
+      Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
+    }
+
+    // Second moment via truncated moments
+    const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT); // P(S_T > K) = Phi(dbar)
+    const PgtK = Phi(dbar);
+    const PltK = 1 - PgtK;
+
+    const E1_above = S0 * expST * Phi(d1);                 // E[S_T 1_{S>K}]
+    const E2_above = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(d1 + sigSqrtT);  // E[S_T^2 1_{S>K}]
+    const E1_below = S0 * expST * Phi(-d1);                // E[S_T 1_{S<K}]
+    const E2_below = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(-(d1 + sigSqrtT)); // E[S_T^2 1_{S<K}]
+
+    let E2pay;
+    if (type === "call") {
+      // E[(S-K)^2 1_{S>K}] = E[S^2 1_{>K}] - 2K E[S 1_{>K}] + K^2 P(S>K)
+      E2pay = E2_above - 2*K*E1_above + K*K*PgtK;
+    } else {
+      // E[(K-S)^2 1_{S<K}] = K^2 P(S<K) - 2K E[S 1_{<K}] + E[S^2 1_{<K}]
+      E2pay = K*K*PltK - 2*K*E1_below + E2_below;
+    }
+    const varPay = Math.max(0, E2pay - Epay*Epay);
+    const sdPay = Math.sqrt(varPay);
+
+    // Expected profit/return by position
+    const expProfitLong  = Epay - premium;
+    const expProfitShort = premium - Epay;
+    const expProfit = pos === "long" ? expProfitLong : expProfitShort;
+
+    const denom = Math.max(1e-12, premium);
+    const expReturn = expProfit / denom;
+    const sharpe = sdPay > 0 ? (expProfit / sdPay) : null;
+
+    return { be: BE, pop: PoP, expP: expProfit, expR: expReturn, sharpe };
+  }
+
+  function daysToExpiryISO(iso, tz = "Europe/Rome") {
+    if (!iso) return null;
+    try {
+      const endLocalString = new Date(`${iso}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
+      const end = new Date(endLocalString);
+      const now = new Date();
+      const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
+      return Math.max(1, d);
+    } catch { return null; }
+  }
+
+  // Effective time & drift parameters from StatsRail (fallbacks for safety)
+  const effDays = ctx?.days ?? daysToExpiryISO(meta?.expiry);
+  const effBasis = ctx?.basis ?? 365;
+  const T = Number.isFinite(effDays) ? Math.max(1, effDays) / effBasis : null;
+  const sigma = ctx?.sigma ?? (Number.isFinite(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
+  const drift = ctx?.driftMode === "CAPM"
+    ? (Number(ctx?.muCapm) || 0)
+    : ((Number(ctx?.rf) || 0) - (Number(ctx?.q) || 0));
+
+  const S0 = Number(meta?.spot) || Number(ctx?.spot) || null;
+
   return (
     <div className="wrap" aria-live="polite">
       <div className="heads">
@@ -333,6 +435,22 @@ export default function ChainTable({
 
             const callMid = r?.call?.mid ?? null;
             const putMid  = r?.put?.mid  ?? null;
+            const callPrem = (callMid ?? r?.call?.price ?? null);
+            const putPrem  = (putMid ?? r?.put?.price  ?? null);
+
+            // Compute metrics only when expanded (perf)
+            let longMetrics = null, shortMetrics = null, beForChart = null, typeForChart = null, premForChart = null;
+            if (open && S0 && T && sigma && Number.isFinite(r.strike)) {
+              if (focus === "put") {
+                typeForChart = "put"; premForChart = putPrem; beForChart = Number.isFinite(putPrem) ? Math.max(1e-9, r.strike - putPrem) : null;
+                longMetrics  = Number.isFinite(putPrem) ? metricsForOption({ type:"put", pos:"long",  S0, K:r.strike, premium: putPrem, sigma, T, drift }) : null;
+                shortMetrics = Number.isFinite(putPrem) ? metricsForOption({ type:"put", pos:"short", S0, K:r.strike, premium: putPrem, sigma, T, drift }) : null;
+              } else {
+                typeForChart = "call"; premForChart = callPrem; beForChart = Number.isFinite(callPrem) ? (r.strike + callPrem) : null;
+                longMetrics  = Number.isFinite(callPrem) ? metricsForOption({ type:"call", pos:"long",  S0, K:r.strike, premium: callPrem, sigma, T, drift }) : null;
+                shortMetrics = Number.isFinite(callPrem) ? metricsForOption({ type:"call", pos:"short", S0, K:r.strike, premium: callPrem, sigma, T, drift }) : null;
+              }
+            }
 
             return (
               <div key={r.strike}>
@@ -367,19 +485,27 @@ export default function ChainTable({
                         {focus === "put" ? "Short Put" : "Short Call"}
                       </div>
                       <div className="panel-grid">
-                        <div className="chart" aria-hidden="true"><span className="chart-hint">Chart</span></div>
+                        <div className="chart" aria-hidden="true">
+                          <MiniPL
+                            S0={S0}
+                            K={r.strike}
+                            premium={premForChart}
+                            type={typeForChart}
+                            pos="short"
+                            BE={beForChart}
+                          />
+                        </div>
                         <div className="metrics">
-                          <Metric label="Break-even" value="—" />
-                          <Metric label="Prob. Profit" value="—" />
-                          <Metric label="Expected Return" value="—" />
-                          <Metric label="Expected Profit" value="—" />
-                          <Metric label="Sharpe" value="—" />
+                          <Metric label="Break-even"       value={fmtMoney(shortMetrics?.be)} />
+                          <Metric label="Prob. Profit"     value={fmtPct(shortMetrics?.pop)} />
+                          <Metric label="Expected Return"  value={fmtPct(shortMetrics?.expR)} />
+                          <Metric label="Expected Profit"  value={fmtMoney(shortMetrics?.expP)} />
+                          <Metric label="Sharpe"           value={fmt(shortMetrics?.sharpe, 2)} />
                           {showGreeks && (
                             <div className="greeks">
-                              {/* Show greeks for focused side only */}
                               {focus === "put"
-                                ? <GreekList greeks={r?.put?.greeks} side="Put" />
-                                : <GreekList greeks={r?.call?.greeks} side="Call" />
+                                ? <GreekList greeks={r?.put?.greeks} />
+                                : <GreekList greeks={r?.call?.greeks} />
                               }
                             </div>
                           )}
@@ -393,18 +519,27 @@ export default function ChainTable({
                         {focus === "put" ? "Long Put" : "Long Call"}
                       </div>
                       <div className="panel-grid">
-                        <div className="chart" aria-hidden="true"><span className="chart-hint">Chart</span></div>
+                        <div className="chart" aria-hidden="true">
+                          <MiniPL
+                            S0={S0}
+                            K={r.strike}
+                            premium={premForChart}
+                            type={typeForChart}
+                            pos="long"
+                            BE={beForChart}
+                          />
+                        </div>
                         <div className="metrics">
-                          <Metric label="Break-even" value="—" />
-                          <Metric label="Prob. Profit" value="—" />
-                          <Metric label="Expected Return" value="—" />
-                          <Metric label="Expected Profit" value="—" />
-                          <Metric label="Sharpe" value="—" />
+                          <Metric label="Break-even"       value={fmtMoney(longMetrics?.be)} />
+                          <Metric label="Prob. Profit"     value={fmtPct(longMetrics?.pop)} />
+                          <Metric label="Expected Return"  value={fmtPct(longMetrics?.expR)} />
+                          <Metric label="Expected Profit"  value={fmtMoney(longMetrics?.expP)} />
+                          <Metric label="Sharpe"           value={fmt(longMetrics?.sharpe, 2)} />
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put"
-                                ? <GreekList greeks={r?.put?.greeks} side="Put" />
-                                : <GreekList greeks={r?.call?.greeks} side="Call" />
+                                ? <GreekList greeks={r?.put?.greeks} />
+                                : <GreekList greeks={r?.call?.greeks} />
                               }
                             </div>
                           )}
@@ -564,7 +699,6 @@ export default function ChainTable({
           display:flex; align-items:center; justify-content:center;
           font-size:12px; opacity:.6;
         }
-        .chart-hint{ user-select:none; }
 
         .metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px; }
         .metric{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -615,7 +749,7 @@ function Metric({ label, value }) {
   return (
     <div className="metric">
       <span className="k">{label}</span>
-      <span className="v">{value}</span>
+      <span className="v">{value ?? "—"}</span>
     </div>
   );
 }
@@ -633,3 +767,49 @@ function GreekList({ greeks }) {
   );
 }
 function fmtG(v){ return Number.isFinite(v) ? Number(v).toFixed(2) : "—"; }
+
+/* ---------- Mini payoff chart ---------- */
+function MiniPL({ S0, K, premium, type, pos, BE }) {
+  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
+    return <span className="chart-hint">Chart</span>;
+  }
+  const xmin = Math.max(0, S0 * 0.4);
+  const xmax = S0 * 1.8;
+  const W = 460, H = 150, pad = 10;
+  const xs = [];
+  for (let i = 0; i <= 80; i++) {
+    const s = xmin + (i/80) * (xmax - xmin);
+    let payoff = 0;
+    if (type === "call") {
+      const intrinsic = Math.max(s - K, 0);
+      payoff = pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
+    } else {
+      const intrinsic = Math.max(K - s, 0);
+      payoff = pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
+    }
+    xs.push([s, payoff]);
+  }
+  const ys = xs.map((p) => p[1]);
+  const yMin = Math.min(...ys, -premium*1.2);
+  const yMax = Math.max(...ys, premium*1.2);
+
+  const xmap = (s) => pad + ( (s - xmin) / (xmax - xmin) ) * (W - 2*pad);
+  const ymap = (p) => H - pad - ( (p - yMin) / (yMax - yMin) ) * (H - 2*pad);
+
+  const d = xs.map((p, i) => `${i ? "L" : "M"} ${xmap(p[0]).toFixed(1)} ${ymap(p[1]).toFixed(1)}`).join(" ");
+  const strikeX = xmap(K);
+  const beX = Number.isFinite(BE) ? xmap(BE) : null;
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+      {/* zero line */}
+      <line x1={pad} y1={ymap(0)} x2={W-pad} y2={ymap(0)} stroke="currentColor" opacity="0.15" />
+      {/* payoff */}
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" />
+      {/* strike */}
+      <line x1={strikeX} y1={pad} x2={strikeX} y2={H-pad} stroke="#f59e0b" strokeWidth="1" opacity="0.9" />
+      {/* BEP */}
+      {Number.isFinite(beX) && <line x1={beX} y1={pad} x2={beX} y2={H-pad} stroke="#10b981" strokeWidth="1" opacity="0.9" />}
+    </svg>
+  );
+}
