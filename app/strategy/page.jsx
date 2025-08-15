@@ -44,8 +44,11 @@ export default function Strategy() {
   // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
-  // Expiries shared with StatsRail – identical to Options logic
-  const { list: expiries } = useExpiries(company?.symbol);
+  // Expiries shared with StatsRail & OptionsTab – identical to Options logic
+  const { list: expiries = [] } = useExpiries(company?.symbol);
+
+  // Selected expiry (single source of truth for ISO YYYY-MM-DD)
+  const [selectedExpiry, setSelectedExpiry] = useState(null);
 
   /* ===== Memory (persists by symbol) ===== */
   const { data: mem, loaded: memReady, save: memSave } = useStrategyMemory(company?.symbol);
@@ -59,7 +62,24 @@ export default function Strategy() {
     if (mem.legsUi) setLegsUi(mem.legsUi);
     if (mem.netPremium != null) setNetPremium(mem.netPremium);
     if (mem.tab) setTab(mem.tab);
+    if (mem.expiry) setSelectedExpiry(mem.expiry);
   }, [memReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reconcile selectedExpiry with current expiries list
+  useEffect(() => {
+    if (!Array.isArray(expiries) || expiries.length === 0) {
+      if (selectedExpiry !== null) setSelectedExpiry(null);
+      return;
+    }
+    if (selectedExpiry && expiries.includes(selectedExpiry)) return;
+
+    // pick nearest upcoming (>= today) else last
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const nearest = expiries.find((e) => e >= todayISO) || expiries[expiries.length - 1];
+    setSelectedExpiry(nearest);
+    if (company?.symbol) memSave({ expiry: nearest });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expiries]);
 
   /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
@@ -228,6 +248,7 @@ export default function Strategy() {
   useEffect(() => { if (memReady && company?.symbol) memSave({ ivSource, ivValue }); }, [memReady, company?.symbol, ivSource, ivValue, memSave]);
   useEffect(() => { if (memReady && company?.symbol) memSave({ legsUi, netPremium }); }, [memReady, company?.symbol, legsUi, netPremium, memSave]);
   useEffect(() => { if (memReady && company?.symbol) memSave({ tab }); }, [memReady, company?.symbol, tab, memSave]);
+  useEffect(() => { if (memReady && company?.symbol) memSave({ expiry: selectedExpiry || null }); }, [memReady, company?.symbol, selectedExpiry, memSave]);
 
   /* ===== 07 — Render ===== */
   return (
@@ -327,8 +348,12 @@ export default function Strategy() {
 
               /* expiry list shared with Options tab */
               expiries={expiries}
+              selectedExpiry={selectedExpiry}               {/* safe if StatsRail supports it */}
+              onExpiryChange={(iso) => {                   /* always capture and persist */
+                setSelectedExpiry(iso || null);
+                if (company?.symbol) memSave({ expiry: iso || null });
+              }}
               onDaysChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
-              onExpiryChange={(iso) => { if (company?.symbol) memSave({ expiry: iso || null }); }}
 
               /* let StatsRail stamp days on legs if needed */
               legs={legsUi}
@@ -368,6 +393,13 @@ export default function Strategy() {
         <OptionsTab
           symbol={company?.symbol || ""}
           currency={company?.currency || currency}
+          /* controlled expiry to keep OptionsTab in sync and persisted */
+          expiries={expiries}
+          selectedExpiry={selectedExpiry}
+          onChangeExpiry={(iso) => {
+            setSelectedExpiry(iso || null);
+            if (company?.symbol) memSave({ expiry: iso || null });
+          }}
         />
       )}
 
