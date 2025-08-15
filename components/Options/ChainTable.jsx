@@ -43,7 +43,7 @@ export default function ChainTable({
   const [rows, setRows] = useState([]); // merged by strike
   const [expanded, setExpanded] = useState(null); // { strike, side:'call'|'put' } | null
 
-  // StatsRail context (days/basis/sigma/drift…) — guarded subscribe to avoid invalid cleanup (#310)
+  // StatsRail context — guarded subscribe to avoid invalid cleanup (#310)
   const [ctx, setCtx] = useState(() =>
     typeof window !== "undefined" ? snapshotStatsCtx() : null
   );
@@ -130,7 +130,7 @@ export default function ChainTable({
         byStrike.set(k, { strike: k, call: null, put: null, ivPct: null });
       const row = byStrike.get(k);
       row[side] = {
-        price: pick(o.price), // theoretical/model if provided
+        price: pick(o.price),
         ask: pick(o.ask),
         bid: pick(o.bid),
         ivPct: pick(o.ivPct),
@@ -310,40 +310,35 @@ export default function ChainTable({
     const sqrtT = Math.sqrt(T),
       sigSqrtT = sigma * sqrtT;
 
-    // break-even
     const BE = type === "call" ? K + premium : Math.max(1e-9, K - premium);
 
-    // PoP using lognormal threshold
     const z =
       (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
     const needsAbove =
       (type === "call" && pos === "long") || (type === "put" && pos === "short");
     const PoP = needsAbove ? 1 - Phi(z) : Phi(z);
 
-    // d~ with chosen drift (real-world when CAPM, risk-neutral when rf-q)
     const d1 =
       (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / sigSqrtT;
     const d2 = d1 - sigSqrtT;
 
-    // E[payoff] under chosen drift
     const expST = Math.exp(drift * T);
     let Epay;
     if (type === "call") Epay = S0 * expST * Phi(d1) - K * Phi(d2);
     else Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
 
-    // variance via truncated moments
     const dbar =
-      (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / sigSqrtT; // P(S_T > K) = Phi(dbar)
+      (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
     const PgtK = Phi(dbar),
       PltK = 1 - PgtK;
 
-    const E1_above = S0 * expST * Phi(d1); // E[S 1_{S>K}]
+    const E1_above = S0 * expST * Phi(d1);
     const E2_above =
       S0 *
       S0 *
       Math.exp(2 * drift * T + sigma * sigma * T) *
       Phi(d1 + sigSqrtT);
-    const E1_below = S0 * expST * Phi(-d1); // E[S 1_{S<K}]
+    const E1_below = S0 * expST * Phi(-d1);
     const E2_below =
       S0 *
       S0 *
@@ -415,11 +410,10 @@ export default function ChainTable({
           Mid
         </div>
 
-        {/* Interactive Strike header */}
         <div
           className="mid cell strike-hdr"
           role="columnheader"
-          aria-sort={ariaSort}
+          aria-sort={sortDir === "desc" ? "descending" : "ascending"}
           tabIndex={0}
           onClick={handleSortClick}
           onKeyDown={handleSortKey}
@@ -515,7 +509,7 @@ export default function ChainTable({
               closestStrike != null &&
               Number(r.strike) === Number(closestStrike);
             const open = isOpen(r.strike);
-            const focus = focusSide(r.strike); // 'call' | 'put' | null
+            const focus = focusSide(r.strike);
 
             const callMid = r?.call?.mid ?? null;
             const putMid = r?.put?.mid ?? null;
@@ -686,25 +680,21 @@ export default function ChainTable({
                             label="Break-even"
                             value={fmtMoney(shortM?.be)}
                             num={shortM?.be}
-                            kind="money"
                           />
                           <Metric
                             label="Prob. Profit"
                             value={fmtPct(shortM?.pop)}
                             num={(shortM?.pop ?? null) - 0.5}
-                            goodWhenHigh
                           />
                           <Metric
                             label="Expected Return"
                             value={fmtPct(shortM?.expR)}
                             num={shortM?.expR}
-                            kind="pct"
                           />
                           <Metric
                             label="Expected Profit"
                             value={fmtMoney(shortM?.expP)}
                             num={shortM?.expP}
-                            kind="money"
                           />
                           <Metric
                             label="Sharpe"
@@ -748,25 +738,21 @@ export default function ChainTable({
                             label="Break-even"
                             value={fmtMoney(longM?.be)}
                             num={longM?.be}
-                            kind="money"
                           />
                           <Metric
                             label="Prob. Profit"
                             value={fmtPct(longM?.pop)}
                             num={(longM?.pop ?? null) - 0.5}
-                            goodWhenHigh
                           />
                           <Metric
                             label="Expected Return"
                             value={fmtPct(longM?.expR)}
                             num={longM?.expR}
-                            kind="pct"
                           />
                           <Metric
                             label="Expected Profit"
                             value={fmtMoney(longM?.expP)}
                             num={longM?.expP}
-                            kind="money"
                           />
                           <Metric
                             label="Sharpe"
@@ -825,7 +811,6 @@ export default function ChainTable({
           flex: 1;
         }
 
-        /* grid: 10 columns */
         .grid {
           display: grid;
           grid-template-columns:
@@ -893,15 +878,6 @@ export default function ChainTable({
           box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28),
             inset 0 1px 0 rgba(255, 255, 255, 0.04);
         }
-        .title {
-          font-weight: 800;
-          font-size: 16px;
-          margin-bottom: 4px;
-        }
-        .sub {
-          opacity: 0.75;
-          font-size: 13px;
-        }
 
         .body .row {
           padding: 8px 0;
@@ -939,14 +915,12 @@ export default function ChainTable({
           color: var(--ivCol);
         }
 
-        /* focus highlighting only on the clicked side */
         .body .row.is-open.focus-call .c.cell,
         .body .row.is-open.focus-put .p.cell {
           background: rgba(255, 255, 255, 0.04);
           border-radius: 8px;
         }
 
-        /* Expanded details */
         .details {
           overflow: hidden;
           max-height: 0;
@@ -1017,13 +991,13 @@ export default function ChainTable({
         .metrics {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 16px 22px; /* breathing room */
+          gap: 16px 22px;
         }
         .metric {
           display: flex;
           align-items: center;
           justify-content: flex-start;
-          gap: 18px; /* space between label and value */
+          gap: 18px;
         }
         .metric .k {
           color: #eaeef5;
@@ -1076,7 +1050,6 @@ export default function ChainTable({
           background: #0c1117;
         }
 
-        /* Loading shimmer */
         .is-loading .row:hover {
           background: transparent;
         }
@@ -1136,7 +1109,6 @@ export default function ChainTable({
 function Metric({ label, value, num }) {
   let tone = "neu";
   if (isNum(num)) {
-    // For PoP we pass (pop - 0.5) so positive means "good"
     if (num > 0) tone = "pos";
     else if (num < 0) tone = "neg";
   }
@@ -1170,16 +1142,14 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
     return <span className="chart-hint">Chart</span>;
   }
 
-  // ----- sizing -----
   const W = 520,
     H = 210,
     pad = 12;
 
-  // ----- zoom anchored at BE (or S0 if BE missing) -----
   const centerPx = Number.isFinite(BE) ? BE : S0;
   const baseSpan =
-    0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0)); // default coverage
-  const [zoom, setZoom] = useState(1); // 1 = default; larger → closer
+    0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0));
+  const [zoom, setZoom] = useState(1);
   const zoomIn = () => setZoom((z) => Math.min(20, Math.round(z * 1.12 * 100) / 100));
   const zoomOut = () => setZoom((z) => Math.max(0.5, Math.round((z / 1.12) * 100) / 100));
 
@@ -1193,7 +1163,6 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
 
   const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
 
-  // ----- payoff samples -----
   const payoffAt = (s) => {
     if (type === "call") {
       const intr = Math.max(s - K, 0);
@@ -1207,13 +1176,11 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
   const xs = Array.from({ length: N + 1 }, (_, i) => xmin + (i / N) * (xmax - xmin));
   const pay = xs.map(payoffAt);
 
-  // y-range padded so fills never clip
   const yMin = Math.min(...pay, -premium * 1.35);
   const yMax = Math.max(...pay, premium * 1.35);
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
   const baselineY = ymap(0);
 
-  // payoff lines/areas
   const lineD = xs
     .map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`)
     .join(" ");
@@ -1223,7 +1190,6 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
     `L ${xmap(xs[xs.length - 1]).toFixed(2)} ${baselineY.toFixed(2)} Z`,
   ].join(" ");
 
-  // ----- probability overlay (lognormal) -----
   const mu = Number(drift || 0);
   const canPdf = sigma > 0 && T > 0;
   const m = canPdf ? Math.log(S0) + (mu - 0.5 * sigma * sigma) * T : 0;
@@ -1234,7 +1200,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
 
   const pdfVals = canPdf ? xs.map(pdf) : xs.map(() => 0);
   const pdfMax = Math.max(...pdfVals) || 1;
-  const amp = 0.55 * (H - 2 * pad); // ~55% height
+  const amp = 0.55 * (H - 2 * pad);
 
   const pdfPath = xs
     .map((s, i) => {
@@ -1243,20 +1209,17 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
     })
     .join(" ");
 
-  // ----- 95% CI as area **under the bell curve** -----
   let ciAreaD = null;
   let xCIL = null,
     xCIH = null;
   if (canPdf) {
     const sLo = Math.exp(m - 1.96 * v);
     const sHi = Math.exp(m + 1.96 * v);
-    // clamp to current viewport
     const lo = Math.max(xmin, Math.min(xmax, sLo));
     const hi = Math.max(xmin, Math.min(xmax, sHi));
     xCIL = xmap(lo);
     xCIH = xmap(hi);
 
-    // indices spanning [lo, hi]
     const iStart = Math.max(0, Math.floor(((lo - xmin) / (xmax - xmin)) * N));
     const iEnd = Math.min(N, Math.ceil(((hi - xmin) / (xmax - xmin)) * N));
 
@@ -1269,7 +1232,6 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
           return `${j ? "L" : "M"} ${xmap(s).toFixed(2)} ${y.toFixed(2)}`;
         })
         .join(" ");
-      // close to baseline
       const xEnd = xmap(xs[iEnd]);
       const xBeg = xmap(xs[iStart]);
       ciAreaD = `${pathUp} L ${xEnd.toFixed(2)} ${baselineY.toFixed(
@@ -1278,18 +1240,15 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
     }
   }
 
-  // guides
   const xBE = Number.isFinite(BE) ? xmap(BE) : null;
   const xSpot = xmap(S0);
   const xMean = xmap(S0 * Math.exp(mu * T));
 
-  // ticks on the X-axis
   const tickFmt = (s) => Math.round(s).toString();
   const leftTick = tickFmt(xmin);
   const midTick = tickFmt(centerPx);
   const rightTick = tickFmt(xmax);
 
-  // tooltip
   const [tip, setTip] = useState(null);
   const onMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1297,7 +1256,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
     const price = xmin + ((x - pad) / (W - 2 * pad)) * (xmax - xmin);
     const pr = payoffAt(price);
     const y = ymap(pr);
-    const top = Math.min(H - 26, Math.max(10, y + 12)); // never cut off
+    const top = Math.min(H - 26, Math.max(10, y + 12));
     const left = Math.min(W - 130, Math.max(10, x + 10));
     setTip({ x: left, y: top, price, pr });
   };
@@ -1344,7 +1303,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
           </clipPath>
         </defs>
 
-        {/* subtle frame */}
+        {/* frame */}
         <rect
           x="1"
           y="1"
@@ -1365,13 +1324,12 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
             strokeLinejoin="round"
           />
         )}
-        {/* dashed CI bounds */}
         {xCIL != null && (
           <line
             x1={xCIL}
             y1={pad}
-            y2={H - pad}
             x2={xCIL}
+            y2={H - pad}
             stroke="rgba(196,181,253,.45)"
             strokeDasharray="6 6"
           />
@@ -1380,26 +1338,19 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
           <line
             x1={xCIH}
             y1={pad}
-            y2={H - pad}
             x2={xCIH}
+            y2={H - pad}
             stroke="rgba(196,181,253,.45)"
             strokeDasharray="6 6"
           />
         )}
 
-        {/* zero (P&L) line */}
-        <line
-          x1={12}
-          y1={baselineY}
-          x2={W - 12}
-          y2={baselineY}
-          stroke="currentColor"
-          opacity="0.18"
-        />
+        {/* zero line */}
+        <line x1={12} y1={baselineY} x2={W - 12} y2={baselineY} stroke="currentColor" opacity="0.18" />
 
         {/* profit / loss areas (single path, clipped) */}
         <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
-        <path d={areaD} fill="rgba(239, 68, 68, .15)`"} clipPath={`url(#${belowId})`} />
+        <path d={areaD} fill="rgba(239,68,68,.15)" clipPath={`url(#${belowId})`} />
 
         {/* payoff line */}
         <path
@@ -1410,8 +1361,8 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
           vectorEffect="non-scaling-stroke"
         />
 
-        {/* probability overlay (line on top) */}
-        {canPdf && (
+        {/* probability overlay */}
+        {sigma > 0 && T > 0 && (
           <path
             d={pdfPath}
             fill="none"
@@ -1424,46 +1375,16 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
 
         {/* vertical guides */}
         {Number.isFinite(xBE) && (
-          <line
-            x1={xBE}
-            y1={pad}
-            x2={xBE}
-            y2={H - pad}
-            stroke="#10b981"
-            strokeWidth="1.25"
-            opacity="0.9"
-          />
+          <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.9" />
         )}
-        <line
-          x1={xSpot}
-          y1={pad}
-          x2={xSpot}
-          y2={H - pad}
-          stroke="#60a5fa"
-          strokeWidth="1.1"
-          opacity="0.9"
-        />
-        <line
-          x1={xMean}
-          y1={pad}
-          x2={xMean}
-          y2={H - pad}
-          stroke="#f472b6"
-          strokeWidth="1.1"
-          opacity="0.9"
-        />
+        <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
+        <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
 
         {/* ticks aligned with the X-axis */}
         <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
-          <text x={12} y={baselineY - 6}>
-            {leftTick}
-          </text>
-          <text x={W / 2} y={baselineY - 6} textAnchor="middle" fill="#60a5fa">
-            {midTick}
-          </text>
-          <text x={W - 12} y={baselineY - 6} textAnchor="end">
-            {rightTick}
-          </text>
+          <text x={12} y={baselineY - 6}>{leftTick}</text>
+          <text x={W / 2} y={baselineY - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
+          <text x={W - 12} y={baselineY - 6} textAnchor="end">{rightTick}</text>
         </g>
 
         {/* tooltip */}
@@ -1487,7 +1408,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
         )}
       </svg>
 
-      {/* Zoom buttons (darker + subtle blur) */}
+      {/* Zoom buttons */}
       <div
         aria-label="Zoom controls"
         style={{
