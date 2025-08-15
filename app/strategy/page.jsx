@@ -46,6 +46,23 @@ export default function Strategy() {
   // Expiries shared with StatsRail – identical to Options logic
   const { list: expiries } = useExpiries(company?.symbol);
 
+  // Selected expiry (single source of truth for selected ISO date string)
+  const [selectedExpiry, setSelectedExpiry] = useState(null);
+
+  /* ===== keep selectedExpiry in sync with expiries list ===== */
+  useEffect(() => {
+    if (!Array.isArray(expiries) || expiries.length === 0) {
+      setSelectedExpiry(null);
+      return;
+    }
+    // ensure the selection is one of the available expiries (prefer nearest upcoming)
+    if (!selectedExpiry || !expiries.includes(selectedExpiry)) {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const nearest = expiries.find((e) => e >= todayISO) || expiries[expiries.length - 1];
+      setSelectedExpiry(nearest);
+    }
+  }, [expiries, selectedExpiry]);
+
   /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
   const sigma = ivValue ?? null;
@@ -305,6 +322,8 @@ export default function Strategy() {
 
               /* expiry list shared with Options tab */
               expiries={expiries}
+              selectedExpiry={selectedExpiry}
+              onExpiryChange={setSelectedExpiry}
               onDaysChange={(d) => setHorizon(d)}
 
               /* let StatsRail stamp days on legs if needed */
