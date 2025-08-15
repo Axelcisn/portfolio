@@ -45,6 +45,22 @@ const fmtCur = (x, ccy = "USD") => {
   }
 };
 
+/** Robust per-leg time-to-expiry (years). Never returns 0. */
+function getTYears(row, fallbackDays = 30) {
+  // Preferred: explicit days
+  const d = Number(row?.days);
+  if (Number.isFinite(d) && d > 0) return d / 365;
+
+  // Secondary: explicit T in years
+  const Ty = Number(row?.T);
+  if (Number.isFinite(Ty) && Ty > 0) return Ty;
+
+  // Final fallback: component-level default (≥ 1 day)
+  const fb = Number(fallbackDays);
+  const dfb = Number.isFinite(fb) && fb > 0 ? fb : 30;
+  return Math.max(1 / 365, dfb / 365);
+}
+
 /* ---------- position definitions ---------- */
 const TYPE_INFO = {
   lc: { sign: +1, opt: "call" },
@@ -97,10 +113,8 @@ function payoffAtExpiration(S, rows, contractSize) {
   return y;
 }
 
-function payoffCurrent(S, rows, { r, sigma, daysDefault = 30 }, contractSize) {
-  // Use a robust days fallback so Greeks/MTM don't collapse to 1-day
+function payoffCurrent(S, rows, { r, sigma }, contractSize, fallbackDays) {
   let y = 0;
-  const dfltDays = Math.max(1, Number(daysDefault) || 30);
   for (const r0 of rows) {
     if (!r0?.enabled) continue;
     const info = TYPE_INFO[r0.type];
@@ -111,41 +125,33 @@ function payoffCurrent(S, rows, { r, sigma, daysDefault = 30 }, contractSize) {
       continue;
     }
     const K = Number(r0.K || 0);
-    const days = Number.isFinite(Number(r0.days)) ? Math.max(1, Number(r0.days)) : dfltDays;
-    const T = days / 365;
+    const T = getTYears(r0, fallbackDays);
     const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
-    const px = bsValueByKey(r0.type, S, K, r, sigma, T, 0); // q=0 for now
+    // centralized Black–Scholes value (long option price)
+    const px = bsValueByKey(r0.type, S, K, r, sigma, T, 0);
     y += info.sign * px * q + -info.sign * prem * q;
   }
   return y;
 }
 
-function greekTotal(which, S, rows, { r, sigma, daysDefault = 30 }, contractSize) {
-  const w = (which || "").toLowerCase();
+function greekTotal(which, S, rows, { r, sigma }, contractSize, fallbackDays) {
   let g = 0;
-  const dfltDays = Math.max(1, Number(daysDefault) || 30);
-
+  const w = (which || "").toLowerCase();
   for (const r0 of rows) {
     if (!r0?.enabled) continue;
     const info = TYPE_INFO[r0.type];
     if (!info) continue;
-
-    const qty = Number(r0.qty || 0) * contractSize;
-
+    const q = Number(r0.qty || 0) * contractSize;
     if (info.stock) {
-      if (w === "delta") g += info.sign * qty; // stock delta = ±1
+      if (w === "delta") g += info.sign * q;
       continue;
     }
-
     const K = Number(r0.K || 0);
-    const days = Number.isFinite(Number(r0.days)) ? Math.max(1, Number(r0.days)) : dfltDays;
-    const T = days / 365;
-
-    // Long-option Greeks (vega per 1%, theta per day)
-    const G = greeksByKey(r0.type, S, K, r, sigma, T, 0); // q=0
+    const T = getTYears(r0, fallbackDays);
+    // centralized Greeks (long option Greeks: vega per 1%, theta per day)
+    const G = greeksByKey(r0.type, S, K, r, sigma, T, 0);
     const g1 = Number.isFinite(G[w]) ? G[w] : 0;
-
-    g += (info.sign > 0 ? +1 : -1) * g1 * qty;
+    g += (info.sign > 0 ? +1 : -1) * g1 * q;
   }
   return g;
 }
@@ -187,10 +193,7 @@ function buildAreaPaths(xs, ys, xScale, yScale) {
           push();
         }
         if (s !== 0) {
-          seg = [
-            [xCross, 0],
-            [x, y],
-          ];
+          seg = [[xCross, 0], [x, y]];
           sign = s;
           continue;
         } else {
@@ -292,6 +295,12 @@ export default function Chart({
   const zoomOut = () => zoomAt((xDomain[0] + xDomain[1]) / 2, 1.1);
   const resetZoom = () => setXDomain(baseDomain);
 
+  // Fallback days for pricing/Greeks (strictly positive)
+  const fallbackDays = useMemo(
+    () => Math.max(1, Math.round((T || 30 / 365) * 365)),
+    [T]
+  );
+
   const N = 401;
   const xs = useMemo(() => {
     const [lo, hi] = xDomain,
@@ -302,23 +311,20 @@ export default function Chart({
   }, [xDomain]);
   const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
-  // default days for Greeks/MTM when legs don't carry their own `days`
-  const daysDefault = useMemo(() => Math.max(1, Math.round((T || 30 / 365) * 365)), [T]);
-  const env = useMemo(() => ({ r: riskFree, sigma, daysDefault }), [riskFree, sigma, daysDefault]);
-
+  const env = useMemo(() => ({ r: riskFree, sigma }), [riskFree, sigma]);
   const yExp = useMemo(
     () => xs.map((S) => payoffAtExpiration(S, rowsEff, contractSize)),
     [xs, rowsEff, contractSize]
   );
   const yNow = useMemo(
-    () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize)),
-    [xs, rowsEff, env, contractSize]
+    () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
+    [xs, rowsEff, env, contractSize, fallbackDays]
   );
 
   const greekWhich = (greekProp || "vega").toLowerCase();
   const gVals = useMemo(
-    () => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize)),
-    [xs, rowsEff, env, contractSize, greekWhich]
+    () => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
+    [xs, rowsEff, env, contractSize, greekWhich, fallbackDays]
   );
 
   const beFromGraph = useMemo(() => {
@@ -380,7 +386,7 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // Time/vol inputs for mean & 95% CI
+  // Time/vol inputs for mean & 95% CI (no tooltip probability for now)
   const avgDays = useMemo(() => {
     const opt = rowsEff.filter((r) => !TYPE_INFO[r.type]?.stock && Number.isFinite(r.days));
     if (!opt.length) return Math.round(T * 365) || 30;
