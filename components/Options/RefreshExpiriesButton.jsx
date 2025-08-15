@@ -1,7 +1,7 @@
 // components/Options/RefreshExpiriesButton.jsx
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 
 export default function RefreshExpiriesButton({
   onRefresh,
@@ -11,15 +11,18 @@ export default function RefreshExpiriesButton({
   const [busyLocal, setBusyLocal] = useState(false);
   const isBusy = busyProp || busyLocal;
 
-  async function handleClick() {
+  const handleClick = useCallback(async () => {
     if (isBusy) return;
     try {
       setBusyLocal(true);
-      await (onRefresh?.() ?? Promise.resolve());
+      const p = onRefresh?.();
+      if (p && typeof p.then === "function") {
+        await p; // wait for async refresh if provided
+      }
     } finally {
       setBusyLocal(false);
     }
-  }
+  }, [isBusy, onRefresh]);
 
   return (
     <button
@@ -28,8 +31,9 @@ export default function RefreshExpiriesButton({
       aria-label={title}
       title={title}
       onClick={handleClick}
+      disabled={isBusy}
     >
-      {/* Circular refresh glyph (stroked, white) */}
+      {/* circular refresh icon */}
       <svg
         className="icon"
         width="18"
@@ -48,44 +52,22 @@ export default function RefreshExpiriesButton({
       </svg>
 
       <style jsx>{`
-        .refreshBtn {
-          height: 38px;
-          width: 42px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 14px;
-          border: 1px solid var(--border);
-          background: var(--card);
-          color: var(--text); /* icon inherits this */
-          transition:
-            background 0.15s ease,
-            transform 0.12s ease,
-            border-color 0.15s ease,
-            box-shadow 0.15s ease;
+        .refreshBtn{
+          height:38px; width:42px;
+          display:inline-flex; align-items:center; justify-content:center;
+          border-radius:14px; border:1px solid var(--border);
+          background:var(--card); color:var(--text);
+          transition: background .15s ease, transform .12s ease, border-color .15s ease;
         }
-        .refreshBtn:hover {
+        .refreshBtn:hover:not(:disabled){
           background: color-mix(in srgb, var(--text) 6%, var(--card));
         }
-        .refreshBtn:active {
-          transform: translateY(1px);
-        }
-        .refreshBtn:focus {
-          outline: 2px solid color-mix(in srgb, var(--accent, #3b82f6) 60%, transparent);
-          outline-offset: 2px;
-        }
+        .refreshBtn:active:not(:disabled){ transform: translateY(1px); }
+        .refreshBtn:disabled{ opacity:.6; cursor:not-allowed; }
 
-        .icon {
-          display: block;
-        }
-        .is-busy .icon {
-          animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
+        .icon{ display:block; }
+        .is-busy .icon{ animation:spin .8s linear infinite; }
+        @keyframes spin{ to{ transform:rotate(360deg); } }
       `}</style>
     </button>
   );
