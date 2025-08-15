@@ -1,7 +1,7 @@
 // components/Strategy/StrategyModal.jsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
 import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
@@ -181,6 +181,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             greek={greek}
             onGreekChange={setGreek}
             contractSize={1}
+            strategy={strategyKey}      // ✅ align KPI BE with panel via explicit strategy
           />
         </div>
 
