@@ -48,6 +48,117 @@ function toNum(x) {
   return Number.isFinite(n) ? n : null;
 }
 
+function clampQty(q) {
+  const n = toNum(q);
+  return Math.max(0, n == null ? 1 : n);
+}
+
+/* ------------ strategy alias handling (light) ------------ */
+const STRAT_ALIASES = Object.freeze({
+  // single legs
+  longcall: "long_call",
+  long_call: "long_call",
+  shortcall: "short_call",
+  short_call: "short_call",
+  longput: "long_put",
+  long_put: "long_put",
+  shortput: "short_put",
+  short_put: "short_put",
+
+  // simple spreads
+  bullcallspread: "bull_call_spread",
+  bull_call_spread: "bull_call_spread",
+  bearcallspread: "bear_call_spread",
+  bear_call_spread: "bear_call_spread",
+  bullputspread: "bull_put_spread",
+  bull_put_spread: "bull_put_spread",
+  bearputspread: "bear_put_spread",
+  bear_put_spread: "bear_put_spread",
+
+  // multi-leg
+  longstraddle: "long_straddle",
+  long_straddle: "long_straddle",
+  shortstraddle: "short_straddle",
+  short_straddle: "short_straddle",
+  longstrangle: "long_strangle",
+  long_strangle: "long_strangle",
+  shortstrangle: "short_strangle",
+  short_strangle: "short_strangle",
+  ironcondor: "iron_condor",
+  iron_condor: "iron_condor",
+  ironbutterfly: "iron_butterfly",
+  iron_butterfly: "iron_butterfly",
+  callratio: "call_ratio",
+  call_ratio: "call_ratio",
+  putratio: "put_ratio",
+  put_ratio: "put_ratio",
+  collar: "collar",
+  callcalendar: "call_calendar",
+  call_calendar: "call_calendar",
+  putcalendar: "put_calendar",
+  put_calendar: "put_calendar",
+  longbox: "long_box",
+  long_box: "long_box",
+  shortbox: "short_box",
+  short_box: "short_box",
+  leaps: "long_call",
+});
+
+function normalizeStrategyKey(x) {
+  if (!x) return null;
+  const s = String(x).toLowerCase().replace(/\s+/g, "").replace(/-/g, "");
+  return STRAT_ALIASES[s] ?? null;
+}
+
+/** Normalize a single leg to API shape. Returns null if unrecognized. */
+function normalizeLeg(raw) {
+  const typeIn = (raw?.type ?? raw?.kind ?? "").toLowerCase();
+  const side   = String(raw?.side ?? "").toLowerCase();
+
+  if (typeIn !== "call" && typeIn !== "put" && typeIn !== "stock") return null;
+
+  const qty = clampQty(raw?.qty);
+
+  if (typeIn === "stock") {
+    const price = toNum(raw?.price ?? raw?.premium); // tolerate builder variance
+    const leg = { type: "stock", side, qty };
+    if (price != null) leg.price = price;
+    return leg;
+  }
+
+  // options
+  const strike = toNum(raw?.strike);
+  const premium = toNum(raw?.premium);
+
+  const leg = {
+    type: typeIn,
+    side,
+    qty,
+    strike: strike == null ? null : strike,
+  };
+  if (premium != null) leg.premium = premium;
+
+  return leg;
+}
+
+/** Build the POST body sent to /api/strategy/breakeven (exported for tests). */
+function buildPayload({ legs = [], spot = null, strategy, strategyKey, contractSize = 1 } = {}) {
+  const sanitizedLegs = Array.isArray(legs)
+    ? legs.map(normalizeLeg).filter(Boolean)
+    : [];
+
+  const normalizedStrategy = normalizeStrategyKey(strategy ?? strategyKey ?? null) || undefined;
+
+  const body = {
+    legs: sanitizedLegs,
+    spot: toNum(spot),
+    contractSize: toNum(contractSize) ?? 1,
+  };
+  if (normalizedStrategy) body.strategy = normalizedStrategy;
+
+  return body;
+}
+
 export function useBreakEven({
   legs = [],
   spot = null,
@@ -56,31 +167,11 @@ export function useBreakEven({
   contractSize = 1,
   debounceMs = 150,
 } = {}) {
-  const strategy = strategyIn ?? strategyKey ?? null;
-
-  const reqBody = useMemo(() => {
-    const sanitizedLegs = Array.isArray(legs)
-      ? legs.map((L) => {
-          const type = L?.type ?? L?.kind ?? null; // accept either, send 'type'
-          return {
-            type: type, // API expects 'type'
-            side: L?.side,
-            strike: toNum(L?.strike),
-            premium: toNum(L?.premium),
-            qty: toNum(L?.qty) ?? 1,
-            price: toNum(L?.price), // for stock legs, if present
-          };
-        })
-      : [];
-
-    return {
-      legs: sanitizedLegs,
-      spot: toNum(spot),
-      strategy: strategy || undefined,   // API expects 'strategy'
-      contractSize: toNum(contractSize) ?? 1,
-    };
+  const reqBody = useMemo(
+    () => buildPayload({ legs, spot, strategy: strategyIn, strategyKey, contractSize }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stableKey(legs), spot, strategy, contractSize]);
+    [stableKey(legs), spot, strategyIn, strategyKey, contractSize]
+  );
 
   const key = useMemo(() => `be:${stableKey(reqBody)}`, [reqBody]);
 
@@ -163,3 +254,6 @@ export function useBreakEven({
 }
 
 export default useBreakEven;
+
+// Test-only named export (safe to import in Jest)
+export const __testOnly_buildPayload = buildPayload;
