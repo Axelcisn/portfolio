@@ -250,7 +250,7 @@ export default function Chart({
     [rowsEff]
   );
   const baseDomain = useMemo(() => {
-    const s = Number(spot) || ks[0] ?? 100;
+    const s = Number.isFinite(Number(spot)) ? Number(spot) : (ks[0] ?? 100);
     const lo = Math.max(0.01, Math.min(ks[0] ?? s, s) * 0.9);
     const hi = Math.max(lo * 1.1, Math.max(ks[ks.length - 1] ?? s, s) * 1.1);
     return [lo, hi];
