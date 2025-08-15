@@ -1,8 +1,5 @@
 // components/Strategy/hooks/rowsToApiLegs.js
+// DEPRECATED: use components/Strategy/utils/rowsToApiLegs instead.
+// Kept as a backward-compatible re-export to avoid breaking existing imports.
 
-/**
- * Backward-compatible re-export.
- * Canonical implementation lives at:
- *   components/Strategy/utils/rowsToApiLegs.js
- */
 export { default, rowsToApiLegs } from "../utils/rowsToApiLegs";
