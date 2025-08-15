@@ -182,6 +182,7 @@ export default function StatsRail({
   /* Option expiries: MUST be the SAME array used by Options/ExpiryStrip */
   expiries = [],          // array of ISO strings or Date objects
   onExpiryChange,         // optional: (iso) => void
+  selectedExpiry: selectedExpiryProp = null, // optional controlled prop
 
   /* Optional strategy plumbing (safe if omitted) */
   rows = null,
@@ -225,15 +226,31 @@ export default function StatsRail({
 
   /* expiry state (source of truth for T) */
   const expiryList = useMemo(() => normalizeExpiries(expiries), [expiries]);
-  const [selectedExpiry, setSelectedExpiry] = useState(null);
 
-  // keep selected in sync with list (nearest/upcoming)
-  useEffect(() => {
-    if (!expiryList.length) { setSelectedExpiry(null); return; }
-    if (!selectedExpiry || !expiryList.includes(selectedExpiry)) {
-      setSelectedExpiry(pickNearest(expiryList));
+  // If parent controls selectedExpiry (selectedExpiryProp + onExpiryChange provided),
+  // use those; otherwise fall back to local internal state for backward compat.
+  const [localSelectedExpiry, setLocalSelectedExpiry] = useState(null);
+  const isControlled = selectedExpiryProp != null && typeof onExpiryChange === "function";
+  const selectedExpiry = isControlled ? selectedExpiryProp : localSelectedExpiry;
+  const setSelectedExpiry = (v) => {
+    const iso = v || null;
+    if (isControlled) {
+      onExpiryChange(iso);
+    } else {
+      setLocalSelectedExpiry(iso);
     }
-  }, [expiryList, selectedExpiry]);
+  };
+
+  // keep local selection in sync with expiryList when uncontrolled
+  useEffect(() => {
+    if (!isControlled) {
+      if (!expiryList.length) { setLocalSelectedExpiry(null); return; }
+      if (!localSelectedExpiry || !expiryList.includes(localSelectedExpiry)) {
+        setLocalSelectedExpiry(pickNearest(expiryList));
+      }
+    }
+    // when controlled, parent is expected to manage selection sync
+  }, [expiryList, isControlled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const days = useMemo(() => daysToExpiry(selectedExpiry, "Europe/Rome"), [selectedExpiry]);
 
