@@ -16,7 +16,7 @@ export default function ChainTable({
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null);      // {spot, currency, expiry}
   const [rows, setRows] = useState([]);        // merged by strike: { strike, call, put, ivPct }
-  const [expanded, setExpanded] = useState(null); // strike of expanded row (single-open)
+  const [expanded, setExpanded] = useState(null); // { strike, side: 'call'|'put' } | null
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
 
@@ -86,6 +86,7 @@ export default function ChainTable({
       if (!byStrike.has(k)) byStrike.set(k, { strike: k, call: null, put: null, ivPct: null });
       const row = byStrike.get(k);
       row[side] = {
+        // NOTE: price = theoretical/model price (e.g., BS) from API if present
         price: pick(o.price),
         ask: pick(o.ask),
         bid: pick(o.bid),
@@ -106,7 +107,7 @@ export default function ChainTable({
           ? (cIV + pIV) / 2
           : (Number.isFinite(cIV) ? cIV : (Number.isFinite(pIV) ? pIV : null));
       if (r.call) r.call.mid = midFrom(r.call.ask, r.call.bid, r.call.price);
-      if (r.put)  r.put.mid  = midFrom(r.put.ask, r.put.bid, r.put.price);
+      if (r.put)  r.put.mid  = midFrom(r.put.ask,  r.put.bid,  r.put.price);
     }
 
     return out.sort((a, b) => a.strike - b.strike);
@@ -162,51 +163,33 @@ export default function ChainTable({
 
   /* ---------- ATM-centered window (ATM always included) ---------- */
 
-  // Pick N rows centered around ATM. ATM is always part of the slice.
   function selectAroundATM(sortedAsc, atmIndex, N) {
     const len = sortedAsc.length;
     if (!Number.isFinite(N) || N === Infinity || N >= len) return sortedAsc;
 
-    // Fallback ATM index if not found
     let atm = Number.isFinite(atmIndex) && atmIndex >= 0 ? atmIndex : Math.floor(len / 2);
 
-    // Always include ATM; distribute remaining rows around it
     const remaining = N - 1;
     let below = Math.floor(remaining / 2);
     let above = remaining - below;
 
-    // Initial window (inclusive)
     let start = atm - below;
     let end   = atm + above;
 
-    // Shift window if it overflows left
-    if (start < 0) {
-      end += -start;
-      start = 0;
-    }
-    // Shift window if it overflows right
-    if (end > len - 1) {
-      const overshoot = end - (len - 1);
-      start = Math.max(0, start - overshoot);
-      end = len - 1;
-    }
+    if (start < 0) { end += -start; start = 0; }
+    if (end > len - 1) { const overshoot = end - (len - 1); start = Math.max(0, start - overshoot); end = len - 1; }
 
     return sortedAsc.slice(start, end + 1);
   }
 
-  // Apply ATM-centered selection + sort direction
   const visible = useMemo(() => {
     if (!rows?.length) return [];
+    const baseAsc = rows;
 
-    // Ascending base
-    const baseAsc = rows; // buildRows already returns ascending by strike
-
-    // Find ATM index by closest strike to spot
     const spot = Number(meta?.spot);
     let atmIdx = null;
     if (Number.isFinite(spot)) {
-      let bestI = 0;
-      let bestD = Infinity;
+      let bestI = 0, bestD = Infinity;
       for (let i = 0; i < baseAsc.length; i++) {
         const d = Math.abs(baseAsc[i].strike - spot);
         if (d < bestD) { bestD = d; bestI = i; }
@@ -220,7 +203,6 @@ export default function ChainTable({
     return (sortDir === "desc") ? [...centeredAsc].reverse() : centeredAsc;
   }, [rows, rowLimit, sortDir, meta?.spot]);
 
-  // For orange highlight, find the (global) closest strike to spot
   const closestStrike = useMemo(() => {
     const spot = Number(meta?.spot);
     if (!rows?.length || !Number.isFinite(spot)) return null;
@@ -240,16 +222,23 @@ export default function ChainTable({
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleSort?.(); }
   };
 
-  // Shimmer row count (subtle, Apple-like)
+  // Shimmer row count
   const shimmerCount = useMemo(() => {
     if (rowLimit === Infinity) return 12;
     return Math.max(8, Math.min(14, rowLimit || 12));
   }, [rowLimit]);
 
-  // toggle expansion (single-open)
-  const onToggleRow = useCallback((strike) => {
-    setExpanded((cur) => (cur === strike ? null : strike));
+  // open details for a specific side
+  const openDetails = useCallback((strike, side) => {
+    setExpanded((cur) => {
+      if (!cur) return { strike, side };
+      if (cur.strike === strike && cur.side === side) return null;     // toggle close
+      return { strike, side };                                          // switch/open
+    });
   }, []);
+
+  const isOpen = (strike) => expanded && expanded.strike === strike;
+  const focusSide = (strike) => (isOpen(strike) ? expanded.side : null);
 
   return (
     <div className="wrap" aria-live="polite">
@@ -264,6 +253,7 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">Price</div>
         <div className="c cell" role="columnheader">Ask</div>
         <div className="c cell" role="columnheader">Bid</div>
+        <div className="c cell" role="columnheader">Mid</div>
 
         {/* Interactive Strike header */}
         <div
@@ -280,6 +270,7 @@ export default function ChainTable({
 
         <div className="mid cell iv-hdr" role="columnheader">IV, %</div>
 
+        <div className="p cell" role="columnheader">Mid</div>
         <div className="p cell" role="columnheader">Bid</div>
         <div className="p cell" role="columnheader">Ask</div>
         <div className="p cell" role="columnheader">Price</div>
@@ -303,7 +294,7 @@ export default function ChainTable({
         </div>
       )}
 
-      {/* Loading shimmer (D1) */}
+      {/* Loading shimmer */}
       {status === "loading" && (
         <div className="body is-loading" aria-busy="true" aria-label="Loading options">
           {Array.from({ length: shimmerCount }).map((_, i) => (
@@ -312,10 +303,12 @@ export default function ChainTable({
               <div className="c cell"><span className="skl w-70" /></div>
               <div className="c cell"><span className="skl w-60" /></div>
               <div className="c cell"><span className="skl w-60" /></div>
+              <div className="c cell"><span className="skl w-60" /></div>
               {/* Center */}
               <div className="mid cell"><span className="skl w-50" /></div>
               <div className="mid cell"><span className="skl w-45" /></div>
               {/* Puts (right) */}
+              <div className="p cell"><span className="skl w-60" /></div>
               <div className="p cell"><span className="skl w-60" /></div>
               <div className="p cell"><span className="skl w-60" /></div>
               <div className="p cell"><span className="skl w-70" /></div>
@@ -328,46 +321,45 @@ export default function ChainTable({
       {status === "ready" && (
         <div className="body">
           {visible.map((r) => {
-            const isSpot = closestStrike != null && Number(r.strike) === Number(closestStrike);
-            const isOpen = expanded === r.strike;
+            const spotStrike = closestStrike != null && Number(r.strike) === Number(closestStrike);
+            const open = isOpen(r.strike);
+            const focus = focusSide(r.strike); // 'call' | 'put' | null
 
-            // NOTE: we show **mid** in the Price column
-            const callPrice = r?.call ? midFrom(r.call.ask, r.call.bid, r.call.price) : null;
-            const putPrice  = r?.put  ? midFrom(r.put.ask,  r.put.bid,  r.put.price)  : null;
+            const callMid = r?.call?.mid ?? null;
+            const putMid  = r?.put?.mid  ?? null;
 
             return (
               <div key={r.strike}>
                 <div
-                  className={`grid row ${isSpot ? "is-spot" : ""} ${isOpen ? "is-open" : ""}`}
+                  className={`grid row ${spotStrike ? "is-spot" : ""} ${open ? "is-open" : ""} ${focus ? `focus-${focus}` : ""}`}
                   role="row"
-                  tabIndex={0}
-                  aria-expanded={isOpen ? "true" : "false"}
-                  onClick={() => onToggleRow(r.strike)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleRow(r.strike); }
-                  }}
+                  aria-expanded={open ? "true" : "false"}
                 >
-                  {/* Calls (left) */}
-                  <div className="c cell val">{fmt(callPrice)}</div>
-                  <div className="c cell val">{fmt(r?.call?.ask)}</div>
-                  <div className="c cell val">{fmt(r?.call?.bid)}</div>
+                  {/* Calls (left) — clicking any CALL cell focuses/open CALL side */}
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(r?.call?.price)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(r?.call?.ask)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(r?.call?.bid)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(callMid)}</div>
 
                   {/* Center */}
                   <div className="mid cell val strike-val">{fmt(r.strike)}</div>
                   <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
-                  {/* Puts (right) */}
-                  <div className="p cell val">{fmt(r?.put?.bid)}</div>
-                  <div className="p cell val">{fmt(r?.put?.ask)}</div>
-                  <div className="p cell val">{fmt(putPrice)}</div>
+                  {/* Puts (right) — clicking any PUT cell focuses/open PUT side */}
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(putMid)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(r?.put?.bid)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(r?.put?.ask)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(r?.put?.price)}</div>
                 </div>
 
                 {/* Expanded details */}
-                <div className={`details ${isOpen ? "open" : ""}`} role="region" aria-label={`Details for strike ${r.strike}`}>
+                <div className={`details ${open ? "open" : ""}`} role="region" aria-label={`Details for strike ${r.strike}`}>
                   <div className="details-inner">
                     {/* LEFT — SHORT */}
                     <div className="panel-col">
-                      <div className="panel-head">Short</div>
+                      <div className="panel-head">
+                        {focus === "put" ? "Short Put" : "Short Call"}
+                      </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true"><span className="chart-hint">Chart</span></div>
                         <div className="metrics">
@@ -378,8 +370,11 @@ export default function ChainTable({
                           <Metric label="Sharpe" value="—" />
                           {showGreeks && (
                             <div className="greeks">
-                              <GreekList greeks={r?.call?.greeks} side="Call" />
-                              <GreekList greeks={r?.put?.greeks}  side="Put" />
+                              {/* Show greeks for focused side only */}
+                              {focus === "put"
+                                ? <GreekList greeks={r?.put?.greeks} side="Put" />
+                                : <GreekList greeks={r?.call?.greeks} side="Call" />
+                              }
                             </div>
                           )}
                         </div>
@@ -388,7 +383,9 @@ export default function ChainTable({
 
                     {/* RIGHT — LONG */}
                     <div className="panel-col">
-                      <div className="panel-head">Long</div>
+                      <div className="panel-head">
+                        {focus === "put" ? "Long Put" : "Long Call"}
+                      </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true"><span className="chart-hint">Chart</span></div>
                         <div className="metrics">
@@ -399,8 +396,10 @@ export default function ChainTable({
                           <Metric label="Sharpe" value="—" />
                           {showGreeks && (
                             <div className="greeks">
-                              <GreekList greeks={r?.call?.greeks} side="Call" />
-                              <GreekList greeks={r?.put?.greeks}  side="Put" />
+                              {focus === "put"
+                                ? <GreekList greeks={r?.put?.greeks} side="Put" />
+                                : <GreekList greeks={r?.call?.greeks} side="Call" />
+                              }
                             </div>
                           )}
                         </div>
@@ -437,13 +436,13 @@ export default function ChainTable({
         }
         .h-mid{ flex:1; }
 
-        /* 8 columns: 3 (calls) + 2 (center) + 3 (puts)  */
+        /* 10 columns: 4 (calls) + 2 (center) + 4 (puts)  */
         .grid{
           display:grid;
           grid-template-columns:
-            minmax(86px,1fr) minmax(86px,1fr) minmax(86px,1fr)
+            minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr)
             112px 86px
-            minmax(86px,1fr) minmax(86px,1fr) minmax(86px,1fr);
+            minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr);
           gap: 6px 14px;
           align-items:center;
         }
@@ -491,9 +490,9 @@ export default function ChainTable({
         .body .row{
           padding: 8px 0;
           border-bottom:1px solid color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
-          transition: background-color .18s ease;
-          cursor: pointer;
+          transition: background-color .18s ease, box-shadow .18s ease;
         }
+        .clickable{ cursor: pointer; }
         .body .row:last-child{ border-bottom:0; }
         .body .row:hover{ background-color: var(--rowHover); }
         .body .row.is-spot{
@@ -505,6 +504,16 @@ export default function ChainTable({
         .body .row .strike-val{ color: var(--strikeCol); }
         .body .row .iv-val{     color: var(--ivCol); }
 
+        /* Focus highlighting per side (only the side the user clicked) */
+        .body .row.is-open.focus-call .c.cell{
+          background: color-mix(in srgb, var(--text, #0f172a) 12%, transparent);
+          border-radius: 8px;
+        }
+        .body .row.is-open.focus-put .p.cell{
+          background: color-mix(in srgb, var(--text, #0f172a) 12%, transparent);
+          border-radius: 8px;
+        }
+
         /* Expanded panel */
         .details{
           overflow: hidden;
@@ -515,7 +524,7 @@ export default function ChainTable({
           border-bottom:1px solid transparent;
         }
         .details.open{
-          max-height: 520px; /* enough for content */
+          max-height: 560px;
           opacity: 1;
           transform: translateY(0);
           border-bottom-color: color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
@@ -526,7 +535,12 @@ export default function ChainTable({
           grid-template-columns: 1fr 1fr;
           gap: 14px;
           background: color-mix(in srgb, var(--text, #0f172a) 5%, transparent);
-          border-radius: 10px;
+          border-radius: 14px;
+
+          /* Subtle Apple-like depth */
+          box-shadow:
+            0 18px 40px rgba(0,0,0,.20),
+            0 2px 0 rgba(255,255,255,.02) inset;
         }
         .panel-col{
           display:flex; flex-direction:column; gap:10px;
@@ -590,7 +604,7 @@ export default function ChainTable({
   );
 }
 
-/* ---------- Small presentational helpers (kept here for copy-paste simplicity) ---------- */
+/* ---------- Small presentational helpers ---------- */
 function Metric({ label, value }) {
   return (
     <div className="metric">
@@ -600,7 +614,7 @@ function Metric({ label, value }) {
   );
 }
 
-function GreekList({ greeks, side }) {
+function GreekList({ greeks }) {
   const g = greeks || {};
   return (
     <>
