@@ -50,7 +50,7 @@ function strikesAt(legs, type) {
     .sort((a, b) => a - b);
 }
 function sumPremium(legs) {
-  // Premiums are assumed per-share; qty defaults to 1; stock legs ignored.
+  // Premiums are per-share; qty defaults to 1; stock legs ignored.
   let paid = 0, received = 0;
   for (const l of legs) {
     const t = normType(l.type);
@@ -73,7 +73,6 @@ function sumPremium(legs) {
  * Each handler receives (legs, ctx) and returns:
  *   { be: number[] | null, meta?: object }
  * where BE values are underlying prices (not percent).
- * We keep the formulas exactly as specified in your task list.
  */
 const HANDLERS = {
   /* 1 */ long_call(legs) {
@@ -349,43 +348,43 @@ const HANDLERS = {
 /** Strategy name normalization and alias map */
 const ALIAS = new Map([
   // core
-  ["long_call","long_call"], ["buy_call","long_call"],
-  ["short_put","short_put"], ["sell_put","short_put"],
-  ["protective_put","protective_put"],
-  ["bull_call_spread","bull_call_spread"],
-  ["bear_put_spread","bear_put_spread"],
-  ["short_strangle","short_strangle"],
-  ["iron_condor","iron_condor"],
-  ["reverse_butterfly","reverse_butterfly"], ["short_butterfly","reverse_butterfly"],
+  ["long_call","long_call"], ["buy_call","long_call"], ["longcall","long_call"],
+  ["short_put","short_put"], ["sell_put","short_put"], ["shortput","short_put"],
+  ["protective_put","protective_put"], ["protectiveput","protective_put"],
+  ["bull_call_spread","bull_call_spread"], ["bullcallspread","bull_call_spread"],
+  ["bear_put_spread","bear_put_spread"], ["bearputspread","bear_put_spread"],
+  ["short_strangle","short_strangle"], ["shortstrangle","short_strangle"],
+  ["iron_condor","iron_condor"], ["ironcondor","iron_condor"],
+  ["reverse_butterfly","reverse_butterfly"], ["short_butterfly","reverse_butterfly"], ["reversebutterfly","reverse_butterfly"],
   ["strap","strap"],
-  ["call_ratio_spread","call_ratio_spread"],
-  ["put_backspread","put_backspread"],
+  ["call_ratio_spread","call_ratio_spread"], ["callratiospread","call_ratio_spread"], ["callratio","call_ratio_spread"],
+  ["put_backspread","put_backspread"], ["putbackspread","put_backspread"],
   ["reversal","reversal"],
-  ["long_put","long_put"], ["buy_put","long_put"],
-  ["covered_call","covered_call"],
+  ["long_put","long_put"], ["buy_put","long_put"], ["longput","long_put"],
+  ["covered_call","covered_call"], ["coveredcall","covered_call"],
   ["collar","collar"],
-  ["bear_call_spread","bear_call_spread"],
-  ["long_straddle","long_straddle"],
-  ["short_straddle","short_straddle"], ["sell_straddle","short_straddle"],
-  ["call_calendar_spread","call_calendar_spread"], ["call_calendar","call_calendar_spread"],
-  ["reverse_condor","reverse_condor"], ["long_iron_condor","reverse_condor"],
-  ["call_butterfly","call_butterfly"],
-  ["call_diagonal_spread","call_diagonal_spread"], ["call_diagonal","call_diagonal_spread"],
-  ["put_ratio_spread","put_ratio_spread"],
-  ["long_box_spread","long_box_spread"], ["long_box","long_box_spread"],
-  ["stock_repair_strategy","stock_repair"], ["stock_repair","stock_repair"],
-  ["short_call","short_call"], ["sell_call","short_call"],
-  ["covered_put","covered_put"],
-  ["leaps_option_call","leaps_call"], ["leaps_call","leaps_call"],
-  ["leaps_option_put","leaps_put"], ["leaps_put","leaps_put"],
-  ["bull_put_spread","bull_put_spread"],
-  ["long_strangle","long_strangle"],
-  ["put_calendar_spread","put_calendar_spread"],
-  ["iron_butterfly","iron_butterfly"],
-  ["put_butterfly","put_butterfly"],
-  ["put_diagonal_spread","put_diagonal_spread"], ["put_diagonal","put_diagonal_spread"],
-  ["call_backspread","call_backspread"],
-  ["short_box_spread","short_box_spread"], ["short_box","short_box_spread"],
+  ["bear_call_spread","bear_call_spread"], ["bearcallspread","bear_call_spread"],
+  ["long_straddle","long_straddle"], ["longstraddle","long_straddle"],
+  ["short_straddle","short_straddle"], ["sell_straddle","short_straddle"], ["shortstraddle","short_straddle"],
+  ["call_calendar_spread","call_calendar_spread"], ["callcalendarspread","call_calendar_spread"], ["call_calendar","call_calendar_spread"], ["callcalendar","call_calendar_spread"],
+  ["reverse_condor","reverse_condor"], ["long_iron_condor","reverse_condor"], ["reversecondor","reverse_condor"],
+  ["call_butterfly","call_butterfly"], ["callbutterfly","call_butterfly"],
+  ["call_diagonal_spread","call_diagonal_spread"], ["calldiagonalspread","call_diagonal_spread"], ["call_diagonal","call_diagonal_spread"], ["calldiagonal","call_diagonal_spread"],
+  ["put_ratio_spread","put_ratio_spread"], ["putratiospread","put_ratio_spread"], ["putratio","put_ratio_spread"],
+  ["long_box_spread","long_box_spread"], ["long_box","long_box_spread"], ["longbox","long_box_spread"],
+  ["stock_repair_strategy","stock_repair"], ["stock_repair","stock_repair"], ["stockrepair","stock_repair"],
+  ["short_call","short_call"], ["sell_call","short_call"], ["shortcall","short_call"],
+  ["covered_put","covered_put"], ["coveredput","covered_put"],
+  ["leaps_option_call","leaps_call"], ["leaps_call","leaps_call"], ["leapscall","leaps_call"], ["leaps","leaps_call"],
+  ["leaps_option_put","leaps_put"], ["leaps_put","leaps_put"], ["leapsput","leaps_put"],
+  ["bull_put_spread","bull_put_spread"], ["bullputspread","bull_put_spread"],
+  ["long_strangle","long_strangle"], ["longstrangle","long_strangle"],
+  ["put_calendar_spread","put_calendar_spread"], ["putcalendarspread","put_calendar_spread"], ["put_calendar","put_calendar_spread"], ["putcalendar","put_calendar_spread"],
+  ["iron_butterfly","iron_butterfly"], ["ironbutterfly","iron_butterfly"],
+  ["put_butterfly","put_butterfly"], ["putbutterfly","put_butterfly"],
+  ["put_diagonal_spread","put_diagonal_spread"], ["putdiagonalspread","put_diagonal_spread"], ["put_diagonal","put_diagonal_spread"], ["putdiagonal","put_diagonal_spread"],
+  ["call_backspread","call_backspread"], ["callbackspread","call_backspread"],
+  ["short_box_spread","short_box_spread"], ["short_box","short_box_spread"], ["shortbox","short_box_spread"],
 ]);
 
 function pickStrategyKey(name) {
@@ -435,6 +434,17 @@ function inferStrategyKeyFromLegs(legs) {
   return null;
 }
 
+/* --------- Disambiguation: straddle vs strangle (safety net) --------- */
+function disambiguateStraddleKeyIfNeeded(key, legs) {
+  if (key !== "short_straddle" && key !== "long_straddle") return { key, disambiguatedFrom: null };
+  const side = key.startsWith("short") ? "short" : "long";
+  const Kc = extremeStrike(legs.filter(l => normType(l.type)==="call" && normSide(l.side)===side), "call", side==="short" ? "min" : "min");
+  const Kp = extremeStrike(legs.filter(l => normType(l.type)==="put"  && normSide(l.side)===side), "put",  side==="short" ? "max" : "max");
+  if (!isNum(Kc) || !isNum(Kp)) return { key, disambiguatedFrom: null };
+  if (Math.abs(Kc - Kp) <= 1e-6) return { key, disambiguatedFrom: null };
+  return { key: side === "short" ? "short_strangle" : "long_strangle", disambiguatedFrom: key };
+}
+
 /* --------------------------- handlers --------------------------- */
 
 async function parseInput(req) {
@@ -472,7 +482,7 @@ async function handle(req) {
 
     // normalize legs
     const normLegs = legs.map((l) => ({
-      type: normType(l.type),
+      type: normType(l.type ?? l.kind), // accept 'kind' too
       side: normSide(l.side),
       strike: n(l.strike),
       premium: n(l.premium),
@@ -488,9 +498,13 @@ async function handle(req) {
 
     let usedKey = null;
     let resolved_by = "inferred";
+    let disambiguatedFrom = null;
 
     if (explicitKey && typeof HANDLERS[explicitKey] === "function") {
-      usedKey = explicitKey;
+      // Extra resilience: straddle → strangle if strikes differ
+      const { key: chosen, disambiguatedFrom: from } = disambiguateStraddleKeyIfNeeded(explicitKey, normLegs);
+      usedKey = chosen;
+      disambiguatedFrom = from;
       resolved_by = "explicit";
     } else {
       const inferred = inferStrategyKeyFromLegs(normLegs);
@@ -517,6 +531,7 @@ async function handle(req) {
         premiums: { paid, received, netDebit, netCredit },
         legs: normLegs.length,
         resolved_by,
+        ...(disambiguatedFrom ? { disambiguated_from: disambiguatedFrom } : null),
       },
     });
   } catch (e) {
