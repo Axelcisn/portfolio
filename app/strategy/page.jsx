@@ -54,7 +54,7 @@ export default function Strategy() {
   // Expiries shared across tabs
   const { list: expiries = [] } = useExpiries(company?.symbol);
 
-  // Controlled expiry selection (shared with OptionsTab)
+  // Controlled expiry selection (shared with OptionsTab + StatsRail)
   const [selectedExpiry, setSelectedExpiry] = useState(null);
 
   /* ===== Memory (persists by symbol) ===== */
