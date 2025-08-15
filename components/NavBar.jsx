@@ -1,42 +1,45 @@
+// components/NavBar.jsx
 "use client";
+
+import React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import RomeClock from "./RomeClock";
-import ThemeToggle from "./ThemeToggle";
-import NavSearch from "./ui/NavSearch"; // ← fixed path
+import TickerSearchUnified from "./Search/TickerSearchUnified";
 
-const items = [
-  { href: "/", label: "Dashboard" },
-  { href: "/portfolio", label: "Portfolio" },
-  { href: "/strategy", label: "Strategy" }
-];
-
-export default function NavBar() {
-  const pathname = usePathname();
+export default function NavBar({ onSearchSelect }) {
   return (
-    <nav className="navbar">
-      <div className="nav-left">
-        <span className="nav-title">Portfolio</span>
-        <div className="nav-links">
-          {items.map(i => (
-            <Link
-              key={i.href}
-              href={i.href}
-              className={`nav-link ${pathname === i.href ? "active" : ""}`}
-            >
-              {i.label}
-            </Link>
-          ))}
-        </div>
+    <nav
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "8px 16px",
+        background: "var(--nav-bg, #111)",
+        color: "var(--nav-text, #fff)",
+      }}
+    >
+      {/* Logo / Home Link */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Link href="/" style={{ fontWeight: 800, fontSize: 20, color: "inherit", textDecoration: "none" }}>
+          MyApp
+        </Link>
       </div>
 
-      <div className="right">
-        {/* Compact Apple-style search in the navbar */}
-        <div className="nav-search" style={{ marginRight: 12 }}>
-          <NavSearch />
-        </div>
-        <RomeClock />
-        <ThemeToggle />
+      {/* Search */}
+      <div style={{ flex: "0 1 400px", maxWidth: "50%" }}>
+        <TickerSearchUnified
+          onSelect={onSearchSelect}
+          placeholder="Search companies, tickers..."
+        />
+      </div>
+
+      {/* Right-side Nav Links */}
+      <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        <Link href="/about" style={{ color: "inherit", textDecoration: "none" }}>
+          About
+        </Link>
+        <Link href="/contact" style={{ color: "inherit", textDecoration: "none" }}>
+          Contact
+        </Link>
       </div>
     </nav>
   );
