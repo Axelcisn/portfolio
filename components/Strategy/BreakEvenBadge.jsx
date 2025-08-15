@@ -3,7 +3,7 @@
 
 import { useMemo } from "react";
 import useBreakEven from "./hooks/useBreakEven";
-import rowsToApiLegs from "./hooks/rowsToApiLegs";
+import { rowsToApiLegs } from "./utils";
 
 function fmtPrice(x, ccy = "USD") {
   if (!Number.isFinite(Number(x))) return "—";
@@ -21,9 +21,9 @@ function fmtPrice(x, ccy = "USD") {
 
 export default function BreakEvenBadge({
   rows,
-  strategy = null,     // pass explicit key when known; API can also infer if null
+  strategy = null,     // explicit key when known; API can also infer if null
   currency = "USD",
-  contractSize = 1,
+  contractSize = 1,    // reserved; hook currently ignores but kept for future
 }) {
   // Normalize builder rows -> API legs
   const legs = useMemo(() => rowsToApiLegs(rows || []), [rows]);
@@ -31,8 +31,7 @@ export default function BreakEvenBadge({
   // Centralized BE fetch (debounced + cached)
   const { be, loading, error } = useBreakEven({
     legs,
-    strategy,          // preferred param name supported by the hook
-    contractSize,
+    strategyKey: strategy,  // ✅ pass as strategyKey to match the hook signature
     debounceMs: 150,
   });
 
