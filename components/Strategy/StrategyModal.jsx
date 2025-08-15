@@ -7,7 +7,6 @@ import Chart from "./Chart";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeSeeded from "./defs/materializeSeeded";
-import BreakevenPanel from "./BreakevenPanel"; // ⬅️ uses strategy prop
 
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {
@@ -184,16 +183,6 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             strategy={strategyKey}      // ✅ align KPI BE with panel via explicit strategy
           />
         </div>
-
-        {/* ⬇️ Break-even Panel — below the chart */}
-        <section style={{ marginBottom: GAP }}>
-          <BreakevenPanel
-            rows={rows}
-            currency={currency}
-            spot={spot}
-            strategy={strategyKey}   // ⬅️ pass explicit strategy to API
-          />
-        </section>
 
         {/* Configuration */}
         <section className="card dense" style={{ marginBottom: GAP }}>
