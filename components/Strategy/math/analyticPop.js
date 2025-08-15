@@ -1,36 +1,37 @@
 // components/Strategy/math/analyticPop.js
-// Analytical Probability of Profit (PoP) with a lognormal model of S_T.
-// Self-contained: includes erf/normCdf so we don't rely on any other file.
 
-/* -------------------- normal cdf utilities -------------------- */
-// Abramowitz & Stegun 7.1.26 approximation of erf
-function erf(x) {
-  const s = Math.sign(x);
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
-  const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-  const t = 1 / (1 + p * Math.abs(x));
-  const y = 1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-x * x);
-  return s * y;
-}
-export function normCdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+import { normCdf } from "./lognormal"; // shared standard normal CDF
 
-/* --------------------------- helpers --------------------------- */
+/* --------------------------- small utils --------------------------- */
 const toNum = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
 const clamp01 = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x);
+const safe01 = (x) => {
+  const v = Number(x);
+  return Number.isFinite(v) ? clamp01(v) : 0; // never NaN
+};
+const dbg = (...args) => {
+  if (typeof window !== "undefined" && window.__POP_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log("[PoP]", ...args);
+  }
+};
 
-/** Lognormal CDF: P[S_T ≤ x] with ln S_T ~ N( ln S0 + (mu - 0.5σ²)T , (σ²)T ) */
+/**
+ * Lognormal CDF P[S_T <= x] where
+ * ln S_T ~ N( ln S0 + (mu - 0.5*sigma^2) T,  (sigma^2) T )
+ */
 export function cdfLognormal(x, S0, mu, sigma, T) {
-  const X = toNum(x), S = toNum(S0), v = Math.max(0, toNum(sigma) ?? 0), Ty = Math.max(0, toNum(T) ?? 0);
-  if (!(X > 0) || !(S > 0)) return NaN;
-  if (v === 0 || Ty === 0) return X >= S ? 1 : 0; // degenerate mass at S
+  const X = toNum(x), S = toNum(S0), v = toNum(sigma), Ty = toNum(T);
+  if (!(X > 0) || !(S > 0) || !(v >= 0) || !(Ty >= 0)) return NaN;
+  if (v === 0 || Ty === 0) return X >= S ? 1 : 0; // degenerate
   const m = Math.log(S) + (mu - 0.5 * v * v) * Ty;
   const s = v * Math.sqrt(Ty);
   const z = (Math.log(X) - m) / s;
   return normCdf(z);
 }
 
-/* ----------------- payoff at expiration (per share) ----------------- */
-export function pnlAt(ST, legs = []) {
+/* --------------- expiration P&L for generic legs (per share) --------------- */
+function pnlAt(ST, legs = []) {
   let sum = 0;
   const S = toNum(ST);
   if (!(S >= 0)) return NaN;
@@ -53,8 +54,11 @@ export function pnlAt(ST, legs = []) {
       const payoff = Math.max(K - S, 0);
       sum += qty * (side === "long" ? payoff - prem : prem - payoff);
     } else if (t === "stock") {
+      // For stock legs we only compute P&L if an entry price is present.
       const price = toNum(l?.price);
-      if (price != null) sum += qty * (side === "long" ? S - price : price - S);
+      if (price != null) {
+        sum += qty * (side === "long" ? S - price : price - S);
+      }
     }
   }
   return sum;
@@ -62,17 +66,30 @@ export function pnlAt(ST, legs = []) {
 
 /* ---------------------- probability of profit ---------------------- */
 /**
- * Analytical probability of finishing with P&L ≥ 0 at expiration.
+ * Analytical probability of finishing with P&L >= 0 at expiration.
  *
  * @param {Object} p
- *  - S:      spot price
+ *  - S:      spot price (today)
  *  - sigma:  annual volatility
  *  - T:      time in years
- *  - legs:   API-style legs ({type, side, strike?, premium?, qty?, price?})
- *  - be:     break-even array (length 1 or 2). If omitted, we can’t define a
- *            threshold under volatility → returns null (except degenerate case).
- *  - mu:     drift of ln S. If not given, uses (r - q) with defaults r=q=0.
- *  - r:      risk-free (cont.), q: dividend yield (cont.)
+ *  - legs:   array of API-style legs ({type, side, strike?, premium?, qty?, price?})
+ *  - be:     break-even array from BE engine (length 1 or 2). If not provided,
+ *            this function can still determine the profit side using P&L at S,
+ *            but probability will be 0 or 1 (no threshold) — so pass BE when possible.
+ *  - mu:     drift of ln S (default r - q). Optional: supply r and q instead.
+ *  - r:      risk-free rate (continuous)
+ *  - q:      dividend yield (continuous)
+ *
+ * @returns {{
+ *   pop: number|null,             // probability in [0,1] (null if unavailable)
+ *   region: "inside"|"outside"|"above"|"below"|"none",
+ *   be: number[]|null,
+ *   details: {
+ *     cdfL?: number, cdfU?: number,
+ *     mu: number, sigma: number, T: number,
+ *     pnlAtSpot?: number
+ *   }
+ * }}
  */
 export default function analyticPop({ S, sigma, T, legs = [], be = null, mu, r, q } = {}) {
   const S0 = toNum(S);
@@ -84,45 +101,88 @@ export default function analyticPop({ S, sigma, T, legs = [], be = null, mu, r, 
     return { pop: null, region: "none", be: be || null, details: { mu: muEff, sigma: v, T: Ty } };
   }
 
-  // Normalize BE
+  // Normalize and sort BE (if present)
   let BE = Array.isArray(be) ? be.filter((x) => Number.isFinite(Number(x))).map(Number) : null;
   if (Array.isArray(BE) && BE.length > 1) {
     BE.sort((a, b) => a - b);
     BE = [BE[0], BE[BE.length - 1]];
   }
 
-  // Degenerate cases: σ=0 or T=0 → S_T collapses at S0
+  // Fast path: no vol or no time → degenerate at S0
   if (v === 0 || Ty === 0) {
     const profitable = pnlAt(S0, legs) >= 0;
-    return { pop: profitable ? 1 : 0, region: "none", be: BE, details: { mu: muEff, sigma: v, T: Ty, pnlAtSpot: pnlAt(S0, legs) } };
+    return {
+      pop: profitable ? 1 : 0,
+      region: "none",
+      be: BE,
+      details: { mu: muEff, sigma: v, T: Ty, pnlAtSpot: pnlAt(S0, legs) },
+    };
   }
 
-  const CDF = (x) => cdfLognormal(x, S0, muEff, v, Ty);
+  // Helper to compute CDF(S_T <= x)
+  const CDF = (x) => safe01(cdfLognormal(x, S0, muEff, v, Ty));
+
   const spotPnL = pnlAt(S0, legs);
 
+  // If no thresholds are known, we cannot infer the boundary reliably with volatility.
   if (!BE || BE.length === 0) {
-    // Without thresholds, with volatility, probability is undefined here.
+    dbg("no BE; returning null", { S0, v, Ty, spotPnL });
     return { pop: null, region: "none", be: null, details: { mu: muEff, sigma: v, T: Ty, pnlAtSpot: spotPnL } };
   }
 
+  /* ---------- ONE BREAK-EVEN ---------- */
   if (BE.length === 1) {
     const b = BE[0];
-    const sideFromSpot = S0 < b ? "below" : S0 > b ? "above" : (pnlAt(b * 1.001, legs) >= 0 ? "above" : "below");
-    const profitIncludesSpot = spotPnL >= 0;
-    const region = profitIncludesSpot ? sideFromSpot : (sideFromSpot === "above" ? "below" : "above");
-    const pop = region === "below" ? clamp01(CDF(b)) : clamp01(1 - CDF(b));
-    return { pop, region, be: [b], details: { cdfL: CDF(b), mu: muEff, sigma: v, T: Ty, pnlAtSpot: spotPnL } };
+
+    // Probe both sides around b to decide profitable side robustly
+    const belowProbe = pnlAt(b * 0.9, legs);
+    const aboveProbe = pnlAt(b * 1.1, legs);
+    let region;
+    if (belowProbe >= 0 && aboveProbe < 0) region = "below";
+    else if (aboveProbe >= 0 && belowProbe < 0) region = "above";
+    else {
+      // fallback: use spot sign opposite to which side we're on
+      const sideFromSpot = S0 < b ? "below" : S0 > b ? "above" : (pnlAt(b * 1.001, legs) >= 0 ? "above" : "below");
+      region = spotPnL >= 0 ? sideFromSpot : (sideFromSpot === "above" ? "below" : "above");
+    }
+
+    const c = CDF(b);
+    const pop = region === "below" ? c : 1 - c;
+
+    dbg("one BE", { b, belowProbe, aboveProbe, region, cdf: c, spotPnL });
+    return { pop, region, be: [b], details: { cdfL: c, mu: muEff, sigma: v, T: Ty, pnlAtSpot: spotPnL } };
   }
 
-  // Two BE boundaries
-  const [L, U] = BE[0] <= BE[1] ? BE : [BE[1], BE[0]];
-  const mid = (L + U) / 2;
-  const profitInside = pnlAt(mid, legs) >= 0;
+  /* ---------- TWO BREAK-EVENS ---------- */
+  if (BE.length === 2) {
+    const [L, U] = BE[0] <= BE[1] ? BE : [BE[1], BE[0]];
 
-  const cL = CDF(L), cU = CDF(U);
-  const insideProb = clamp01(cU - cL);
-  const pop = profitInside ? insideProb : clamp01(1 - insideProb);
-  const region = profitInside ? "inside" : "outside";
+    // Robust classification: check far-left & far-right profit signs
+    // (works for strangles/condors etc., avoids midpoint pitfalls)
+    const leftProbe  = pnlAt(Math.max(1e-6, L * 0.5), legs);
+    const rightProbe = pnlAt(U * 1.5, legs);
 
-  return { pop, region, be: [L, U], details: { cdfL: cL, cdfU: cU, mu: muEff, sigma: v, T: Ty, pnlAtSpot: spotPnL } };
+    // If both extremes profit → outside region is profitable (e.g., long strangle)
+    // If both extremes lose → inside region is profitable (e.g., short straddle/condor)
+    // If mixed (rare in well-formed 2-BE structures), fall back to midpoint.
+    let profitInside;
+    if (leftProbe >= 0 && rightProbe >= 0) profitInside = false; // outside wins
+    else if (leftProbe < 0 && rightProbe < 0) profitInside = true; // inside wins
+    else {
+      const mid = (L + U) / 2;
+      profitInside = pnlAt(mid, legs) >= 0;
+    }
+
+    const cL = CDF(L);
+    const cU = CDF(U);
+    const insideProb = clamp01(cU - cL);
+    const pop = profitInside ? insideProb : clamp01(1 - insideProb);
+    const region = profitInside ? "inside" : "outside";
+
+    dbg("two BE", { L, U, leftProbe, rightProbe, profitInside, cL, cU, insideProb, pop, spotPnL });
+    return { pop, region, be: [L, U], details: { cdfL: cL, cdfU: cU, mu: muEff, sigma: v, T: Ty, pnlAtSpot: spotPnL } };
+  }
+
+  // Fallback (shouldn't happen)
+  return { pop: null, region: "none", be: BE, details: { mu: muEff, sigma: v, T: Ty, pnlAtSpot: spotPnL } };
 }
