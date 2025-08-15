@@ -2,14 +2,13 @@
 "use client";
 
 /**
- * Key Stats + Expiry control.
- * - Expiry is the single source of truth for T (days to expiry).
+ * Key Stats + Expiry control (dropdown).
+ * - Expiry dropdown is the single source of truth for T (days to expiry).
  * - Stamps `days` onto option legs/rows so Chart.jsx gets correct T.
  * - Works with either modern rows/onRowsChange or legacy legs/onLegsChange.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ExpiryStrip from "../Options/ExpiryStrip";
 import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* ===== config ===== */
@@ -23,7 +22,6 @@ const parsePctInput = (str) => {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
 };
-
 const lastFromArray = (arr) => {
   if (!Array.isArray(arr) || !arr.length) return NaN;
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -49,21 +47,34 @@ function pickLastClose(j) {
   return Number.isFinite(metaPx) ? metaPx : null;
 }
 
+/** Robust date parsing → Date (local). Accepts Date or 'YYYY-MM-DD' (or with time). */
+function parseDateLoose(v) {
+  if (v instanceof Date) return v;
+  const s = String(v || "");
+  // Prefer first 10 chars if ISO-like
+  const iso10 = s.slice(0, 10);
+  const m = iso10.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  const d = new Date(s);
+  return Number.isFinite(d?.getTime()) ? d : null;
+}
+function toISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
 /** Compute Days-To-Expiry (calendar days) to end-of-day in Europe/Rome. */
 function daysToExpiry(expiryISO, tz = "Europe/Rome") {
   if (!expiryISO) return null;
   try {
-    // Treat the expiry as end of that calendar day in the chosen timezone.
-    const endLocalString = new Date(`${expiryISO}T23:59:59`).toLocaleString("en-US", {
-      timeZone: tz,
-    });
-    const end = new Date(endLocalString); // wall time in tz, interpreted locally
+    const endLocalString = new Date(`${expiryISO}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
+    const end = new Date(endLocalString);
     const now = new Date();
     const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
     return Math.max(1, d);
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 /** Only set days on option rows (lc/lp/sc/sp); stock rows keep their own shape. */
@@ -75,7 +86,6 @@ function stampDaysOnRows(rows, days) {
     return isOption ? { ...r, days } : r;
   });
 }
-
 /** Legacy legs object { lc, lp, sc, sp } — attach days if the leg exists. */
 function stampDaysOnLegs(legs, days) {
   if (!legs || typeof legs !== "object") return legs;
@@ -167,6 +177,9 @@ export default function StatsRail({
   onLegsChange,
   onDaysChange,
 
+  /* Expiry list for the dropdown */
+  expiries = [], // array of Date | 'YYYY-MM-DD' | ISO strings
+
   /* Existing props you were already using */
   spot: propSpot,
   currency: propCcy,
@@ -192,7 +205,7 @@ export default function StatsRail({
   }, [divPct]);
 
   /* volatility */
-  const [volSrc, setVolSrc] = useState("iv"); // iv | hist | manual
+  const [volSrc, setVolSrc] = useState("iv"); // iv | hist
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
   const [volLoading, setVolLoading] = useState(false);
@@ -201,7 +214,39 @@ export default function StatsRail({
   const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
 
   /* expiry state (source of truth for T) */
+  const normalizedExpiries = useMemo(() => {
+    // Normalize to unique YYYY-MM-DD strings, future-only, sorted ascending
+    const set = new Set();
+    for (const raw of Array.isArray(expiries) ? expiries : []) {
+      const d = parseDateLoose(raw);
+      if (!d) continue;
+      const iso = toISODate(d);
+      if (Number.isFinite(d.getTime()) && d >= new Date()) set.add(iso);
+    }
+    // reasonable fallback if none provided
+    if (set.size === 0) {
+      const out = [];
+      const today = new Date();
+      for (let i = 1; i <= 6; i++) {
+        const d = new Date(today.getFullYear(), today.getMonth() + i, 0); // end of month(s)
+        out.push(toISODate(d));
+      }
+      return out;
+    }
+    return Array.from(set).sort();
+  }, [expiries]);
+
   const [selectedExpiry, setSelectedExpiry] = useState(null);
+
+  // Ensure we always have a valid selection from the list
+  useEffect(() => {
+    if (!normalizedExpiries.length) return;
+    if (!selectedExpiry || !normalizedExpiries.includes(selectedExpiry)) {
+      setSelectedExpiry(normalizedExpiries[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [normalizedExpiries.join("|")]);
+
   const days = useMemo(() => daysToExpiry(selectedExpiry, "Europe/Rome"), [selectedExpiry]);
 
   /* derived */
@@ -335,33 +380,35 @@ export default function StatsRail({
     (volKind ? `${volKind} (${volHorizon}d)` : "") +
     (volMeta?.fallback ? " · fallback" : "");
 
+  /* Pretty labels for dropdown options */
+  const expiryOptions = useMemo(() => {
+    return normalizedExpiries.map((iso) => {
+      const d = parseDateLoose(iso);
+      const lbl = d
+        ? d.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short", year: "numeric" })
+        : iso;
+      return { value: iso, label: lbl };
+    });
+  }, [normalizedExpiries]);
+
   return (
     <aside className="card">
       <h3>Key stats</h3>
 
-      {/* Expiry (source of truth for T) */}
+      {/* Expiry (source of truth for T) — DROPDOWN */}
       <div className="row">
-        <div className="k">Expiry</div>
+        <div className="k">Expiration (T)</div>
         <div className="v v-expiry">
-          <ExpiryStrip
-            onSelect={(v) => {
-              const str = typeof v === "string" ? v.slice(0, 10)
-                : v instanceof Date
-                  ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`
-                  : (v && (v.value || v.iso || v.date || v.id)) ? String(v.value || v.iso || v.date || v.id).slice(0, 10)
-                  : null;
-              if (str) setSelectedExpiry(str);
-            }}
-            onChange={(v) => {
-              const s = typeof v === "string" ? v.slice(0, 10) : v?.value ? String(v.value).slice(0, 10) : null;
-              if (s) setSelectedExpiry(s);
-            }}
-            onPick={(v) => {
-              const s = typeof v === "string" ? v.slice(0, 10) : v?.value ? String(v.value).slice(0, 10) : null;
-              if (s) setSelectedExpiry(s);
-            }}
-            value={selectedExpiry || undefined}
-          />
+          <select
+            className="select"
+            value={selectedExpiry || ""}
+            onChange={(e) => setSelectedExpiry(e.target.value || null)}
+            aria-label="Select option expiration"
+          >
+            {expiryOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
           <span className="dte-pill" title="Days to expiry (Europe/Rome end-of-day)">
             {days != null ? `${days}d` : "—"}
           </span>
@@ -405,7 +452,6 @@ export default function StatsRail({
           >
             <option value="iv">Imp</option>
             <option value="hist">Hist</option>
-            {/* Keep Manual hidden until manual entry UI is ready */}
           </select>
           <span
             className={`value volval ${showVolSkeleton ? "is-pending" : ""}`}
