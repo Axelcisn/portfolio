@@ -53,17 +53,14 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
     [pathname]
   );
 
-  /* search selection -> broadcast + optional navigation */
+  /* search -> broadcast + optional nav */
   const onPick = (item) => {
-    try {
-      window.dispatchEvent(new CustomEvent("app:ticker-picked", { detail: item }));
-    } catch {}
+    try { window.dispatchEvent(new CustomEvent("app:ticker-picked", { detail: item })); } catch {}
     if (autoNavigateOnPick && pathname !== "/strategy") router.push("/strategy");
   };
 
   return (
     <header className="nav">
-      {/* left */}
       <nav className="tabs" role="tablist" aria-label="Primary">
         {items.map((it, i) => {
           const active = isActive(it.href);
@@ -75,28 +72,16 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
         })}
       </nav>
 
-      {/* center search (pill) */}
+      {/* Center search pill (the input fills its height) */}
       <div className="center">
         <div className="pill" role="search">
-          {/* Search icon (SVG) */}
-          <span className="icon-left" aria-hidden>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7"></circle>
-              <path d="M21 21l-4.35-4.35"></path>
-            </svg>
-          </span>
-
-          {/* Input (fills pill height) */}
           <TickerSearchUnified onSelect={onPick} />
-
         </div>
       </div>
 
-      {/* right */}
       <div className="right">
         <div className="clock">{now} <span className="muted">({tz.split("/")[1] || "Rome"})</span></div>
         <button type="button" className="theme" aria-label="Toggle dark mode" onClick={toggleTheme}>
-          {/* moon/sun SVG */}
           {theme === "dark" ? (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           ) : (
@@ -114,33 +99,26 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
           gap:18px; padding:10px 16px;
           background:#0e0f12; border-bottom:1px solid var(--border,#232632);
         }
-
-        /* tabs */
         .tabs{ display:flex; align-items:center; gap:22px; }
         .tab{
           padding:10px 6px; font-weight:800; letter-spacing:.1px;
           color:var(--foreground,#e5e7eb); opacity:.85; text-decoration:none;
-          border-radius:12px; transition:opacity .15s ease, background .15s ease, color .15s ease;
+          border-radius:12px; transition:opacity .15s ease, background .15s ease;
         }
         .tab:hover{ opacity:1; }
         .tab.is-active{ background:#161a21; border:1px solid var(--border,#232632); padding:10px 14px; opacity:1; }
 
-        /* center search */
         .center{ flex:0 1 720px; max-width:56vw; width:100%; display:flex; justify-content:center; }
         .pill{
           position:relative; width:100%; height:44px;
-          background:#171a1f; border:1px solid var(--border,#2a2f3a); border-radius:14px;
-          display:flex; align-items:center; overflow:visible; /* dropdown can overflow */
+          background:#171a1f; border:1px solid var(--border,#2a2f3a);
+          border-radius:14px; display:flex; align-items:center; overflow:visible;
         }
-        .icon-left{
-          position:absolute; left:12px; top:50%; transform:translateY(-50%); opacity:.9; pointer-events:none;
-        }
-        :global(.search-input){ /* from TickerSearchUnified */
+        :global(.search-input){
           height:100%; width:100%; background:transparent; border:0; outline:0;
           color:var(--foreground,#e5e7eb); font-size:14.5px; padding-left:38px; padding-right:36px; box-sizing:border-box;
         }
 
-        /* right */
         .right{ display:flex; align-items:center; gap:14px; }
         .clock{ font-weight:600; color:var(--foreground,#e5e7eb); }
         .muted{ opacity:.7; }
@@ -150,7 +128,6 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
           background:#161a1f; color:var(--foreground,#e5e7eb);
           border:1px solid var(--border,#2a2f3a); cursor:pointer;
         }
-
         @media (max-width:1024px){ .tabs{ gap:16px; } .center{ max-width:48vw; } }
         @media (max-width:720px){ .tabs{ display:none; } .center{ max-width:100%; } }
       `}</style>
