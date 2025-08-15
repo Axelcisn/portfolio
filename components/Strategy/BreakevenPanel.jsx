@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import rowsToApiLegs from "./utils/rowsToApiLegs"; // ✅ centralized mapper
+import { rowsToApiLegs } from "./utils"; // ✅ centralized mapper via barrel
 
 /* ------------ strategy alias handling ------------ */
 const STRAT_ALIASES = Object.freeze({
