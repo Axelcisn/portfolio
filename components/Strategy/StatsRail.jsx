@@ -56,24 +56,26 @@ function daysToExpiry(expiryISO, tz = "Europe/Rome") {
 async function fetchSpotFromChart(sym) {
   try {
     const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
-    const r = await fetch(u, { cache: "no-store" });
-    const j = await r.json();
-    const arrs = [
-      j?.data?.c, j?.c, j?.close,
-      j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
-      j?.result?.[0]?.indicators?.quote?.[0]?.close,
-    ].filter(Boolean);
-    for (const a of arrs) {
-      if (Array.isArray(a) && a.length) {
-        const n = Number(a[a.length - 1]);
-        if (Number.isFinite(n) && n > 0) return n;
+    the: {
+      const r = await fetch(u, { cache: "no-store" });
+      const j = await r.json();
+      const arrs = [
+        j?.data?.c, j?.c, j?.close,
+        j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+        j?.result?.[0]?.indicators?.quote?.[0]?.close,
+      ].filter(Boolean);
+      for (const a of arrs) {
+        if (Array.isArray(a) && a.length) {
+          const n = Number(a[a.length - 1]);
+          if (Number.isFinite(n) && n > 0) return n;
+        }
       }
+      const metaPx =
+        j?.meta?.regularMarketPrice ??
+        j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
+        j?.regularMarketPrice;
+      return Number.isFinite(metaPx) ? metaPx : null;
     }
-    const metaPx =
-      j?.meta?.regularMarketPrice ??
-      j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
-      j?.regularMarketPrice;
-    return Number.isFinite(metaPx) ? metaPx : null;
   } catch { return null; }
 }
 async function fetchCompany(sym) {
