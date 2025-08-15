@@ -49,19 +49,50 @@ export default function Strategy() {
   // Selected expiry (single source of truth for selected ISO date string)
   const [selectedExpiry, setSelectedExpiry] = useState(null);
 
-  /* ===== keep selectedExpiry in sync with expiries list ===== */
+  /* ===== per-company persistent settings (localStorage) ===== */
+  const STORAGE_KEY = "strategy:settings";
+  const loadSettingsFor = (sym) => {
+    if (!sym) return null;
+    try {
+      const raw = localStorage.getItem(`${STORAGE_KEY}:${sym}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  };
+  const saveSettingsFor = (sym, obj) => {
+    if (!sym) return;
+    try { localStorage.setItem(`${STORAGE_KEY}:${sym}`, JSON.stringify(obj)); } catch {}
+  };
+
+  /* When company selection changes, hydrate UI state from saved settings (if any). */
   useEffect(() => {
-    if (!Array.isArray(expiries) || expiries.length === 0) {
-      setSelectedExpiry(null);
-      return;
+    if (!company?.symbol) return;
+    const s = loadSettingsFor(company.symbol);
+    if (s) {
+      if (typeof s.horizon === 'number') setHorizon(s.horizon);
+      if (typeof s.ivSource === 'string') setIvSource(s.ivSource);
+      if (s.ivValue != null) setIvValue(s.ivValue);
+      if (s.legsUi != null) setLegsUi(s.legsUi);
+      if (s.netPremium != null) setNetPremium(s.netPremium);
+      if (s.selectedExpiry != null) setSelectedExpiry(s.selectedExpiry);
+      if (typeof s.tab === 'string') setTab(s.tab);
     }
-    // ensure the selection is one of the available expiries (prefer nearest upcoming)
-    if (!selectedExpiry || !expiries.includes(selectedExpiry)) {
-      const todayISO = new Date().toISOString().slice(0, 10);
-      const nearest = expiries.find((e) => e >= todayISO) || expiries[expiries.length - 1];
-      setSelectedExpiry(nearest);
-    }
-  }, [expiries, selectedExpiry]);
+    // Note: expiries list effect and other logic will further harmonize selection as needed.
+  }, [company?.symbol]);
+
+  /* Persist relevant settings per-company whenever they change */
+  useEffect(() => {
+    if (!company?.symbol) return;
+    const payload = {
+      horizon,
+      ivSource,
+      ivValue,
+      legsUi,
+      netPremium,
+      selectedExpiry,
+      tab,
+    };
+    saveSettingsFor(company.symbol, payload);
+  }, [company?.symbol, horizon, ivSource, ivValue, legsUi, netPremium, selectedExpiry, tab]);
 
   /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
@@ -218,6 +249,20 @@ export default function Strategy() {
     { key: "options",    label: "Options" },
     { key: "bonds",      label: "Bonds" },
   ];
+
+  /* keep selectedExpiry in sync with expiries list (nearest/upcoming) */
+  useEffect(() => {
+    if (!Array.isArray(expiries) || expiries.length === 0) {
+      setSelectedExpiry(null);
+      return;
+    }
+    // ensure the selection is one of the available expiries (prefer nearest upcoming)
+    if (!selectedExpiry || !expiries.includes(selectedExpiry)) {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const nearest = expiries.find((e) => e >= todayISO) || expiries[expiries.length - 1];
+      setSelectedExpiry(nearest);
+    }
+  }, [expiries, selectedExpiry]);
 
   const tabTitle = useMemo(() => {
     const base = TABS.find(t => t.key === tab)?.label || "Overview";
