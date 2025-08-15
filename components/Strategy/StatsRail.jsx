@@ -11,7 +11,6 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ExpiryStrip from "../Options/ExpiryStrip";
 import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* ===== helpers ===== */
@@ -49,34 +48,36 @@ function daysToExpiry(expiryISO, tz = "Europe/Rome") {
     const now = new Date();
     const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
     return Math.max(1, d);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 /* ===== tiny fetchers (unchanged behavior) ===== */
 async function fetchSpotFromChart(sym) {
   try {
     const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
-    the: {
-      const r = await fetch(u, { cache: "no-store" });
-      const j = await r.json();
-      const arrs = [
-        j?.data?.c, j?.c, j?.close,
-        j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
-        j?.result?.[0]?.indicators?.quote?.[0]?.close,
-      ].filter(Boolean);
-      for (const a of arrs) {
-        if (Array.isArray(a) && a.length) {
-          const n = Number(a[a.length - 1]);
-          if (Number.isFinite(n) && n > 0) return n;
-        }
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    const arrs = [
+      j?.data?.c, j?.c, j?.close,
+      j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+      j?.result?.[0]?.indicators?.quote?.[0]?.close,
+    ].filter(Boolean);
+    for (const a of arrs) {
+      if (Array.isArray(a) && a.length) {
+        const n = Number(a[a.length - 1]);
+        if (Number.isFinite(n) && n > 0) return n;
       }
-      const metaPx =
-        j?.meta?.regularMarketPrice ??
-        j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
-        j?.regularMarketPrice;
-      return Number.isFinite(metaPx) ? metaPx : null;
     }
-  } catch { return null; }
+    const metaPx =
+      j?.meta?.regularMarketPrice ??
+      j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
+      j?.regularMarketPrice;
+    return Number.isFinite(metaPx) ? metaPx : null;
+  } catch {
+    return null;
+  }
 }
 async function fetchCompany(sym) {
   const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
@@ -102,7 +103,9 @@ async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback =
       erp: typeof j?.mrp === "number" ? j.mrp : null,
       indexAnn: typeof j?.indexAnn === "number" ? j.indexAnn : null,
     };
-  } catch { return { rAnnual: null, erp: null, indexAnn: null }; }
+  } catch {
+    return { rAnnual: null, erp: null, indexAnn: null };
+  }
 }
 async function fetchBetaStats(sym, benchmark = "^GSPC") {
   try {
@@ -117,7 +120,9 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
       const rc = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
       const jc = await rc.json();
       return typeof jc?.beta === "number" ? jc.beta : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 }
 async function fetchVol(sym, mapped, d, cm, signal) {
@@ -128,7 +133,11 @@ async function fetchVol(sym, mapped, d, cm, signal) {
     if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
     return j;
   };
-  try { return await tryOne("source"); } catch { return await tryOne("volSource"); }
+  try {
+    return await tryOne("source");
+  } catch {
+    return await tryOne("volSource");
+  }
 }
 
 /* ===== CAPM ===== */
@@ -138,7 +147,7 @@ const capmMu = (rf, beta, erp, q = 0) =>
 /* ===== component ===== */
 export default function StatsRail({
   /* expiry control (CONTROLLED) */
-  expiries = [],                 // same array used by Options/ExpiryStrip
+  expiries = [],                 // same array used by Options
   selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
   onExpiryChange,                // (iso) => void
   onDaysChange,                  // (days) => void
@@ -446,20 +455,6 @@ export default function StatsRail({
           </select>
         </div>
       </div>
-
-      {/* Optional: mirror strip here to guarantee same state */}
-      {expiryList.length > 0 && (
-        <div className="row">
-          <div className="k">Strip</div>
-          <div className="v v-expiry">
-            <ExpiryStrip
-              expiries={expiryList}
-              value={iso || undefined}
-              onChange={(d) => handlePick(String(d).slice(0, 10))}
-            />
-          </div>
-        </div>
-      )}
 
       {children}
 
