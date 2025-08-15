@@ -5,17 +5,16 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   {
     onSelect,
-    placeholder = "Search tickers…",
+    placeholder = "Search companies, tickers…",
     minLen = 2,
     limit = 8,
     debounceMs = 220,
-    initialValue = "",
     endpoint = "/api/company/search",
     mapResult,
   },
   forwardedRef
 ) {
-  const [q, setQ] = useState(initialValue);
+  const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -24,23 +23,19 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   const cache = useRef(new Map());
   const acRef = useRef(null);
   const debounceRef = useRef(null);
-  const wrapperRef = useRef(null);
+  const wrapRef = useRef(null);
   const inputRef = useRef(null);
-  const listId = useRef(`tsu-list-${Math.random().toString(36).slice(2, 9)}`);
-  const activeId = (i) => `${listId.current}-opt-${i}`;
+  const listId = useRef(`tsu-${Math.random().toString(36).slice(2, 8)}`);
+  const optId = (i) => `${listId.current}-opt-${i}`;
 
+  // expose input ref if parent passes a ref
   useEffect(() => {
     if (!forwardedRef) return;
     if (typeof forwardedRef === "function") forwardedRef(inputRef.current);
     else forwardedRef.current = inputRef.current;
   }, [forwardedRef]);
 
-  useEffect(() => {
-    return () => {
-      try { acRef.current?.abort(); } catch {}
-      clearTimeout(debounceRef.current);
-    };
-  }, []);
+  useEffect(() => () => { try { acRef.current?.abort(); } catch {}; clearTimeout(debounceRef.current); }, []);
 
   const normalize = useCallback(
     (it) =>
@@ -59,36 +54,34 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
 
   const fetchResults = useCallback(
     async (qstr) => {
-      if (!qstr || qstr.length < minLen) {
-        setResults([]);
-        setLoading(false);
-        return;
-      }
-      const key = `${qstr}|${limit}|${endpoint}`;
-      if (cache.current.has(key)) {
-        setResults(cache.current.get(key));
-        setLoading(false);
-        return;
-      }
+      if (!qstr || qstr.length < minLen) { setResults([]); setLoading(false); return; }
+
+      const key = `${endpoint}|${qstr}|${limit}`;
+      if (cache.current.has(key)) { setResults(cache.current.get(key)); setLoading(false); return; }
+
       try { acRef.current?.abort(); } catch {}
       const ac = new AbortController();
       acRef.current = ac;
       setLoading(true);
+
       try {
         const u = `${endpoint}?q=${encodeURIComponent(qstr)}&limit=${limit}`;
         const r = await fetch(u, { signal: ac.signal, cache: "no-store" });
-        if (!r.ok) throw new Error("fetch");
         const j = await r.json();
+        if (!r.ok) throw new Error(j?.error || "search_failed");
+
         let list = [];
         if (Array.isArray(j?.results)) list = j.results;
         else if (Array.isArray(j?.data?.results)) list = j.data.results;
         else if (Array.isArray(j?.data)) list = j.data;
         else if (Array.isArray(j)) list = j;
+
         const out = (list || []).slice(0, limit).map(normalize);
         cache.current.set(key, out);
         setResults(out);
+        setOpen(true);
       } catch (e) {
-        if (e?.name !== "AbortError") setResults([]);
+        if (e?.name !== "AbortError") { setResults([]); setOpen(false); }
       } finally {
         setLoading(false);
       }
@@ -96,30 +89,26 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     [endpoint, limit, minLen, normalize]
   );
 
+  // debounce input
   useEffect(() => {
     clearTimeout(debounceRef.current);
     if (!q || q.length < minLen) { setResults([]); setOpen(false); setLoading(false); return; }
-    debounceRef.current = setTimeout(() => {
-      fetchResults(q);
-      setOpen(true);
-      setActive(-1);
-    }, debounceMs);
+    debounceRef.current = setTimeout(() => fetchResults(q), debounceMs);
     return () => clearTimeout(debounceRef.current);
   }, [q, fetchResults, debounceMs, minLen]);
 
-  const close = useCallback(() => { setOpen(false); setActive(-1); }, []);
-  const openIfResults = useCallback(() => { if (results.length) setOpen(true); }, [results.length]);
-
+  // close on outside click
   useEffect(() => {
-    const onDoc = (ev) => { if (!wrapperRef.current?.contains(ev.target)) close(); };
+    const onDoc = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("touchstart", onDoc);
     return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("touchstart", onDoc); };
-  }, [close]);
+  }, []);
 
   const handleSelect = (item) => {
     setQ(item.symbol || "");
-    close();
+    setOpen(false);
+    setActive(-1);
     onSelect?.(item);
   };
 
@@ -134,99 +123,64 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     else if (e.key === "Home") { e.preventDefault(); setActive(0); }
     else if (e.key === "End") { e.preventDefault(); setActive(results.length - 1); }
     else if (e.key === "Enter") { e.preventDefault(); const item = results[active >= 0 ? active : 0]; if (item) handleSelect(item); }
-    else if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
   };
 
+  // keep highlighted item in view
   useEffect(() => {
     if (active < 0) return;
-    document.getElementById(activeId(active))?.scrollIntoView?.({ block: "nearest" });
+    document.getElementById(optId(active))?.scrollIntoView?.({ block: "nearest" });
   }, [active]);
 
   return (
-    <div ref={wrapperRef} style={{ position: "relative" }}>
-      {/* input pill */}
-      <div
+    <div ref={wrapRef} style={{ position: "relative", width: "100%", height: "100%", zIndex: 1200 }}>
+      {/* full-height input (matches parent pill height) */}
+      <input
+        ref={inputRef}
+        aria-label="Search tickers"
+        aria-autocomplete="list"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listId.current}
+        aria-activedescendant={active >= 0 ? optId(active) : undefined}
+        placeholder={placeholder}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onFocus={() => { if (results.length) setOpen(true); }}
+        onKeyDown={onKeyDown}
+        className="search-input"
+        autoComplete="off"
+        inputMode="search"
         style={{
-          position: "relative",
-          height: 44,
-          background: "var(--pill-bg, #171a1f)",
-          border: "1px solid var(--border, #2a2f3a)",
-          borderRadius: 14,
-          display: "flex",
-          alignItems: "center",
-          paddingLeft: 38,
-          paddingRight: 32,
+          height: "100%", width: "100%",
+          background: "transparent", border: 0, outline: 0,
+          color: "var(--foreground,#e5e7eb)", fontSize: 14.5,
+          paddingLeft: 38, paddingRight: 36, // room for icons
+          boxSizing: "border-box",
         }}
-      >
-        {/* search icon */}
-        <span
-          aria-hidden
+      />
+
+      {/* clear button (SVG, not emoji) */}
+      {!!q && (
+        <button
+          type="button"
+          aria-label="Clear"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setQ(""); setResults([]); setOpen(false); inputRef.current?.focus(); }}
           style={{
-            position: "absolute",
-            left: 12,
-            top: "50%",
-            transform: "translateY(-50%)",
-            opacity: .85,
+            position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+            width: 22, height: 22, display: "grid", placeItems: "center",
+            borderRadius: 11, border: "1px solid var(--border,#2a2f3a)",
+            background: "transparent", cursor: "pointer", opacity: .9
           }}
         >
-          🔎
-        </span>
-
-        <input
-          ref={inputRef}
-          aria-label="Search tickers"
-          aria-autocomplete="list"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-controls={listId.current}
-          aria-activedescendant={active >= 0 ? activeId(active) : undefined}
-          placeholder={placeholder}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onFocus={() => openIfResults()}
-          onKeyDown={onKeyDown}
-          autoComplete="off"
-          inputMode="search"
-          style={{
-            height: 42,
-            width: "100%",
-            background: "transparent",
-            border: 0,
-            outline: "none",
-            color: "var(--foreground, #e5e7eb)",
-            fontSize: 14.5,
-          }}
-        />
-
-        {/* clear */}
-        {!!q && (
-          <button
-            type="button"
-            aria-label="Clear"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { setQ(""); setResults([]); close(); inputRef.current?.focus(); }}
-            style={{
-              position: "absolute",
-              right: 10,
-              top: "50%",
-              transform: "translateY(-50%)",
-              width: 18,
-              height: 18,
-              borderRadius: 9,
-              border: "1px solid var(--border, #2a2f3a)",
-              background: "transparent",
-              color: "var(--foreground, #e5e7eb)",
-              fontSize: 12,
-              lineHeight: "16px",
-              padding: 0,
-              cursor: "pointer",
-              opacity: .8,
-            }}
-          >
-            ×
-          </button>
-        )}
-      </div>
+          {/* X-circle icon */}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" opacity=".5"></circle>
+            <path d="M15 9l-6 6M9 9l6 6"></path>
+          </svg>
+        </button>
+      )}
 
       {/* dropdown */}
       {open && (
@@ -234,17 +188,17 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
           id={listId.current}
           role="listbox"
           style={{
-            position: "absolute", left: 0, right: 0, zIndex: 60,
-            background: "var(--card, #0f1115)", border: "1px solid var(--border, #2a2f3a)",
-            borderRadius: 10, marginTop: 8, maxHeight: 320, overflow: "auto",
-            padding: 8, boxShadow: "0 8px 26px rgba(0,0,0,.45)"
+            position: "absolute", left: 0, right: 0, top: "calc(100% + 8px)",
+            background: "var(--card,#0f1115)", border: "1px solid var(--border,#2a2f3a)",
+            borderRadius: 10, maxHeight: 320, overflow: "auto", padding: 8,
+            boxShadow: "0 8px 26px rgba(0,0,0,.45)", zIndex: 1200
           }}
         >
           {loading && <li className="muted" role="status" style={{ padding: "8px 10px" }}>Loading…</li>}
           {!loading && results.length === 0 && <li className="muted" style={{ padding: "8px 10px" }}>No results</li>}
           {results.map((r, i) => (
             <li
-              id={activeId(i)}
+              id={optId(i)}
               key={`${r.symbol || "sym"}-${i}`}
               role="option"
               aria-selected={i === active}
@@ -253,7 +207,7 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
               style={{
                 display: "flex", justifyContent: "space-between", gap: 12,
                 padding: "10px 12px", borderRadius: 8,
-                background: i === active ? "color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent)" : "transparent",
+                background: i === active ? "color-mix(in srgb, var(--accent,#3b82f6) 12%, transparent)" : "transparent",
                 cursor: "pointer"
               }}
             >
