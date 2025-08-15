@@ -2,12 +2,14 @@
 "use client";
 
 /**
- * Key Stats — line layout with robust right column.
- * Boxes only for dropdowns (Time, Volatility source, Drift) and Dividend input.
- * All other values render as right-aligned text.
+ * Key Stats + Expiry control.
+ * - Expiry is the single source of truth for T (days to expiry).
+ * - Stamps `days` onto option legs/rows so Chart.jsx gets correct T.
+ * - Works with either modern rows/onRowsChange or legacy legs/onLegsChange.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ExpiryStrip from "../Options/ExpiryStrip";
 import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* ===== config ===== */
@@ -21,6 +23,7 @@ const parsePctInput = (str) => {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
 };
+
 const lastFromArray = (arr) => {
   if (!Array.isArray(arr) || !arr.length) return NaN;
   for (let i = arr.length - 1; i >= 0; i--) {
@@ -44,6 +47,43 @@ function pickLastClose(j) {
     j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
     j?.regularMarketPrice;
   return Number.isFinite(metaPx) ? metaPx : null;
+}
+
+/** Compute Days-To-Expiry (calendar days) to end-of-day in Europe/Rome. */
+function daysToExpiry(expiryISO, tz = "Europe/Rome") {
+  if (!expiryISO) return null;
+  try {
+    // Treat the expiry as end of that calendar day in the chosen timezone.
+    const endLocalString = new Date(`${expiryISO}T23:59:59`).toLocaleString("en-US", {
+      timeZone: tz,
+    });
+    const end = new Date(endLocalString); // wall time in tz, interpreted locally
+    const now = new Date();
+    const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
+    return Math.max(1, d);
+  } catch {
+    return null;
+  }
+}
+
+/** Only set days on option rows (lc/lp/sc/sp); stock rows keep their own shape. */
+function stampDaysOnRows(rows, days) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((r) => {
+    const t = String(r?.type || "").toLowerCase();
+    const isOption = /^(lc|lp|sc|sp)$/.test(t);
+    return isOption ? { ...r, days } : r;
+  });
+}
+
+/** Legacy legs object { lc, lp, sc, sp } — attach days if the leg exists. */
+function stampDaysOnLegs(legs, days) {
+  if (!legs || typeof legs !== "object") return legs;
+  const out = { ...legs };
+  ["lc", "lp", "sc", "sp"].forEach((k) => {
+    if (out[k]) out[k] = { ...out[k], days };
+  });
+  return out;
 }
 
 /* ===== server calls ===== */
@@ -104,7 +144,6 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
   }
 }
 async function fetchVol(sym, mapped, d, cm, signal) {
-  // Try with `source=…`; if some older env expects `volSource=…`, fall back.
   const tryOne = async (param) => {
     const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}&cmDays=${encodeURIComponent(cm)}`;
     const r = await fetch(u, { cache: "no-store", signal });
@@ -119,7 +158,22 @@ async function fetchVol(sym, mapped, d, cm, signal) {
 const capmMu = (rf, beta, erp, q = 0) =>
   (Number(rf) || 0) + (Number(beta) || 0) * (Number(erp) || 0) - (Number(q) || 0);
 
-export default function StatsRail({ spot: propSpot, currency: propCcy, company, market }) {
+/* ===== component ===== */
+export default function StatsRail({
+  /* Optional strategy plumbing (safe if omitted) */
+  rows = null,
+  onRowsChange,
+  legs = null,
+  onLegsChange,
+  onDaysChange,
+
+  /* Existing props you were already using */
+  spot: propSpot,
+  currency: propCcy,
+  company,
+  market,
+  children,
+}) {
   const { basis, setBasis } = useTimeBasis();
 
   /* selection & basics */
@@ -145,6 +199,10 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
   const volAbortRef = useRef(null);
   const volSeqRef = useRef(0);
   const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
+
+  /* expiry state (source of truth for T) */
+  const [selectedExpiry, setSelectedExpiry] = useState(null);
+  const days = useMemo(() => daysToExpiry(selectedExpiry, "Europe/Rome"), [selectedExpiry]);
 
   /* derived */
   const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
@@ -244,6 +302,26 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
     return () => { stop = true; clearTimeout(id); };
   }, [symbol]);
 
+  /* propagate DTE into strategy state whenever it changes */
+  const propagateDays = useCallback(
+    (d) => {
+      if (!(d > 0)) return;
+
+      if (Array.isArray(rows) && typeof onRowsChange === "function") {
+        onRowsChange(stampDaysOnRows(rows, d));
+      }
+      if (legs && typeof onLegsChange === "function") {
+        onLegsChange(stampDaysOnLegs(legs, d));
+      }
+      onDaysChange?.(d);
+    },
+    [rows, legs, onRowsChange, onLegsChange, onDaysChange]
+  );
+
+  useEffect(() => {
+    if (days != null) propagateDays(days);
+  }, [days, propagateDays]);
+
   const showVolSkeleton =
     volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
 
@@ -261,6 +339,35 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
     <aside className="card">
       <h3>Key stats</h3>
 
+      {/* Expiry (source of truth for T) */}
+      <div className="row">
+        <div className="k">Expiry</div>
+        <div className="v v-expiry">
+          <ExpiryStrip
+            onSelect={(v) => {
+              const str = typeof v === "string" ? v.slice(0, 10)
+                : v instanceof Date
+                  ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`
+                  : (v && (v.value || v.iso || v.date || v.id)) ? String(v.value || v.iso || v.date || v.id).slice(0, 10)
+                  : null;
+              if (str) setSelectedExpiry(str);
+            }}
+            onChange={(v) => {
+              const s = typeof v === "string" ? v.slice(0, 10) : v?.value ? String(v.value).slice(0, 10) : null;
+              if (s) setSelectedExpiry(s);
+            }}
+            onPick={(v) => {
+              const s = typeof v === "string" ? v.slice(0, 10) : v?.value ? String(v.value).slice(0, 10) : null;
+              if (s) setSelectedExpiry(s);
+            }}
+            value={selectedExpiry || undefined}
+          />
+          <span className="dte-pill" title="Days to expiry (Europe/Rome end-of-day)">
+            {days != null ? `${days}d` : "—"}
+          </span>
+        </div>
+      </div>
+
       {/* Current Price */}
       <div className="row">
         <div className="k">Current Price</div>
@@ -275,7 +382,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         <div className="v value">{currency || "—"}</div>
       </div>
 
-      {/* Time (dropdown) */}
+      {/* Time basis (dropdown) */}
       <div className="row">
         <div className="k">Time</div>
         <div className="v">
@@ -298,7 +405,7 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           >
             <option value="iv">Imp</option>
             <option value="hist">Hist</option>
-            {/* Keeping Manual hidden from UI to avoid confusion; add back when manual input is supported */}
+            {/* Keep Manual hidden until manual entry UI is ready */}
           </select>
           <span
             className={`value volval ${showVolSkeleton ? "is-pending" : ""}`}
@@ -354,8 +461,10 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         </div>
       </div>
 
+      {/* Allow parent content if needed */}
+      {children}
+
       <style jsx>{`
-        /* rows — resilient two-column grid */
         .row{
           display:grid;
           grid-template-columns: minmax(120px, 1fr) minmax(0, 420px);
@@ -363,8 +472,8 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           gap:16px;
           padding:10px 0;
           border-bottom:1px dashed var(--border, #2a2f3a);
-          box-sizing:border-box;
           width:100%;
+          box-sizing:border-box;
         }
         .row:last-of-type{ border-bottom:0; }
 
@@ -373,6 +482,17 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           display:flex; justify-content:flex-end; align-items:center; gap:10px;
           width:100%; min-width:0; flex-wrap:nowrap;
         }
+        .v-expiry{ gap:12px; }
+        .dte-pill{
+          padding: 6px 10px;
+          border: 1px solid var(--border, #2a2f3a);
+          border-radius: 10px;
+          background: var(--card, #111214);
+          font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+
         .value{
           font-variant-numeric: tabular-nums; font-weight:600;
           white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
@@ -380,7 +500,6 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
         }
         .meta.small{ font-size:12px; opacity:.70; white-space:nowrap; }
 
-        /* dropdowns / inputs — constrained to avoid pushing the grid */
         .select, .input{
           height:38px; padding:6px 12px; border-radius:10px;
           border:1px solid var(--border, #2a2f3a);
@@ -396,7 +515,6 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
           outline-offset:2px;
         }
 
-        /* volatility value skeleton */
         .v-vol{ position:relative; }
         .volval{ min-width:48px; text-align:right; }
         .skl{
@@ -419,6 +537,9 @@ export default function StatsRail({ spot: propSpot, currency: propCcy, company, 
             background:#fff; color:#111827;
           }
           .select:hover, .input:hover{ border-color:#a3a3a3; }
+          .dte-pill{
+            background:#fff; color:#111827; border-color:#e5e7eb;
+          }
         }
       `}</style>
     </aside>
