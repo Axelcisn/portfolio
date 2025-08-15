@@ -226,6 +226,11 @@ export default function ChainTable({
     return best;
   }, [rows, meta?.spot]);
 
+  const atmRow = useMemo(() => {
+    if (closestStrike == null) return null;
+    return rows.find((r) => Number(r?.strike) === Number(closestStrike)) || null;
+  }, [rows, closestStrike]);
+
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort  = sortDir === "desc" ? "descending" : "ascending";
 
@@ -337,15 +342,15 @@ export default function ChainTable({
     } catch { return null; }
   }
 
-  // Effective time & drift parameters from StatsRail (fallbacks for safety)
+  // Derived context AFTER visible exists (avoid TDZ)
   const effDays = ctx?.days ?? daysToExpiryISO(meta?.expiry);
   const effBasis = ctx?.basis ?? 365;
   const T = Number.isFinite(effDays) ? Math.max(1, effDays) / effBasis : null;
-  const sigma = ctx?.sigma ?? (Number.isFinite(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
+  const fallbackSigma = Number.isFinite(atmRow?.ivPct) ? atmRow.ivPct / 100 : null;
+  const sigma = Number.isFinite(ctx?.sigma) ? ctx.sigma : fallbackSigma;
   const drift = ctx?.driftMode === "CAPM"
     ? (Number(ctx?.muCapm) || 0)
     : ((Number(ctx?.rf) || 0) - (Number(ctx?.q) || 0));
-
   const S0 = Number(meta?.spot) || Number(ctx?.spot) || null;
 
   return (
@@ -486,6 +491,14 @@ export default function ChainTable({
                       </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
+                          {/* legend chips */}
+                          <div className="chart-legend">
+                            <span className="chip chip-spot">Spot {fmtMoney(S0)}</span>
+                            <span className="chip chip-strike">Strike {fmtMoney(r.strike)}</span>
+                            {Number.isFinite(beForChart) && (
+                              <span className="chip chip-be">BE {fmtMoney(beForChart)}</span>
+                            )}
+                          </div>
                           <MiniPL
                             S0={S0}
                             K={r.strike}
@@ -493,6 +506,9 @@ export default function ChainTable({
                             type={typeForChart}
                             pos="short"
                             BE={beForChart}
+                            sigma={sigma}
+                            T={T}
+                            drift={drift}
                           />
                         </div>
                         <div className="metrics">
@@ -520,6 +536,14 @@ export default function ChainTable({
                       </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
+                          {/* legend chips */}
+                          <div className="chart-legend">
+                            <span className="chip chip-spot">Spot {fmtMoney(S0)}</span>
+                            <span className="chip chip-strike">Strike {fmtMoney(r.strike)}</span>
+                            {Number.isFinite(beForChart) && (
+                              <span className="chip chip-be">BE {fmtMoney(beForChart)}</span>
+                            )}
+                          </div>
                           <MiniPL
                             S0={S0}
                             K={r.strike}
@@ -527,6 +551,9 @@ export default function ChainTable({
                             type={typeForChart}
                             pos="long"
                             BE={beForChart}
+                            sigma={sigma}
+                            T={T}
+                            drift={drift}
                           />
                         </div>
                         <div className="metrics">
@@ -661,53 +688,106 @@ export default function ChainTable({
           max-height: 0;
           opacity: 0;
           transform: translateY(-4px);
-          transition: max-height .28s ease, opacity .28s ease, transform .28s ease;
+          transition: max-height .30s ease, opacity .30s ease, transform .30s ease;
           border-bottom:1px solid transparent;
         }
         .details.open{
-          max-height: 560px;
+          max-height: 700px;
           opacity: 1;
           transform: translateY(0);
-          border-bottom-color: color-mix(in srgb, var(--border, #E6E9EF) 86%, transparent);
+          border-bottom-color: color-mix(in srgb, var(--border, #0b1220) 86%, transparent);
         }
+
+        /* Premium container */
         .details-inner{
-          padding: 14px 10px 18px;
+          padding: 18px 14px 20px;
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 14px;
-          background: color-mix(in srgb, var(--text, #0f172a) 5%, transparent);
-          border-radius: 14px;
-
-          /* Subtle Apple-like depth */
+          gap: 16px;
+          background: linear-gradient(180deg, #0a0c12, #090b10 40%, #080a0e);
+          border-radius: 16px;
           box-shadow:
-            0 18px 40px rgba(0,0,0,.20),
-            0 2px 0 rgba(255,255,255,.02) inset;
+            0 24px 60px rgba(0,0,0,.35),
+            0 1px 0 rgba(255,255,255,.03) inset;
         }
+
+        /* Dark cards */
         .panel-col{
-          display:flex; flex-direction:column; gap:10px;
-          padding: 10px; border:1px solid var(--border, #E6E9EF);
-          border-radius:12px; background: var(--card, #fff);
+          display:flex; flex-direction:column; gap:14px;
+          padding: 14px;
+          border:1px solid #1a2030;
+          border-radius:14px;
+          background: radial-gradient(120% 140% at 30% -10%, rgba(255,255,255,.04), transparent 60%), #0b0d12;
+          box-shadow:
+            0 8px 18px rgba(0,0,0,.35),
+            0 1px 0 rgba(255,255,255,.02) inset;
+          transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
         }
-        .panel-head{ font-weight:800; font-size:14px; opacity:.9; }
+        .panel-col:hover{
+          transform: translateY(-1px);
+          border-color:#273047;
+          box-shadow:
+            0 10px 22px rgba(0,0,0,.40),
+            0 1px 0 rgba(255,255,255,.03) inset;
+        }
+        .panel-head{ font-weight:800; font-size:15px; opacity:.95; letter-spacing:.2px; }
 
-        .panel-grid{
-          display:grid; grid-template-rows: 150px auto; gap:12px;
-        }
+        /* Bigger chart */
+        .panel-grid{ display:grid; grid-template-rows: 220px auto; gap:14px; }
+
+        /* Chart surface */
         .chart{
-          border-radius:10px; border:1px dashed var(--border, #E6E9EF);
-          background: color-mix(in srgb, var(--text, #0f172a) 4%, transparent);
-          display:flex; align-items:center; justify-content:center;
-          font-size:12px; opacity:.6;
+          position: relative;
+          border-radius:12px;
+          background: #0b0f17;
+          box-shadow: inset 0 0 0 1px #171d2b, inset 0 -30px 50px rgba(0,0,0,.35);
+          overflow: hidden;
         }
 
-        .metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px; }
-        .metric{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-        .metric .k{ opacity:.7; font-size:12.5px; }
-        .metric .v{ font-weight:800; font-variant-numeric: tabular-nums; }
+        /* Legend chips inside chart */
+        .chart-legend{
+          position:absolute; top:8px; left:8px; display:flex; gap:8px; flex-wrap:wrap; z-index:2;
+        }
+        .chip{
+          padding: 4px 8px;
+          border-radius: 999px;
+          font-size: 12px; font-weight:700;
+          letter-spacing:.1px;
+          background: #0e1422;
+          border:1px solid #1c263b;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+        }
+        .chip-spot{ color:#93c5fd; border-color:#223152; }
+        .chip-strike{ color:#fbbf24; border-color:#3b2c12; }
+        .chip-be{ color:#34d399; border-color:#113428; }
 
-        .greeks{ grid-column: 1 / -1; margin-top: 6px; display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
-        .greek{ font-size:12px; opacity:.85; display:flex; align-items:center; justify-content:center;
-          border:1px solid var(--border, #E6E9EF); border-radius:8px; padding:6px 8px; }
+        /* Metrics + value pills */
+        .metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:14px 18px; }
+        .metric{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
+        .metric .k{ opacity:.78; font-size:13px; }
+        .pill{
+          padding: 6px 10px;
+          min-width: 88px;
+          text-align: right;
+          border-radius: 999px;
+          font-weight:800; font-size:14px; font-variant-numeric: tabular-nums;
+          background:#0f1421; color:#e5e7eb;
+          border:1px solid #1b2335;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+          transition: transform .12s ease, background .12s ease, border-color .12s ease;
+        }
+        .pill:hover{ transform: translateY(-1px); }
+        .pill.pos{ background: color-mix(in srgb, #10b981 22%, #0f1421); border-color:#134e40; color:#dbffe9; }
+        .pill.neg{ background: color-mix(in srgb, #ef4444 20%, #0f1421); border-color:#4a1010; color:#ffe1e1; }
+        .pill.neutral{}
+
+        /* Greeks row */
+        .greeks{ grid-column: 1 / -1; margin-top: 2px;
+          display:grid; grid-template-columns: repeat(5, minmax(90px,1fr)); gap:8px; }
+        .greek{
+          font-size:12px; opacity:.9; display:flex; align-items:center; justify-content:center;
+          border:1px solid #1a2030; border-radius:9px; padding:6px 8px; background:#0c1019;
+        }
 
         /* ---------- Shimmer styles ---------- */
         .is-loading .row:hover{ background: transparent; }
@@ -744,12 +824,25 @@ export default function ChainTable({
   );
 }
 
-/* ---------- Small presentational helpers ---------- */
+/* ---------- Small presentational helpers (with value pills) ---------- */
 function Metric({ label, value }) {
+  const tone = useMemo(() => {
+    if (value == null || value === "—") return "neutral";
+    const raw = String(value).replace(/[,\s$€£¥%]/g, "");
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return "neutral";
+    const lower = label.toLowerCase();
+
+    if (lower.includes("prob")) return num >= 50 ? "pos" : "neg"; // 50% threshold
+    if (lower.includes("return") || lower.includes("profit")) return num >= 0 ? "pos" : "neg";
+    if (lower.includes("sharpe")) return num >= 0 ? "pos" : "neg";
+    return "neutral";
+  }, [label, value]);
+
   return (
     <div className="metric">
       <span className="k">{label}</span>
-      <span className="v">{value ?? "—"}</span>
+      <span className={`pill ${tone}`}>{value ?? "—"}</span>
     </div>
   );
 }
@@ -768,48 +861,176 @@ function GreekList({ greeks }) {
 }
 function fmtG(v){ return Number.isFinite(v) ? Number(v).toFixed(2) : "—"; }
 
-/* ---------- Mini payoff chart ---------- */
-function MiniPL({ S0, K, premium, type, pos, BE }) {
+/* ---------- Mini payoff chart with profit/loss fill + density + tooltip ---------- */
+function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
+  const [tip, setTip] = useState(null); // {x, y, price, pdf}
+
   if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
     return <span className="chart-hint">Chart</span>;
   }
+
   const xmin = Math.max(0, S0 * 0.4);
   const xmax = S0 * 1.8;
-  const W = 460, H = 150, pad = 10;
-  const xs = [];
-  for (let i = 0; i <= 80; i++) {
-    const s = xmin + (i/80) * (xmax - xmin);
-    let payoff = 0;
-    if (type === "call") {
-      const intrinsic = Math.max(s - K, 0);
-      payoff = pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
-    } else {
-      const intrinsic = Math.max(K - s, 0);
-      payoff = pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
-    }
-    xs.push([s, payoff]);
+  const W = 520, H = 220, pad = 14;
+
+  // sample payoff points
+  const N = 140;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const s = xmin + (i / N) * (xmax - xmin);
+    const intrinsic = type === "call" ? Math.max(s - K, 0) : Math.max(K - s, 0);
+    const p = pos === "long" ? (intrinsic - premium) : (premium - intrinsic);
+    pts.push([s, p]);
   }
-  const ys = xs.map((p) => p[1]);
-  const yMin = Math.min(...ys, -premium*1.2);
-  const yMax = Math.max(...ys, premium*1.2);
+  const ys = pts.map((p) => p[1]);
+  const yMin = Math.min(...ys, -premium * 1.3);
+  const yMax = Math.max(...ys, premium * 1.3);
 
-  const xmap = (s) => pad + ( (s - xmin) / (xmax - xmin) ) * (W - 2*pad);
-  const ymap = (p) => H - pad - ( (p - yMin) / (yMax - yMin) ) * (H - 2*pad);
+  const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
+  const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
+  const yZero = ymap(0);
 
-  const d = xs.map((p, i) => `${i ? "L" : "M"} ${xmap(p[0]).toFixed(1)} ${ymap(p[1]).toFixed(1)}`).join(" ");
+  // build payoff line path + profit/loss area paths
+  const screenPts = pts.map(([s, p]) => ({ x: xmap(s), y: ymap(p), p, s }));
+  let dLine = "";
+  let dPos = "", dNeg = "";
+  let cur = null, xStart = null;
+  for (let i = 0; i < screenPts.length; i++) {
+    const { x, y, p } = screenPts[i];
+    dLine += `${i ? "L" : "M"} ${x.toFixed(1)} ${y.toFixed(1)} `;
+
+    const sign = p >= 0 ? "pos" : "neg";
+    if (cur == null) {
+      cur = sign; xStart = x;
+      if (cur === "pos") dPos += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
+      else dNeg += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
+      continue;
+    }
+
+    const prev = screenPts[i - 1];
+    if ((p >= 0 && cur === "pos") || (p < 0 && cur === "neg")) {
+      if (cur === "pos") dPos += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
+      else dNeg += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
+    } else {
+      // sign change — compute intersection with y=0
+      const t = (0 - prev.p) / (p - prev.p);
+      const xInt = prev.x + t * (x - prev.x);
+      const yInt = yZero;
+
+      if (cur === "pos") {
+        dPos += `L ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${xInt.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
+      } else {
+        dNeg += `L ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${xInt.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
+      }
+
+      // new segment
+      cur = sign; xStart = xInt;
+      if (cur === "pos") { dPos += `M ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)} `; }
+      else { dNeg += `M ${xInt.toFixed(1)} ${yInt.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)} `; }
+    }
+  }
+  // close last segment to baseline
+  const last = screenPts[screenPts.length - 1];
+  if (cur === "pos") dPos += `L ${last.x.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
+  if (cur === "neg") dNeg += `L ${last.x.toFixed(1)} ${yZero.toFixed(1)} L ${xStart.toFixed(1)} ${yZero.toFixed(1)} Z `;
+
+  // density (lognormal pdf) as a thin yellow line
+  let dDen = "";
+  if (Number.isFinite(sigma) && Number.isFinite(T) && T > 0 && sigma > 0) {
+    const mu = Math.log(S0) + (Number(drift) - 0.5 * sigma * sigma) * T;
+    const v = sigma * sigma * T;
+    const pdf = (s) => (1 / (s * Math.sqrt(2 * Math.PI * v))) *
+      Math.exp(-Math.pow(Math.log(s) - mu, 2) / (2 * v));
+    // sample & scale
+    const M = 160;
+    const den = [];
+    let maxPdf = 0;
+    for (let i = 0; i <= M; i++) {
+      const s = xmin + (i / M) * (xmax - xmin);
+      const y = pdf(s);
+      if (y > maxPdf) maxPdf = y;
+      den.push([s, y]);
+    }
+    const scale = 0.60; // use 60% of drawable height
+    for (let i = 0; i < den.length; i++) {
+      const [s, y] = den[i];
+      const x = xmap(s);
+      const yy = pad + (H - 2 * pad) * (1 - (y / maxPdf) * scale);
+      dDen += `${i ? "L" : "M"} ${x.toFixed(1)} ${yy.toFixed(1)} `;
+    }
+  }
+
   const strikeX = xmap(K);
   const beX = Number.isFinite(BE) ? xmap(BE) : null;
+  const spotX = xmap(S0);
+
+  const handleMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const clamped = Math.max(pad, Math.min(W - pad, px));
+    const s = xmin + ((clamped - pad) / (W - 2 * pad)) * (xmax - xmin);
+
+    let pdfVal = null;
+    if (Number.isFinite(sigma) && Number.isFinite(T) && T > 0 && sigma > 0) {
+      const mu = Math.log(S0) + (Number(drift) - 0.5 * sigma * sigma) * T;
+      const v = sigma * sigma * T;
+      pdfVal = (1 / (s * Math.sqrt(2 * Math.PI * v))) *
+        Math.exp(-Math.pow(Math.log(s) - mu, 2) / (2 * v));
+    }
+    setTip({ x: clamped, y: pad + 8, price: s, pdf: pdfVal });
+  };
 
   return (
-    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-      {/* zero line */}
-      <line x1={pad} y1={ymap(0)} x2={W-pad} y2={ymap(0)} stroke="currentColor" opacity="0.15" />
-      {/* payoff */}
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" />
-      {/* strike */}
-      <line x1={strikeX} y1={pad} x2={strikeX} y2={H-pad} stroke="#f59e0b" strokeWidth="1" opacity="0.9" />
-      {/* BEP */}
-      {Number.isFinite(beX) && <line x1={beX} y1={pad} x2={beX} y2={H-pad} stroke="#10b981" strokeWidth="1" opacity="0.9" />}
-    </svg>
+    <div className="pl-root" onMouseMove={handleMove} onMouseLeave={() => setTip(null)}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+        {/* profit / loss background fills */}
+        <path d={dPos} fill="rgba(34,197,94,.18)" />
+        <path d={dNeg} fill="rgba(239,68,68,.16)" />
+
+        {/* zero line */}
+        <line x1={pad} y1={yZero} x2={W-pad} y2={yZero} stroke="#9ca3af" opacity="0.18" />
+
+        {/* payoff line */}
+        <path d={dLine} fill="none" stroke="#e5e7eb" strokeWidth="1.6" />
+
+        {/* vertical guides */}
+        <line x1={strikeX} y1={pad} x2={strikeX} y2={H-pad} stroke="#fbbf24" strokeWidth="1" opacity=".9" />
+        {Number.isFinite(beX) && <line x1={beX} y1={pad} x2={beX} y2={H-pad} stroke="#34d399" strokeWidth="1" opacity=".9" />}
+        <line x1={spotX} y1={pad} x2={spotX} y2={H-pad} stroke="#93c5fd" strokeWidth="1" opacity=".95" />
+
+        {/* density curve */}
+        {dDen && <path d={dDen} fill="none" stroke="rgba(250,204,21,.9)" strokeWidth="1.5" opacity=".9" />}
+      </svg>
+
+      {/* tooltip (optional) */}
+      {tip && (
+        <div className="tooltip" style={{ left: tip.x, top: tip.y }}>
+          <div className="tt-line">
+            <span className="tt-k">Price</span>
+            <span className="tt-v">${tip.price.toFixed(2)}</span>
+          </div>
+          {Number.isFinite(tip.pdf) && (
+            <div className="tt-line">
+              <span className="tt-k">Density</span>
+              <span className="tt-v">{tip.pdf.toExponential(2)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <style jsx>{`
+        .pl-root{ position:relative; width:100%; height:100%; }
+        .tooltip{
+          position:absolute; transform: translate(-50%, -100%);
+          background:#0b0f17; border:1px solid #1a2030; border-radius:10px;
+          padding:8px 10px; font-size:12px; font-weight:700; color:#e5e7eb;
+          box-shadow: 0 8px 18px rgba(0,0,0,.35);
+          pointer-events:none; min-width:120px;
+        }
+        .tt-line{ display:flex; justify-content:space-between; gap:12px; }
+        .tt-k{ opacity:.75; }
+        .tt-v{ font-variant-numeric: tabular-nums; }
+      `}</style>
+    </div>
   );
 }
