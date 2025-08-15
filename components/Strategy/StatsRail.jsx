@@ -3,9 +3,9 @@
 
 /**
  * Key Stats + Expiry control.
- * - Expiry is the single source of truth for T (days to expiry).
- * - Dropdown options EXACTLY match the ExpiryStrip (both read the `expiries` prop).
- * - Stamps `days` onto option legs/rows so Chart.jsx gets correct T.
+ * - Accepts controlled selectedExpiry from parent (page.jsx) and won't override it.
+ * - Dropdown options EXACTLY match ExpiryStrip (both read the `expiries` prop).
+ * - Stamps `days` onto legs/rows so Chart.jsx gets correct T.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +13,7 @@ import ExpiryStrip from "../Options/ExpiryStrip";
 import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* ===== config ===== */
-const CM_DAYS = 30; // constant-maturity target for IV; hist window remains 30d
+const CM_DAYS = 30;
 
 /* ===== helpers ===== */
 const moneySign = (ccy) =>
@@ -47,8 +47,6 @@ function pickLastClose(j) {
     j?.regularMarketPrice;
   return Number.isFinite(metaPx) ? metaPx : null;
 }
-
-/** Compute Days-To-Expiry (calendar days) to end-of-day in Europe/Rome. */
 function daysToExpiry(expiryISO, tz = "Europe/Rome") {
   if (!expiryISO) return null;
   try {
@@ -57,12 +55,8 @@ function daysToExpiry(expiryISO, tz = "Europe/Rome") {
     const now = new Date();
     const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
     return Math.max(1, d);
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
-/** Normalize, de-duplicate, sort ISO YYYY-MM-DD dates (ascending). */
 function normalizeExpiries(expiries) {
   if (!Array.isArray(expiries)) return [];
   const iso = expiries
@@ -79,16 +73,12 @@ function normalizeExpiries(expiries) {
     .filter(Boolean);
   return Array.from(new Set(iso)).sort();
 }
-
-/** Pick nearest upcoming expiry (>= today) or last one if all in past. */
 function pickNearest(expiryList) {
   if (!expiryList.length) return null;
   const todayISO = new Date().toISOString().slice(0, 10);
   for (const e of expiryList) if (e >= todayISO) return e;
   return expiryList[expiryList.length - 1];
 }
-
-/** Only set days on option rows (lc/lp/sc/sp). */
 function stampDaysOnRows(rows, days) {
   if (!Array.isArray(rows)) return rows;
   return rows.map((r) => {
@@ -97,7 +87,6 @@ function stampDaysOnRows(rows, days) {
     return isOption ? { ...r, days } : r;
   });
 }
-/** Legacy legs object { lc, lp, sc, sp } — attach days if present. */
 function stampDaysOnLegs(legs, days) {
   if (!legs || typeof legs !== "object") return legs;
   const out = { ...legs };
@@ -105,7 +94,7 @@ function stampDaysOnLegs(legs, days) {
   return out;
 }
 
-/* ===== server calls ===== */
+/* ===== server calls (unchanged) ===== */
 async function fetchSpotFromChart(sym) {
   try {
     const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
@@ -173,18 +162,20 @@ async function fetchVol(sym, mapped, d, cm, signal) {
   try { return await tryOne("source"); } catch { return await tryOne("volSource"); }
 }
 
-/* ===== CAPM: μ = r_f + β·ERP − q ===== */
+/* ===== CAPM ===== */
 const capmMu = (rf, beta, erp, q = 0) =>
   (Number(rf) || 0) + (Number(beta) || 0) * (Number(erp) || 0) - (Number(q) || 0);
 
 /* ===== component ===== */
 export default function StatsRail({
-  /* Option expiries: MUST be the SAME array used by Options/ExpiryStrip */
-  expiries = [],          // array of ISO strings or Date objects
-  onExpiryChange,         // optional: (iso) => void
-  selectedExpiry: selectedExpiryProp = null, // optional controlled prop
+  /* Option expiries: SAME array used by Options/ExpiryStrip */
+  expiries = [],
 
-  /* Optional strategy plumbing (safe if omitted) */
+  /* Controlled expiry from parent (new) */
+  selectedExpiry: selectedExpiryProp = null,
+  onExpiryChange,              // (iso) => void
+
+  /* Optional strategy plumbing */
   rows = null,
   onRowsChange,
   legs = null,
@@ -216,7 +207,7 @@ export default function StatsRail({
   }, [divPct]);
 
   /* volatility */
-  const [volSrc, setVolSrc] = useState("iv"); // iv | hist | manual
+  const [volSrc, setVolSrc] = useState("iv");
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
   const [volLoading, setVolLoading] = useState(false);
@@ -224,33 +215,30 @@ export default function StatsRail({
   const volSeqRef = useRef(0);
   const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
 
-  /* expiry state (source of truth for T) */
+  /* expiry state (controlled/uncontrolled) */
   const expiryList = useMemo(() => normalizeExpiries(expiries), [expiries]);
 
-  // If parent controls selectedExpiry (selectedExpiryProp + onExpiryChange provided),
-  // use those; otherwise fall back to local internal state for backward compat.
-  const [localSelectedExpiry, setLocalSelectedExpiry] = useState(null);
-  const isControlled = selectedExpiryProp != null && typeof onExpiryChange === "function";
-  const selectedExpiry = isControlled ? selectedExpiryProp : localSelectedExpiry;
-  const setSelectedExpiry = (v) => {
-    const iso = v || null;
-    if (isControlled) {
-      onExpiryChange(iso);
-    } else {
-      setLocalSelectedExpiry(iso);
-    }
-  };
+  // uncontrolled local state (used only if parent doesn't control selectedExpiry)
+  const [selectedLocal, setSelectedLocal] = useState(null);
 
-  // keep local selection in sync with expiryList when uncontrolled
+  // initialize/keep nearest only when uncontrolled
   useEffect(() => {
-    if (!isControlled) {
-      if (!expiryList.length) { setLocalSelectedExpiry(null); return; }
-      if (!localSelectedExpiry || !expiryList.includes(localSelectedExpiry)) {
-        setLocalSelectedExpiry(pickNearest(expiryList));
-      }
+    const isControlled = selectedExpiryProp != null;
+    if (isControlled) return;
+    if (!expiryList.length) { setSelectedLocal(null); return; }
+    if (!selectedLocal || !expiryList.includes(selectedLocal)) {
+      setSelectedLocal(pickNearest(expiryList));
     }
-    // when controlled, parent is expected to manage selection sync
-  }, [expiryList, isControlled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [expiryList, selectedLocal, selectedExpiryProp]);
+
+  const isControlled = selectedExpiryProp != null;
+  const selectedExpiry = isControlled && expiryList.includes(selectedExpiryProp)
+    ? selectedExpiryProp
+    : selectedLocal;
+
+  const setSelected = isControlled
+    ? (iso) => onExpiryChange?.(iso)
+    : setSelectedLocal;
 
   const days = useMemo(() => daysToExpiry(selectedExpiry, "Europe/Rome"), [selectedExpiry]);
 
@@ -366,22 +354,21 @@ export default function StatsRail({
     },
     [rows, legs, onRowsChange, onLegsChange, onDaysChange]
   );
+
   useEffect(() => {
     if (days != null) {
       propagateDays(days);
-      onExpiryChange?.(selectedExpiry || null);
+      onExpiryChange?.(selectedExpiry || null); // keep parent in sync
     }
   }, [days, selectedExpiry, propagateDays, onExpiryChange]);
 
   const showVolSkeleton =
     volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
 
-  // Build diagnostics label for volatility
   const volKind = volMeta?.sourceUsed === "hist" ? "Hist" : "Imp";
   const volHorizon = volMeta?.sourceUsed === "hist" ? (volMeta?.days ?? 30) : (volMeta?.cmDays ?? CM_DAYS);
   const volDiag = (volKind ? `${volKind} (${volHorizon}d)` : "") + (volMeta?.fallback ? " · fallback" : "");
 
-  // Safe local-date formatter (no UTC shift)
   const fmtLong = (iso) => {
     const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return String(iso || "");
@@ -395,14 +382,14 @@ export default function StatsRail({
     <aside className="card">
       <h3>Key stats</h3>
 
-      {/* Expiration (single source of truth for T) */}
+      {/* Expiration (T) */}
       <div className="row">
         <div className="k">Expiration (T)</div>
         <div className="v v-expiry">
           <select
             className="select"
             value={selectedExpiry || ""}
-            onChange={(e) => setSelectedExpiry(e.target.value || null)}
+            onChange={(e) => setSelected(e.target.value || null)}
             title="Pick expiry"
           >
             {!expiryList.length ? (
@@ -508,7 +495,7 @@ export default function StatsRail({
         </div>
       </div>
 
-      {/* (Optional) show the strip elsewhere in the UI; keeping here ensures same state */}
+      {/* Strip mirrors the same selection */}
       {expiryList.length > 0 && (
         <div className="row">
           <div className="k">Strip</div>
@@ -516,7 +503,7 @@ export default function StatsRail({
             <ExpiryStrip
               expiries={expiryList}
               value={selectedExpiry || undefined}
-              onChange={(iso) => setSelectedExpiry(String(iso).slice(0, 10))}
+              onChange={(iso) => setSelected(String(iso).slice(0, 10))}
             />
           </div>
         </div>
