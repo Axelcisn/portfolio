@@ -2,13 +2,14 @@
 "use client";
 
 /**
- * Key Stats + Expiry control (dropdown).
- * - Expiry dropdown is the single source of truth for T (days to expiry).
+ * Key Stats + Expiry control.
+ * - Expiry is the single source of truth for T (days to expiry).
+ * - Dropdown options EXACTLY match the ExpiryStrip (both read the `expiries` prop).
  * - Stamps `days` onto option legs/rows so Chart.jsx gets correct T.
- * - Works with either modern rows/onRowsChange or legacy legs/onLegsChange.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ExpiryStrip from "../Options/ExpiryStrip";
 import { useTimeBasis } from "../ui/TimeBasisContext";
 
 /* ===== config ===== */
@@ -47,24 +48,6 @@ function pickLastClose(j) {
   return Number.isFinite(metaPx) ? metaPx : null;
 }
 
-/** Robust date parsing → Date (local). Accepts Date or 'YYYY-MM-DD' (or with time). */
-function parseDateLoose(v) {
-  if (v instanceof Date) return v;
-  const s = String(v || "");
-  // Prefer first 10 chars if ISO-like
-  const iso10 = s.slice(0, 10);
-  const m = iso10.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
-  const d = new Date(s);
-  return Number.isFinite(d?.getTime()) ? d : null;
-}
-function toISODate(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
-}
-
 /** Compute Days-To-Expiry (calendar days) to end-of-day in Europe/Rome. */
 function daysToExpiry(expiryISO, tz = "Europe/Rome") {
   if (!expiryISO) return null;
@@ -74,10 +57,38 @@ function daysToExpiry(expiryISO, tz = "Europe/Rome") {
     const now = new Date();
     const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
     return Math.max(1, d);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
-/** Only set days on option rows (lc/lp/sc/sp); stock rows keep their own shape. */
+/** Normalize, de-duplicate, sort ISO YYYY-MM-DD dates (ascending). */
+function normalizeExpiries(expiries) {
+  if (!Array.isArray(expiries)) return [];
+  const iso = expiries
+    .map((v) => {
+      if (v instanceof Date) {
+        const y = v.getFullYear();
+        const m = String(v.getMonth() + 1).padStart(2, "0");
+        const d = String(v.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+      const s = String(v || "").slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    })
+    .filter(Boolean);
+  return Array.from(new Set(iso)).sort();
+}
+
+/** Pick nearest upcoming expiry (>= today) or last one if all in past. */
+function pickNearest(expiryList) {
+  if (!expiryList.length) return null;
+  const todayISO = new Date().toISOString().slice(0, 10);
+  for (const e of expiryList) if (e >= todayISO) return e;
+  return expiryList[expiryList.length - 1];
+}
+
+/** Only set days on option rows (lc/lp/sc/sp). */
 function stampDaysOnRows(rows, days) {
   if (!Array.isArray(rows)) return rows;
   return rows.map((r) => {
@@ -86,13 +97,11 @@ function stampDaysOnRows(rows, days) {
     return isOption ? { ...r, days } : r;
   });
 }
-/** Legacy legs object { lc, lp, sc, sp } — attach days if the leg exists. */
+/** Legacy legs object { lc, lp, sc, sp } — attach days if present. */
 function stampDaysOnLegs(legs, days) {
   if (!legs || typeof legs !== "object") return legs;
   const out = { ...legs };
-  ["lc", "lp", "sc", "sp"].forEach((k) => {
-    if (out[k]) out[k] = { ...out[k], days };
-  });
+  ["lc", "lp", "sc", "sp"].forEach((k) => { if (out[k]) out[k] = { ...out[k], days }; });
   return out;
 }
 
@@ -170,6 +179,10 @@ const capmMu = (rf, beta, erp, q = 0) =>
 
 /* ===== component ===== */
 export default function StatsRail({
+  /* Option expiries: MUST be the SAME array used by Options/ExpiryStrip */
+  expiries = [],          // array of ISO strings or Date objects
+  onExpiryChange,         // optional: (iso) => void
+
   /* Optional strategy plumbing (safe if omitted) */
   rows = null,
   onRowsChange,
@@ -177,10 +190,7 @@ export default function StatsRail({
   onLegsChange,
   onDaysChange,
 
-  /* Expiry list for the dropdown */
-  expiries = [], // array of Date | 'YYYY-MM-DD' | ISO strings
-
-  /* Existing props you were already using */
+  /* Existing props */
   spot: propSpot,
   currency: propCcy,
   company,
@@ -205,7 +215,7 @@ export default function StatsRail({
   }, [divPct]);
 
   /* volatility */
-  const [volSrc, setVolSrc] = useState("iv"); // iv | hist
+  const [volSrc, setVolSrc] = useState("iv"); // iv | hist | manual
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
   const [volLoading, setVolLoading] = useState(false);
@@ -214,38 +224,16 @@ export default function StatsRail({
   const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
 
   /* expiry state (source of truth for T) */
-  const normalizedExpiries = useMemo(() => {
-    // Normalize to unique YYYY-MM-DD strings, future-only, sorted ascending
-    const set = new Set();
-    for (const raw of Array.isArray(expiries) ? expiries : []) {
-      const d = parseDateLoose(raw);
-      if (!d) continue;
-      const iso = toISODate(d);
-      if (Number.isFinite(d.getTime()) && d >= new Date()) set.add(iso);
-    }
-    // reasonable fallback if none provided
-    if (set.size === 0) {
-      const out = [];
-      const today = new Date();
-      for (let i = 1; i <= 6; i++) {
-        const d = new Date(today.getFullYear(), today.getMonth() + i, 0); // end of month(s)
-        out.push(toISODate(d));
-      }
-      return out;
-    }
-    return Array.from(set).sort();
-  }, [expiries]);
-
+  const expiryList = useMemo(() => normalizeExpiries(expiries), [expiries]);
   const [selectedExpiry, setSelectedExpiry] = useState(null);
 
-  // Ensure we always have a valid selection from the list
+  // keep selected in sync with list (nearest/upcoming)
   useEffect(() => {
-    if (!normalizedExpiries.length) return;
-    if (!selectedExpiry || !normalizedExpiries.includes(selectedExpiry)) {
-      setSelectedExpiry(normalizedExpiries[0]);
+    if (!expiryList.length) { setSelectedExpiry(null); return; }
+    if (!selectedExpiry || !expiryList.includes(selectedExpiry)) {
+      setSelectedExpiry(pickNearest(expiryList));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedExpiries.join("|")]);
+  }, [expiryList, selectedExpiry]);
 
   const days = useMemo(() => daysToExpiry(selectedExpiry, "Europe/Rome"), [selectedExpiry]);
 
@@ -351,7 +339,6 @@ export default function StatsRail({
   const propagateDays = useCallback(
     (d) => {
       if (!(d > 0)) return;
-
       if (Array.isArray(rows) && typeof onRowsChange === "function") {
         onRowsChange(stampDaysOnRows(rows, d));
       }
@@ -362,40 +349,30 @@ export default function StatsRail({
     },
     [rows, legs, onRowsChange, onLegsChange, onDaysChange]
   );
-
   useEffect(() => {
-    if (days != null) propagateDays(days);
-  }, [days, propagateDays]);
+    if (days != null) {
+      propagateDays(days);
+      onExpiryChange?.(selectedExpiry || null);
+    }
+  }, [days, selectedExpiry, propagateDays, onExpiryChange]);
 
   const showVolSkeleton =
     volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
 
-  // Build small diagnostics label text for volatility
+  // Build diagnostics label for volatility
   const volKind = volMeta?.sourceUsed === "hist" ? "Hist" : "Imp";
-  const volHorizon =
-    volMeta?.sourceUsed === "hist"
-      ? (volMeta?.days ?? 30)
-      : (volMeta?.cmDays ?? CM_DAYS);
-  const volDiag =
-    (volKind ? `${volKind} (${volHorizon}d)` : "") +
-    (volMeta?.fallback ? " · fallback" : "");
+  const volHorizon = volMeta?.sourceUsed === "hist" ? (volMeta?.days ?? 30) : (volMeta?.cmDays ?? CM_DAYS);
+  const volDiag = (volKind ? `${volKind} (${volHorizon}d)` : "") + (volMeta?.fallback ? " · fallback" : "");
 
-  /* Pretty labels for dropdown options */
-  const expiryOptions = useMemo(() => {
-    return normalizedExpiries.map((iso) => {
-      const d = parseDateLoose(iso);
-      const lbl = d
-        ? d.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short", year: "numeric" })
-        : iso;
-      return { value: iso, label: lbl };
-    });
-  }, [normalizedExpiries]);
+  // Dropdown formatting
+  const fmtLong = (iso) =>
+    new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
 
   return (
     <aside className="card">
       <h3>Key stats</h3>
 
-      {/* Expiry (source of truth for T) — DROPDOWN */}
+      {/* Expiration (single source of truth for T) */}
       <div className="row">
         <div className="k">Expiration (T)</div>
         <div className="v v-expiry">
@@ -403,11 +380,15 @@ export default function StatsRail({
             className="select"
             value={selectedExpiry || ""}
             onChange={(e) => setSelectedExpiry(e.target.value || null)}
-            aria-label="Select option expiration"
+            disabled={!expiryList.length}
           >
-            {expiryOptions.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
+            {!expiryList.length ? (
+              <option value="">No expiries</option>
+            ) : (
+              expiryList.map((iso) => (
+                <option key={iso} value={iso}>{fmtLong(iso)}</option>
+              ))
+            )}
           </select>
           <span className="dte-pill" title="Days to expiry (Europe/Rome end-of-day)">
             {days != null ? `${days}d` : "—"}
@@ -423,13 +404,13 @@ export default function StatsRail({
         </div>
       </div>
 
-      {/* Currency (text) */}
+      {/* Currency */}
       <div className="row">
         <div className="k">Currency</div>
         <div className="v value">{currency || "—"}</div>
       </div>
 
-      {/* Time basis (dropdown) */}
+      {/* Time basis */}
       <div className="row">
         <div className="k">Time</div>
         <div className="v">
@@ -440,7 +421,7 @@ export default function StatsRail({
         </div>
       </div>
 
-      {/* Volatility (dropdown + value + diagnostics text) */}
+      {/* Volatility */}
       <div className="row">
         <div className="k">Volatility</div>
         <div className="v v-vol">
@@ -453,10 +434,7 @@ export default function StatsRail({
             <option value="iv">Imp</option>
             <option value="hist">Hist</option>
           </select>
-          <span
-            className={`value volval ${showVolSkeleton ? "is-pending" : ""}`}
-            aria-live="polite"
-          >
+          <span className={`value volval ${showVolSkeleton ? "is-pending" : ""}`} aria-live="polite">
             {Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
           </span>
           <span className="meta small">{volDiag}</span>
@@ -464,13 +442,13 @@ export default function StatsRail({
         </div>
       </div>
 
-      {/* Beta (text) */}
+      {/* Beta */}
       <div className="row">
         <div className="k">Beta</div>
         <div className="v value">{Number.isFinite(beta) ? beta.toFixed(2) : "—"}</div>
       </div>
 
-      {/* Dividend (q) — input */}
+      {/* Dividend (q) */}
       <div className="row">
         <div className="k">Dividend (q)</div>
         <div className="v">
@@ -490,13 +468,13 @@ export default function StatsRail({
         </div>
       </div>
 
-      {/* CAPM μ (text) */}
+      {/* CAPM μ */}
       <div className="row">
         <div className="k">CAPM μ</div>
         <div className="v value">{Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}</div>
       </div>
 
-      {/* Drift (dropdown) */}
+      {/* Drift */}
       <div className="row">
         <div className="k">Drift</div>
         <div className="v">
@@ -507,13 +485,26 @@ export default function StatsRail({
         </div>
       </div>
 
-      {/* Allow parent content if needed */}
+      {/* (Optional) show the strip elsewhere in the UI; keeping here ensures same state */}
+      {expiryList.length > 0 && (
+        <div className="row">
+          <div className="k">Strip</div>
+          <div className="v v-expiry">
+            <ExpiryStrip
+              expiries={expiryList}
+              value={selectedExpiry || undefined}
+              onChange={(iso) => setSelectedExpiry(String(iso).slice(0, 10))}
+            />
+          </div>
+        </div>
+      )}
+
       {children}
 
       <style jsx>{`
         .row{
           display:grid;
-          grid-template-columns: minmax(120px, 1fr) minmax(0, 420px);
+          grid-template-columns: minmax(120px, 1fr) minmax(0, 520px);
           align-items:center;
           gap:16px;
           padding:10px 0;
@@ -522,7 +513,6 @@ export default function StatsRail({
           box-sizing:border-box;
         }
         .row:last-of-type{ border-bottom:0; }
-
         .k{ font-size:14px; opacity:.75; min-width:0; }
         .v{
           display:flex; justify-content:flex-end; align-items:center; gap:10px;
@@ -538,20 +528,18 @@ export default function StatsRail({
           font-variant-numeric: tabular-nums;
           white-space: nowrap;
         }
-
         .value{
           font-variant-numeric: tabular-nums; font-weight:600;
           white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
           max-width:100%;
         }
         .meta.small{ font-size:12px; opacity:.70; white-space:nowrap; }
-
         .select, .input{
           height:38px; padding:6px 12px; border-radius:10px;
           border:1px solid var(--border, #2a2f3a);
           background:var(--card, #111214); color:var(--foreground, #e5e7eb);
           font-size:14px; line-height:22px;
-          width:100%; max-width:220px; min-width:0;
+          width:100%; max-width:260px; min-width:0;
           box-sizing:border-box;
           transition:border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
         }
@@ -560,7 +548,6 @@ export default function StatsRail({
           outline:2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
           outline-offset:2px;
         }
-
         .v-vol{ position:relative; }
         .volval{ min-width:48px; text-align:right; }
         .skl{
@@ -576,16 +563,13 @@ export default function StatsRail({
         }
         @keyframes shimmer{ 100% { transform: translateX(100%); } }
         .is-pending{ opacity:.6; }
-
         @media (prefers-color-scheme: light){
           .select, .input{
             border:1px solid var(--border, #e5e7eb);
             background:#fff; color:#111827;
           }
           .select:hover, .input:hover{ border-color:#a3a3a3; }
-          .dte-pill{
-            background:#fff; color:#111827; border-color:#e5e7eb;
-          }
+          .dte-pill{ background:#fff; color:#111827; border-color:#e5e7eb; }
         }
       `}</style>
     </aside>
