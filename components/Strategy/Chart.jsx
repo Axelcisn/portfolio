@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
+import analyticPop from "./math/analyticPop";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -73,6 +74,25 @@ function rowsFromLegs(legs,days=30){
     out.push({id:k,type:t,K:+L.K,qty:+L.qty,premium:Number.isFinite(L.premium)?+L.premium:null,days,enabled:!!L.enabled});
   };
   push("lc","lc"); push("sc","sc"); push("lp","lp"); push("sp","sp"); return out;
+}
+
+/** Convert builder rows -> API legs for BE & analyticPoP */
+function rowsToApiLegs(rows = []) {
+  const legs = [];
+  for (const r of rows || []) {
+    if (!r?.enabled) continue;
+    const t = String(r.type || "").toLowerCase();
+    const qty = Number.isFinite(Number(r.qty)) ? Math.max(0, Number(r.qty)) : 1;
+    const prem = Number.isFinite(Number(r.premium)) ? Number(r.premium) : undefined;
+
+    if (t === "lc") legs.push({ type: "call", side: "long", strike: Number(r.K), premium: prem, qty });
+    else if (t === "sc") legs.push({ type: "call", side: "short", strike: Number(r.K), premium: prem, qty });
+    else if (t === "lp") legs.push({ type: "put",  side: "long", strike: Number(r.K), premium: prem, qty });
+    else if (t === "sp") legs.push({ type: "put",  side: "short", strike: Number(r.K), premium: prem, qty });
+    else if (t === "ls") legs.push({ type: "stock", side: "long", price: Number(r.K), qty });
+    else if (t === "ss") legs.push({ type: "stock", side: "short", price: Number(r.K), qty });
+  }
+  return legs;
 }
 
 /* --------- payoff / greek aggregation --------- */
@@ -173,7 +193,7 @@ export default function Chart({
   contractSize=1,
   showControls=true,
   frameless=false,
-  /** NEW: explicit strategy key (optional). If absent, BE badge auto-guesses. */
+  /** explicit strategy key is preferred for BE */
   strategy=null,
 }) {
   const rowsEff = useMemo(() => {
@@ -226,7 +246,7 @@ export default function Chart({
   const greekWhich=(greekProp||"vega").toLowerCase();
   const gVals = useMemo(()=>xs.map(S=>greekTotal(greekWhich, S, rowsEff, env, contractSize)), [xs, rowsEff, env, contractSize, greekWhich]);
 
-  const be = useMemo(()=>{
+  const beFromGraph = useMemo(()=>{
     const out=[]; for(let i=1;i<xs.length;i++){ const y0=yExp[i-1], y1=yExp[i];
       if((y0>0&&y1<0)||(y0<0&&y1>0)){ const t=(-y0)/(y1-y0); out.push(xs[i-1]+t*(xs[i]-xs[i-1])); }
     }
@@ -302,6 +322,55 @@ export default function Chart({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  /* ---- Fetch BE via API to drive analytic Win rate ---- */
+  const apiLegs = useMemo(() => rowsToApiLegs(rowsEff), [rowsEff]);
+  const [beState, setBeState] = useState({ be: null, meta: null, loading: false });
+  const acRef = useRef(null); const seqRef = useRef(0);
+
+  useEffect(() => {
+    if (!apiLegs.length) { setBeState({ be: null, meta: null, loading: false }); return; }
+    try { acRef.current?.abort(); } catch {}
+    const ac = new AbortController(); acRef.current = ac;
+    const mySeq = ++seqRef.current;
+    setBeState(s => ({ ...s, loading: true }));
+
+    (async () => {
+      try {
+        const res = await fetch("/api/strategy/breakeven", {
+          method: "POST",
+          signal: ac.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strategy, legs: apiLegs, contractSize }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (ac.signal.aborted || mySeq !== seqRef.current) return;
+        const be = Array.isArray(j?.be) ? j.be : Array.isArray(j?.data?.be) ? j.data.be : null;
+        const meta = j?.meta ?? j?.data?.meta ?? null;
+        setBeState({ be: (Array.isArray(be) && be.length) ? be : null, meta, loading: false });
+      } catch {
+        if (!ac.signal.aborted) setBeState({ be: null, meta: null, loading: false });
+      }
+    })();
+
+    return () => { try { acRef.current?.abort(); } catch {} };
+  }, [strategy, contractSize, apiLegs]);
+
+  const winRate = useMemo(() => {
+    if (!(Number(spot) > 0)) return null;
+    if (!Array.isArray(beState.be) || !beState.be.length) return null;
+    const out = analyticPop({
+      S: Number(spot),
+      sigma: Number(sigma),
+      T: Number(T),
+      legs: apiLegs,
+      be: beState.be,
+      r: Number(riskFree),
+    });
+    const p = Number(out?.pop);
+    if (!Number.isFinite(p)) return null;
+    return Math.max(0, Math.min(1, p));
+  }, [beState.be, apiLegs, spot, sigma, T, riskFree]);
 
   return (
     <Wrapper className={wrapClass} ref={ref} style={{ position: "relative" }}>
@@ -406,7 +475,7 @@ export default function Chart({
         )}
 
         {/* break-evens (chart markers only; numeric values live in KPI cell) */}
-        {be.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
+        {beFromGraph.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
       </svg>
 
       {/* floating tooltip — probability row removed for now */}
@@ -456,8 +525,7 @@ export default function Chart({
           <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
           <div className="m">
             <div className="k">Win rate</div>
-            {/* Placeholder until analyticPoP is wired */}
-            <div className="v">—</div>
+            <div className="v">{winRate==null ? "—" : `${(winRate*100).toFixed(2)}%`}</div>
           </div>
 
           {/* Breakeven cell uses the shared API-based badge */}
@@ -493,11 +561,11 @@ export default function Chart({
         .kpi-scroll{
           overflow-x:auto;
           overscroll-behavior-x: contain;
-          -ms-overflow-style: none;   /* IE/Edge */
-          scrollbar-width: none;      /* Firefox */
+          -ms-overflow-style: none;
+          scrollbar-width: none;
           border-top:1px solid var(--border);
         }
-        .kpi-scroll::-webkit-scrollbar{ display:none; } /* WebKit */
+        .kpi-scroll::-webkit-scrollbar{ display:none; }
         .metrics{
           display:grid; grid-template-columns: repeat(6, minmax(140px, 1fr));
           gap:10px; padding:10px 6px 12px;
@@ -508,16 +576,11 @@ export default function Chart({
 
         .tip{
           position:absolute;
-          min-width:220px;
-          max-width:260px;
-          padding:11px 12px;
-          background: rgba(20,20,20,1);
-          color: #eee;
-          border-radius: 10px;
-          box-shadow: 0 8px 24px rgba(0,0,0,.35);
-          border: 1px solid rgba(255,255,255,.08);
-          pointer-events: none;
-          font-size: 11.5px;
+          min-width:220px; max-width:260px;
+          padding:11px 12px; background: rgba(20,20,20,1); color:#eee;
+          border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.35);
+          border:1px solid rgba(255,255,255,.08);
+          pointer-events:none; font-size:11.5px;
         }
         .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:650; }
         .row + .row{ margin-top:6px; }
