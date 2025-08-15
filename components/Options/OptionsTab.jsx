@@ -9,7 +9,99 @@ import YahooHealthButton from "./YahooHealthButton";
 import RefreshExpiriesButton from "./RefreshExpiriesButton";
 import YahooHealthToaster from "./YahooHealthToaster";
 
-export default function OptionsTab({ symbol = "", currency = "USD" }) {
+/* ---------------- helpers for expiry control ---------------- */
+const normalizeExpiries = (xs) => {
+  if (!Array.isArray(xs)) return [];
+  const iso = xs
+    .map((v) => {
+      if (v instanceof Date) {
+        const y = v.getFullYear();
+        const m = String(v.getMonth() + 1).padStart(2, "0");
+        const d = String(v.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+      const s = String(v || "").slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    })
+    .filter(Boolean);
+  return Array.from(new Set(iso)).sort();
+};
+
+const pickNearest = (list) => {
+  if (!list?.length) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  return list.find((e) => e >= today) || list[list.length - 1];
+};
+
+const monthLabelFor = (d) => {
+  const y = d.getFullYear();
+  const mIdx = d.getMonth();
+  const labelMonth = d.toLocaleString(undefined, { month: "short" });
+  // Keep your visual: show year only on January groups
+  return mIdx === 0 ? `${labelMonth} ’${String(y).slice(-2)}` : labelMonth;
+};
+
+const toSelFromIso = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d?.getTime())) return null;
+  return { m: monthLabelFor(d), d: d.getDate(), iso };
+};
+
+const daysToExpiry = (iso, tz = "Europe/Rome") => {
+  if (!iso) return null;
+  try {
+    const endLocal = new Date(`${iso}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
+    const end = new Date(endLocal);
+    const now = new Date();
+    return Math.max(1, Math.ceil((end - now) / 86400000));
+  } catch {
+    return null;
+  }
+};
+
+const groupsFromIsoList = (isoList) => {
+  if (!Array.isArray(isoList) || !isoList.length) return [];
+  const parsed = isoList
+    .map((iso) => {
+      const d = new Date(iso);
+      return Number.isFinite(d?.getTime()) ? { d, iso } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.d - b.d);
+
+  const out = [];
+  for (const { d, iso } of parsed) {
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    let g = out[out.length - 1];
+    if (!g || g.k !== key) {
+      g = { m: monthLabelFor(d), items: [], k: key };
+      out.push(g);
+    }
+    g.items.push({ day: d.getDate(), iso });
+  }
+  // unique + sort days
+  for (const g of out) {
+    const seen = new Set();
+    g.items = g.items
+      .filter(({ day }) => (seen.has(day) ? false : (seen.add(day), true)))
+      .sort((a, b) => a.day - b.day);
+  }
+  return out;
+};
+
+/* ===================================================================== */
+
+export default function OptionsTab({
+  symbol = "",
+  currency = "USD",
+
+  /* NEW — shared expiry contract with the page (optional but preferred) */
+  expiries,                  // array of ISO strings (YYYY-MM-DD); if present, overrides internal fetch
+  selectedExpiry,            // ISO string selected by page (controlled)
+  onExpiryChange,            // (iso) => void
+  onDaysChange,              // (days) => void
+}) {
   // Provider + grouping
   const [provider, setProvider] = useState("api");   // 'api' | 'upload'
   const [groupBy, setGroupBy] = useState("expiry");  // 'expiry' | 'strike'
@@ -145,7 +237,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     };
   }, [settingsOpen]);
 
-  /* -------------------- Expiries from API -------------------- */
+  /* -------------------- Expiries from API (fallback) -------------------- */
 
   // Fallback (keeps your visual while API loads/absent)
   const fallbackGroups = useMemo(
@@ -186,7 +278,7 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         setLoadingExp(true);
         const res = await fetch(`/api/expiries?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
         const j = await res.json().catch(() => ({}));
-        if (!cancelled) setApiExpiries(Array.isArray(j?.expiries) ? j.expiries : []);
+        setApiExpiries(cancelled ? null : (Array.isArray(j?.expiries) ? j.expiries : []));
       } catch {
         if (!cancelled) setApiExpiries([]);
       } finally {
@@ -212,11 +304,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
         const r = await fetch(`/api/expiries/volume?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
         const j = await r.json().catch(() => ({}));
         if (cancelled) return;
-        if (Array.isArray(j?.expiries)) {
-          setVolAllow(new Set(j.expiries));
-        } else {
-          setVolAllow(null); // fail-open
-        }
+        if (Array.isArray(j?.expiries)) setVolAllow(new Set(j.expiries));
+        else setVolAllow(null); // fail-open
       } catch {
         if (!cancelled) setVolAllow(null); // fail-open
       } finally {
@@ -227,68 +316,61 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
     return () => { cancelled = true; };
   }, [symbol, expRefreshKey]);
 
-  // Convert YYYY-MM-DD list -> [{ m, items:[{day, iso}], k }], applying volume filter if present
+  /* -------------------- Build groups (prop list wins) -------------------- */
+
+  const propIsoList = useMemo(() => normalizeExpiries(expiries), [expiries]);
+
+  const apiIsoList = useMemo(() => {
+    if (!Array.isArray(apiExpiries) || apiExpiries.length === 0) return [];
+    const eff = volAllow ? apiExpiries.filter((iso) => volAllow.has(iso)) : apiExpiries;
+    return eff;
+  }, [apiExpiries, volAllow]);
+
+  // If the page provided an expiries list, use it; otherwise fall back to API; else fallbackGroups.
+  const isoList = propIsoList.length ? propIsoList : apiIsoList;
+
   const groups = useMemo(() => {
-    if (!apiExpiries || apiExpiries.length === 0) return fallbackGroups;
+    if (!isoList.length) return fallbackGroups;
+    return groupsFromIsoList(isoList);
+  }, [isoList, fallbackGroups]);
 
-    const effective = volAllow
-      ? apiExpiries.filter((iso) => volAllow.has(iso))
-      : apiExpiries;
+  /* -------------------- Selected expiry (controlled) -------------------- */
 
-    if (!effective.length) return fallbackGroups;
+  const nearestIso = useMemo(() => pickNearest(isoList), [isoList]);
 
-    const parsed = effective
-      .map((iso) => {
-        const d = new Date(iso);
-        return Number.isFinite(d?.getTime()) ? { d, iso } : null;
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.d - b.d);
+  // Uncontrolled (used only when parent doesn't supply a valid selectedExpiry)
+  const [selLocal, setSelLocal] = useState(() =>
+    nearestIso ? toSelFromIso(nearestIso) : { m: "Jan ’26", d: 16, iso: null }
+  );
 
-    const out = [];
-    for (const { d, iso } of parsed) {
-      const y = d.getFullYear();
-      const mIdx = d.getMonth();
-      const labelMonth = d.toLocaleString(undefined, { month: "short" });
-      const label = mIdx === 0 ? `${labelMonth} ’${String(y).slice(-2)}` : labelMonth;
-      const key = `${y}-${mIdx}`;
-
-      let g = out[out.length - 1];
-      if (!g || g.k !== key) {
-        g = { m: label, items: [], k: key };
-        out.push(g);
-      }
-      g.items.push({ day: d.getDate(), iso });
-    }
-    // unique + sort days inside month
-    for (const g of out) {
-      const seen = new Set();
-      g.items = g.items
-        .filter(({ day }) => (seen.has(day) ? false : (seen.add(day), true)))
-        .sort((a, b) => a.day - b.day);
-    }
-    return out;
-  }, [apiExpiries, volAllow, fallbackGroups]);
-
-  // Selected expiry (month label + day + iso)
-  const [sel, setSel] = useState({ m: "Jan ’26", d: 16, iso: null });
-
-  // If selection is invalid for current groups, pick the first available
+  // If uncontrolled: keep local selection valid as the list changes
   useEffect(() => {
-    if (!groups?.length) return;
-    const exists = groups.some((g) => g.m === sel.m && g.items.some((it) => it.day === sel.d));
-    if (!exists) {
-      const g0 = groups[0];
-      const it0 = g0.items[0];
-      setSel({ m: g0.m, d: it0.day, iso: it0.iso ?? null });
-    } else if (!sel.iso) {
-      // enrich current selection with iso if we now have it
-      const g = groups.find((g) => g.m === sel.m);
-      const it = g?.items.find((it) => it.day === sel.d);
-      if (it?.iso) setSel((s) => ({ ...s, iso: it.iso }));
+    if (selectedExpiry && isoList.includes(selectedExpiry)) return; // controlled
+    if (!isoList.length) return;
+    const valid = selLocal?.iso && isoList.includes(selLocal.iso);
+    if (!valid) {
+      const iso = nearestIso;
+      if (iso) setSelLocal(toSelFromIso(iso));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groups]);
+  }, [isoList, nearestIso, selectedExpiry]);
+
+  const controlledIso =
+    selectedExpiry && isoList.includes(selectedExpiry) ? selectedExpiry : null;
+
+  const sel = controlledIso ? toSelFromIso(controlledIso) : selLocal;
+
+  const handlePick = (iso) => {
+    if (!iso) return;
+    if (controlledIso) onExpiryChange?.(iso);
+    else setSelLocal(toSelFromIso(iso));
+  };
+
+  // Propagate DTE (days) upwards so page can update horizon
+  useEffect(() => {
+    const d = daysToExpiry(sel?.iso);
+    if (d > 0) onDaysChange?.(d);
+  }, [sel?.iso, onDaysChange]);
 
   /* ------------------------- Settings portal ------------------------ */
 
@@ -389,18 +471,20 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
       {/* Expiry strip */}
       <div className="expiry-wrap">
         <div className="expiry" aria-busy={(loadingExp || volLoading) ? "true" : "false"}>
-          {groups.map((g) => (
+          { (groups?.length ? groups : fallbackGroups).map((g) => (
             <div className="group" key={g.k || g.m}>
               <div className="m">{g.m}</div>
               <div className="days">
                 {g.items.map((it) => {
-                  const active = sel.m === g.m && sel.d === it.day;
+                  const active = sel?.m === g.m && sel?.d === it.day;
                   return (
                     <button
                       key={`${g.k}-${it.day}-${it.iso || "x"}`}
                       className={`day ${active ? "is-active" : ""}`}
-                      onClick={() => setSel({ m: g.m, d: it.day, iso: it.iso ?? null })}
+                      onClick={() => it.iso && handlePick(it.iso)}
                       aria-pressed={active}
+                      disabled={!it.iso}
+                      title={it.iso || "Loading…"}
                     >
                       {it.day}
                     </button>
@@ -495,7 +579,8 @@ export default function OptionsTab({ symbol = "", currency = "USD" }) {
           display:inline-flex; align-items:center; justify-content:center;
           transition: background .15s ease, transform .12s ease;
         }
-        .day:hover{
+        .day[disabled]{ opacity:.5; cursor:not-allowed; }
+        .day:hover:not([disabled]){
           background: color-mix(in srgb, var(--text) 6%, var(--surface));
           transform: translateY(-1px);
         }
