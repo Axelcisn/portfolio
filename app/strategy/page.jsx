@@ -8,6 +8,7 @@ import MarketCard from "../../components/Strategy/MarketCard";
 import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
 import OptionsTab from "../../components/Options/OptionsTab"; // NEW
+import useExpiries from "../../components/Options/useExpiries"; // NEW
 
 import useDebounce from "../../hooks/useDebounce";
 
@@ -19,18 +20,6 @@ const EX_NAMES = {
   TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
-
-/* ---------- helpers for expiries ---------- */
-const toISO = (v) => {
-  if (v instanceof Date) {
-    const y = v.getFullYear();
-    const m = String(v.getMonth() + 1).padStart(2, "0");
-    const d = String(v.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-  const s = String(v || "").slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
-};
 
 export default function Strategy() {
   /* ===== 00 — Local state ===== */
@@ -54,43 +43,8 @@ export default function Strategy() {
   // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
-  // 🔹 Expiries shared with StatsRail (matches OptionsTab sources)
-  const [expiries, setExpiries] = useState([]);
-
-  /* ===== fetch expiries when symbol changes (same endpoints as OptionsTab) ===== */
-  useEffect(() => {
-    let aborted = false;
-    async function load() {
-      const sym = company?.symbol;
-      if (!sym) { setExpiries([]); return; }
-      try {
-        // Base list
-        const r1 = await fetch(`/api/expiries?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-        const j1 = await r1.json();
-        const list1 = (j1?.dates || j1?.data?.dates || j1?.data || [])
-          .map(toISO).filter(Boolean);
-
-        // Volume-backed extras (mirror OptionsTab behavior)
-        let list2 = [];
-        try {
-          const r2 = await fetch(`/api/expiries/volume?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-          const j2 = await r2.json();
-          const items = j2?.items || j2?.data || [];
-          list2 = items
-            .filter(it => Number(it?.totalVol) > 0.5)
-            .map(it => toISO(it?.date))
-            .filter(Boolean);
-        } catch { /* optional */ }
-
-        const unique = Array.from(new Set([...list1, ...list2])).sort();
-        if (!aborted) setExpiries(unique);
-      } catch {
-        if (!aborted) setExpiries([]);
-      }
-    }
-    load();
-    return () => { aborted = true; };
-  }, [company?.symbol]);
+  // Expiries shared with StatsRail – identical to Options logic
+  const { list: expiries } = useExpiries(company?.symbol);
 
   /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
