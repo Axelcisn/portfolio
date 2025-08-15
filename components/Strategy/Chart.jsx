@@ -4,7 +4,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
 import analyticPop from "./math/analyticPop";
-// centralized leg mapper
 import { rowsToApiLegs } from "./utils";
 // centralized BS math (price + greeks)
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
@@ -77,8 +76,32 @@ function rowsFromLegs(legs, days = 30) {
   return out;
 }
 
+/* ---------- expiry helpers ---------- */
+function daysForRow(row, fallbackDays) {
+  // explicit numeric days
+  const d1 = Number(row?.days);
+  if (Number.isFinite(d1) && d1 >= 1) return Math.round(d1);
+
+  // common alias
+  const d2 = Number(row?.dte);
+  if (Number.isFinite(d2) && d2 >= 1) return Math.round(d2);
+
+  // expiry timestamp/string
+  const exp = row?.expiry ?? row?.expiration ?? row?.exp;
+  if (exp != null) {
+    const t = typeof exp === "number" ? exp : Date.parse(String(exp));
+    if (Number.isFinite(t)) {
+      const rem = Math.ceil((t - Date.now()) / 86_400_000);
+      if (rem >= 1) return rem;
+    }
+  }
+
+  // final fallback
+  const fb = Math.max(1, Number(fallbackDays) || 30);
+  return fb;
+}
+
 /* --------- payoff / greek aggregation --------- */
-// NOTE: both functions now accept `globalDays` so T can fall back to component T when row.days is missing.
 function payoffAtExpiration(S, rows, contractSize) {
   let y = 0;
   for (const r of rows) {
@@ -98,125 +121,55 @@ function payoffAtExpiration(S, rows, contractSize) {
   return y;
 }
 
-function payoffCurrent(S, rows, { r, sigma }, contractSize, globalDays) {
+function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
   let y = 0;
   for (const r0 of rows) {
     if (!r0?.enabled) continue;
     const info = TYPE_INFO[r0.type];
     if (!info) continue;
-    const q = Number(r0.qty || 0) * contractSize;
+    const qty = Number(r0.qty || 0) * contractSize;
 
     if (info.stock) {
-      y += info.sign * (S - Number(r0.K || 0)) * q;
+      y += info.sign * (S - Number(r0.K || 0)) * qty;
       continue;
     }
 
     const K = Number(r0.K || 0);
-    const rowDays = Number(r0.days);
-    const daysEff = Number.isFinite(rowDays) && rowDays > 0 ? rowDays : globalDays;
-    const T = Math.max(1, daysEff) / 365;
-
+    const days = daysForRow(r0, fallbackDays);
+    const T = days / 365; // calendar basis for pricing
     const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
-    // centralized Black–Scholes value (long option price)
-    const px = bsValueByKey(r0.type, S, K, r, sigma, T, 0);
-    y += info.sign * px * q + -info.sign * prem * q;
+
+    const px = bsValueByKey(r0.type, S, K, r, sigma, T, q); // long price
+    y += info.sign * px * qty + -info.sign * prem * qty;
   }
   return y;
 }
 
-function greekTotal(which, S, rows, { r, sigma }, contractSize, globalDays) {
+function greekTotal(which, S, rows, { r, sigma, q }, contractSize, fallbackDays) {
   let g = 0;
   const w = (which || "").toLowerCase();
   for (const r0 of rows) {
     if (!r0?.enabled) continue;
     const info = TYPE_INFO[r0.type];
     if (!info) continue;
-    const q = Number(r0.qty || 0) * contractSize;
+    const qty = Number(r0.qty || 0) * contractSize;
 
     if (info.stock) {
-      if (w === "delta") g += info.sign * q; // stock delta = ±1 per share/contract
+      if (w === "delta") g += info.sign * qty;
       continue;
     }
 
     const K = Number(r0.K || 0);
-    const rowDays = Number(r0.days);
-    const daysEff = Number.isFinite(rowDays) && rowDays > 0 ? rowDays : globalDays;
-    const T = Math.max(1, daysEff) / 365;
+    const days = daysForRow(r0, fallbackDays);
+    const T = days / 365;
 
-    // centralized Greeks (long option Greeks: vega per 1%, theta per day)
-    const G = greeksByKey(r0.type, S, K, r, sigma, T, 0);
+    // long Greeks; vega per 1%, theta per day
+    const G = greeksByKey(r0.type, S, K, r, sigma, T, q);
     const g1 = Number.isFinite(G[w]) ? G[w] : 0;
-    g += (info.sign > 0 ? +1 : -1) * g1 * q;
+
+    g += (info.sign > 0 ? +1 : -1) * g1 * qty;
   }
   return g;
-}
-
-/* ---------- build area polygons between y=0 and yExp ---------- */
-function buildAreaPaths(xs, ys, xScale, yScale) {
-  const pos = [],
-    neg = [];
-  const eps = 1e-9;
-  let seg = null,
-    sign = 0;
-
-  const push = () => {
-    if (!seg || seg.length < 3) {
-      seg = null;
-      return;
-    }
-    const d =
-      seg.map((p, i) => `${i ? "L" : "M"}${xScale(p[0])},${yScale(p[1])}`).join(" ") + " Z";
-    (sign > 0 ? pos : neg).push(d);
-    seg = null;
-    sign = 0;
-  };
-
-  for (let i = 0; i < xs.length; i++) {
-    const x = xs[i],
-      y = ys[i];
-    const s = y > eps ? 1 : y < -eps ? -1 : 0;
-
-    if (i > 0) {
-      const y0 = ys[i - 1],
-        s0 = y0 > eps ? 1 : y0 < -eps ? -1 : 0;
-      if (s !== s0) {
-        const x0 = xs[i - 1],
-          dy = y - y0;
-        const xCross = dy === 0 ? x : x0 + ((0 - y0) * (x - x0)) / dy;
-        if (seg) {
-          seg.push([xCross, 0]);
-          push();
-        }
-        if (s !== 0) {
-          seg = [[xCross, 0], [x, y]];
-          sign = s;
-          continue;
-        } else {
-          seg = null;
-          sign = 0;
-          continue;
-        }
-      }
-    }
-
-    if (s === 0) {
-      if (seg) {
-        seg.push([x, 0]);
-        push();
-      }
-    } else {
-      if (!seg) {
-        seg = [[x, 0]];
-        sign = s;
-      }
-      seg.push([x, y]);
-    }
-  }
-  if (seg) {
-    seg.push([xs[xs.length - 1], 0]);
-    push();
-  }
-  return { pos, neg };
 }
 
 /* ---------- component ---------- */
@@ -239,7 +192,8 @@ export default function Chart({
   legs = null, // legacy
   riskFree = 0.02,
   sigma = 0.2,
-  T = 30 / 365, // component-level fallback if rows[].days missing
+  T = 30 / 365, // legacy global T (years) for fallback only
+  dividend = 0, // NEW: q (annual dividend yield), defaults to 0
   greek: greekProp,
   onGreekChange,
   onLegsChange,
@@ -255,9 +209,9 @@ export default function Chart({
     return rowsFromLegs(legs, days);
   }, [rows, legs, T]);
 
-  // unified fallback for time to expiry when a row has no `days`
-  const globalDays = useMemo(
-    () => Math.max(1, Math.round((Number(T) > 0 ? Number(T) : 30 / 365) * 365)),
+  // fallback days used when a row lacks days/dte/expiry
+  const fallbackDays = useMemo(
+    () => Math.max(1, Math.round((Number.isFinite(Number(T)) ? Number(T) : 30 / 365) * 365)),
     [T]
   );
 
@@ -298,35 +252,33 @@ export default function Chart({
 
   const N = 401;
   const xs = useMemo(() => {
-    const [lo, hi] = xDomain,
-      step = (hi - lo) / (N - 1);
+    const [lo, hi] = xDomain, step = (hi - lo) / (N - 1);
     const arr = new Array(N);
     for (let i = 0; i < N; i++) arr[i] = lo + i * step;
     return arr;
   }, [xDomain]);
   const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
-  const env = useMemo(() => ({ r: riskFree, sigma }), [riskFree, sigma]);
+  const env = useMemo(() => ({ r: riskFree, sigma, q: dividend }), [riskFree, sigma, dividend]);
   const yExp = useMemo(
     () => xs.map((S) => payoffAtExpiration(S, rowsEff, contractSize)),
     [xs, rowsEff, contractSize]
   );
   const yNow = useMemo(
-    () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, globalDays)),
-    [xs, rowsEff, env, contractSize, globalDays]
+    () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
+    [xs, rowsEff, env, contractSize, fallbackDays]
   );
 
   const greekWhich = (greekProp || "vega").toLowerCase();
   const gVals = useMemo(
-    () => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, globalDays)),
-    [xs, rowsEff, env, contractSize, greekWhich, globalDays]
+    () => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
+    [xs, rowsEff, env, contractSize, greekWhich, fallbackDays]
   );
 
   const beFromGraph = useMemo(() => {
     const out = [];
     for (let i = 1; i < xs.length; i++) {
-      const y0 = yExp[i - 1],
-        y1 = yExp[i];
+      const y0 = yExp[i - 1], y1 = yExp[i];
       if ((y0 > 0 && y1 < 0) || (y0 < 0 && y1 > 0)) {
         const t = -y0 / (y1 - y0);
         out.push(xs[i - 1] + t * (xs[i] - xs[i - 1]));
@@ -347,24 +299,17 @@ export default function Chart({
   }, []);
   const pad = { l: 56, r: 56, t: 30, b: 40 };
   const innerW = Math.max(10, w - pad.l - pad.r);
-  const h = 420,
-    innerH = h - pad.t - pad.b;
+  const h = 420, innerH = h - pad.t - pad.b;
 
   const yRange = useMemo(() => {
-    const lo = Math.min(0, ...yExp, ...yNow),
-      hi = Math.max(0, ...yExp, ...yNow);
+    const lo = Math.min(0, ...yExp, ...yNow), hi = Math.max(0, ...yExp, ...yNow);
     return [lo, hi === lo ? lo + 1 : hi];
   }, [yExp, yNow]);
 
   const xScale = useMemo(() => lin(xDomain, [pad.l, pad.l + innerW]), [xDomain, innerW]);
-  const yScale = useMemo(
-    () => lin([yRange[0], yRange[1]], [pad.t + innerH, pad.t]),
-    [yRange, innerH]
-  );
+  const yScale = useMemo(() => lin([yRange[0], yRange[1]], [pad.t + innerH, pad.t]), [yRange, innerH]);
 
-  const gMin = Math.min(...gVals),
-    gMax = Math.max(...gVals),
-    gPad = (gMax - gMin) * 0.1 || 1;
+  const gMin = Math.min(...gVals), gMax = Math.max(...gVals), gPad = (gMax - gMin) * 0.1 || 1;
   const gScale = useMemo(
     () => lin([gMin - gPad, gMax + gPad], [pad.t + innerH, pad.t]),
     [gMin, gMax, gPad, innerH]
@@ -381,19 +326,15 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // Time/vol inputs for mean & 95% CI (use same days fallback)
+  // Time/vol inputs for mean & 95% CI (using effective days)
   const avgDays = useMemo(() => {
     const opt = rowsEff.filter((r) => !TYPE_INFO[r.type]?.stock);
-    if (!opt.length) return globalDays;
-    const sum = opt.reduce((s, r) => {
-      const d = Number(r.days);
-      return s + (Number.isFinite(d) && d > 0 ? d : globalDays);
-    }, 0);
-    return Math.round(sum / opt.length);
-  }, [rowsEff, globalDays]);
+    if (!opt.length) return fallbackDays;
+    const sum = opt.reduce((s, r) => s + daysForRow(r, fallbackDays), 0);
+    return Math.max(1, Math.round(sum / opt.length));
+  }, [rowsEff, fallbackDays]);
 
-  const mu = riskFree,
-    sVol = sigma;
+  const mu = riskFree, sVol = sigma;
   const Tyrs = avgDays / 365;
   const S0 = Number.isFinite(Number(spot)) ? Number(spot) : ks[0] ?? xDomain[0];
   const drift = (mu - 0.5 * sVol * sVol) * Tyrs;
@@ -410,7 +351,7 @@ export default function Chart({
   const greekColor = GREEK_COLOR[greekWhich] || "#f59e0b";
 
   // --- Tooltip state ---
-  const [hover, setHover] = useState(null); // {i,x,y}
+  const [hover, setHover] = useState(null);
   const onMove = (evt) => {
     const svg = evt.currentTarget;
     const rect = svg.getBoundingClientRect();
@@ -436,9 +377,7 @@ export default function Chart({
   useEffect(() => {
     const el = kpiRef.current;
     if (!el) return;
-    const toRight = () => {
-      el.scrollLeft = el.scrollWidth;
-    };
+    const toRight = () => { el.scrollLeft = el.scrollWidth; };
     toRight();
     const ro = new ResizeObserver(toRight);
     ro.observe(el);
@@ -456,9 +395,7 @@ export default function Chart({
       setBeState({ be: null, meta: null, loading: false });
       return;
     }
-    try {
-      acRef2.current?.abort();
-    } catch {}
+    try { acRef2.current?.abort(); } catch {}
     const ac = new AbortController();
     acRef2.current = ac;
     const mySeq = ++seqRef.current;
@@ -482,11 +419,7 @@ export default function Chart({
       }
     })();
 
-    return () => {
-      try {
-        acRef2.current?.abort();
-      } catch {}
-    };
+    return () => { try { acRef2.current?.abort(); } catch {} };
   }, [strategy, contractSize, apiLegs]);
 
   const winRate = useMemo(() => {
@@ -519,7 +452,7 @@ export default function Chart({
             Expiration P&amp;L
           </div>
           <div className="leg">
-            <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
+            <span className="dot" style={{ background: greekColor }} />
             {GREEK_LABEL[greekWhich] || "Greek"}
           </div>
           <div className="leg">
@@ -537,9 +470,7 @@ export default function Chart({
         </div>
         <div className="header-tools">
           <div className="greek-ctl">
-            <label className="small muted" htmlFor="greek">
-              Greek
-            </label>
+            <label className="small muted" htmlFor="greek">Greek</label>
             <select id="greek" value={greekWhich} onChange={(e) => onGreekChange?.(e.target.value)}>
               <option value="vega">Vega</option>
               <option value="delta">Delta</option>
@@ -549,15 +480,9 @@ export default function Chart({
             </select>
           </div>
           <div className="zoom">
-            <button aria-label="Zoom out" onClick={zoomOut}>
-              −
-            </button>
-            <button aria-label="Zoom in" onClick={zoomIn}>
-              +
-            </button>
-            <button aria-label="Reset zoom" onClick={resetZoom}>
-              ⟲
-            </button>
+            <button aria-label="Zoom out" onClick={zoomOut}>−</button>
+            <button aria-label="Zoom in" onClick={zoomIn}>+</button>
+            <button aria-label="Reset zoom" onClick={resetZoom}>⟲</button>
           </div>
         </div>
       </div>
@@ -573,46 +498,22 @@ export default function Chart({
         style={{ display: "block" }}
       >
         {/* shaded profit/loss areas */}
-        {negPaths.map((d, i) => (
-          <path key={`neg-${i}`} d={d} fill="rgba(239,68,68,.10)" stroke="none" />
-        ))}
-        {posPaths.map((d, i) => (
-          <path key={`pos-${i}`} d={d} fill="rgba(16,185,129,.12)" stroke="none" />
-        ))}
+        {negPaths.map((d, i) => (<path key={`neg-${i}`} d={d} fill="rgba(239,68,68,.10)" stroke="none" />))}
+        {posPaths.map((d, i) => (<path key={`pos-${i}`} d={d} fill="rgba(16,185,129,.12)" stroke="none" />))}
 
         {/* grid */}
         {xTicks.map((t, i) => (
-          <line
-            key={`xg-${i}`}
-            x1={xScale(t)}
-            x2={xScale(t)}
-            y1={pad.t}
-            y2={pad.t + innerH}
-            stroke="var(--border)"
-            strokeOpacity="0.6"
-          />
+          <line key={`xg-${i}`} x1={xScale(t)} x2={xScale(t)} y1={pad.t} y2={pad.t + innerH}
+                stroke="var(--border)" strokeOpacity="0.6" />
         ))}
         {yTicks.map((t, i) => (
-          <line
-            key={`yg-${i}`}
-            x1={pad.l}
-            x2={pad.l + innerW}
-            y1={yScale(t)}
-            y2={yScale(t)}
-            stroke="var(--border)"
-            strokeOpacity="0.6"
-          />
+          <line key={`yg-${i}`} x1={pad.l} x2={pad.l + innerW} y1={yScale(t)} y2={yScale(t)}
+                stroke="var(--border)" strokeOpacity="0.6" />
         ))}
 
         {/* axes labels & guide lines */}
-        <line
-          x1={pad.l}
-          x2={pad.l + innerW}
-          y1={yScale(0)}
-          y2={yScale(0)}
-          stroke="var(--text)"
-          strokeOpacity="0.8"
-        />
+        <line x1={pad.l} x2={pad.l + innerW} y1={yScale(0)} y2={yScale(0)}
+              stroke="var(--text)" strokeOpacity="0.8" />
         {yTicks.map((t, i) => (
           <g key={`yl-${i}`}>
             <line x1={pad.l - 4} x2={pad.l} y1={yScale(t)} y2={yScale(t)} stroke="var(--text)" />
@@ -623,138 +524,67 @@ export default function Chart({
         ))}
         {xTicks.map((t, i) => (
           <g key={`xl-${i}`}>
-            <line
-              x1={xScale(t)}
-              x2={xScale(t)}
-              y1={pad.t + innerH}
-              y2={pad.t + innerH + 4}
-              stroke="var(--text)"
-            />
+            <line x1={xScale(t)} x2={xScale(t)} y1={pad.t + innerH} y2={pad.t + innerH + 4} stroke="var(--text)" />
             <text x={xScale(t)} y={pad.t + innerH + 16} textAnchor="middle" className="tick">
               {fmtNum(t, 0)}
             </text>
           </g>
         ))}
         {Number.isFinite(centerStrike) && (
-          <line
-            x1={xScale(centerStrike)}
-            x2={xScale(centerStrike)}
-            y1={pad.t}
-            y2={pad.t + innerH}
-            stroke="var(--text)"
-            strokeDasharray="2 6"
-            strokeOpacity="0.6"
-          />
+          <line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t + innerH}
+                stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />
         )}
 
         {/* RIGHT GREEK AXIS */}
-        <line
-          x1={pad.l + innerW}
-          x2={pad.l + innerW}
-          y1={pad.t}
-          y2={pad.t + innerH}
-          stroke={greekColor}
-          strokeOpacity="0.25"
-        />
+        <line x1={pad.l + innerW} x2={pad.l + innerW} y1={pad.t} y2={pad.t + innerH}
+              stroke={greekColor} strokeOpacity="0.25" />
         {gTicks.map((t, i) => (
           <g key={`gr-${i}`}>
-            <line
-              x1={pad.l + innerW}
-              x2={pad.l + innerW + 4}
-              y1={gScale(t)}
-              y2={gScale(t)}
-              stroke={greekColor}
-              strokeOpacity="0.8"
-            />
-            <text
-              x={pad.l + innerW + 6}
-              y={gScale(t)}
-              dy="0.32em"
-              textAnchor="start"
-              className="tick"
-              style={{ fill: greekColor }}
-            >
+            <line x1={pad.l + innerW} x2={pad.l + innerW + 4} y1={gScale(t)} y2={gScale(t)}
+                  stroke={greekColor} strokeOpacity="0.8" />
+            <text x={pad.l + innerW + 6} y={gScale(t)} dy="0.32em" textAnchor="start"
+                  className="tick" style={{ fill: greekColor }}>
               {(() => {
                 const a = Math.abs(t);
                 if (greekWhich === "gamma") return a >= 1 ? t.toFixed(2) : a >= 0.1 ? t.toFixed(3) : t.toFixed(4);
                 if (greekWhich === "delta") return t.toFixed(2);
-                if (greekWhich === "vega") return a >= 10 ? t.toFixed(0) : a >= 1 ? t.toFixed(1) : t.toFixed(2);
+                if (greekWhich === "vega")  return a >= 10 ? t.toFixed(0) : a >= 1 ? t.toFixed(1) : t.toFixed(2);
                 if (greekWhich === "theta") return a >= 1 ? t.toFixed(2) : t.toFixed(3);
-                if (greekWhich === "rho") return a >= 1 ? t.toFixed(2) : t.toFixed(3);
+                if (greekWhich === "rho")   return a >= 1 ? t.toFixed(2) : t.toFixed(3);
                 return t.toFixed(2);
               })()}
             </text>
           </g>
         ))}
-        <text
-          transform={`translate(${w - 14} ${pad.t + innerH / 2}) rotate(90)`}
-          textAnchor="middle"
-          className="axis"
-          style={{ fill: greekColor }}
-        >
+        <text transform={`translate(${w - 14} ${pad.t + innerH / 2}) rotate(90)`}
+              textAnchor="middle" className="axis" style={{ fill: greekColor }}>
           {GREEK_LABEL[greekWhich] || "Greek"}
         </text>
 
         {/* series */}
-        <path
-          d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yNow[i])}`).join(" ")}
-          fill="none"
-          stroke="var(--accent)"
-          strokeWidth="2.2"
-        />
-        <path
-          d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yExp[i])}`).join(" ")}
-          fill="none"
-          stroke="var(--text-muted,#8a8a8a)"
-          strokeWidth="2"
-        />
-        <path
-          d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")}
-          fill="none"
-          stroke={greekColor}
-          strokeWidth="2"
-        />
+        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yNow[i])}`).join(" ")}
+              fill="none" stroke="var(--accent)" strokeWidth="2.2" />
+        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yExp[i])}`).join(" ")}
+              fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
+        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")}
+              fill="none" stroke={greekColor} strokeWidth="2" />
 
         {/* overlays: spot / mean / CI (solid lines) */}
         {Number.isFinite(spot) && spot >= xDomain[0] && spot <= xDomain[1] && (
-          <line
-            x1={xScale(Number(spot))}
-            x2={xScale(Number(spot))}
-            y1={pad.t}
-            y2={pad.t + innerH}
-            stroke={SPOT_COLOR}
-            strokeWidth="2"
-          />
+          <line x1={xScale(Number(spot))} x2={xScale(Number(spot))}
+                y1={pad.t} y2={pad.t + innerH} stroke={SPOT_COLOR} strokeWidth="2" />
         )}
         {Number.isFinite(meanPrice) && meanPrice >= xDomain[0] && meanPrice <= xDomain[1] && (
-          <line
-            x1={xScale(meanPrice)}
-            x2={xScale(meanPrice)}
-            y1={pad.t}
-            y2={pad.t + innerH}
-            stroke={MEAN_COLOR}
-            strokeWidth="2"
-          />
+          <line x1={xScale(meanPrice)} x2={xScale(meanPrice)}
+                y1={pad.t} y2={pad.t + innerH} stroke={MEAN_COLOR} strokeWidth="2" />
         )}
         {Number.isFinite(ciLow) && ciLow >= xDomain[0] && ciLow <= xDomain[1] && (
-          <line
-            x1={xScale(ciLow)}
-            x2={xScale(ciLow)}
-            y1={pad.t}
-            y2={pad.t + innerH}
-            stroke={CI_COLOR}
-            strokeWidth="2"
-          />
+          <line x1={xScale(ciLow)} x2={xScale(ciLow)}
+                y1={pad.t} y2={pad.t + innerH} stroke={CI_COLOR} strokeWidth="2" />
         )}
         {Number.isFinite(ciHigh) && ciHigh >= xDomain[0] && ciHigh <= xDomain[1] && (
-          <line
-            x1={xScale(ciHigh)}
-            x2={xScale(ciHigh)}
-            y1={pad.t}
-            y2={pad.t + innerH}
-            stroke={CI_COLOR}
-            strokeWidth="2"
-          />
+          <line x1={xScale(ciHigh)} x2={xScale(ciHigh)}
+                y1={pad.t} y2={pad.t + innerH} stroke={CI_COLOR} strokeWidth="2" />
         )}
 
         {/* hover markers */}
@@ -770,55 +600,44 @@ export default function Chart({
         {/* break-evens (chart markers only; numeric values live in KPI cell) */}
         {beFromGraph.map((b, i) => (
           <g key={`be-${i}`}>
-            <line
-              x1={xScale(b)}
-              x2={xScale(b)}
-              y1={pad.t}
-              y2={pad.t + innerH}
-              stroke="var(--text)"
-              strokeOpacity="0.25"
-            />
+            <line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t + innerH}
+                  stroke="var(--text)" strokeOpacity="0.25" />
             <circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" />
           </g>
         ))}
       </svg>
 
       {/* floating tooltip — probability row removed for now */}
-      {hover &&
-        (() => {
-          const i = hover.i;
-          return (
-            <div
-              className="tip"
-              style={{
-                left: Math.min(Math.max(hover.sx + 14, 8), w - 260),
-                top: Math.max(pad.t + 8, Math.min(hover.syNow, h - 120)),
-              }}
-            >
-              <div className="row">
-                <span className="dot" style={{ background: "var(--accent)" }} />
-                <span>Current P&amp;L</span>
-                <span className="val">{fmtCur(yNow[i], currency)}</span>
-              </div>
-              <div className="row">
-                <span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />
-                <span>Expiration P&amp;L</span>
-                <span className="val">{fmtCur(yExp[i], currency)}</span>
-              </div>
-              <div className="row">
-                <span className="dot" style={{ background: greekColor }} />
-                <span>{GREEK_LABEL[greekWhich]}</span>
-                <span className="val">{fmtNum(gVals[i], 2)}</span>
-              </div>
-
-              <div className="price">{fmtCur(xs[i], currency)}</div>
-              <div className="sub">Underlying price</div>
-
-              <div className="rule" />
-              <div className="sub">95% CI & Mean shown on chart</div>
+      {hover && (() => {
+        const i = hover.i;
+        return (
+          <div className="tip"
+               style={{ left: Math.min(Math.max(hover.sx + 14, 8), w - 260),
+                        top: Math.max(pad.t + 8, Math.min(hover.syNow, h - 120)) }}>
+            <div className="row">
+              <span className="dot" style={{ background: "var(--accent)" }} />
+              <span>Current P&amp;L</span>
+              <span className="val">{fmtCur(yNow[i], currency)}</span>
             </div>
-          );
-        })()}
+            <div className="row">
+              <span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />
+              <span>Expiration P&amp;L</span>
+              <span className="val">{fmtCur(yExp[i], currency)}</span>
+            </div>
+            <div className="row">
+              <span className="dot" style={{ background: greekColor }} />
+              <span>{GREEK_LABEL[greekWhich]}</span>
+              <span className="val">{fmtNum(gVals[i], 2)}</span>
+            </div>
+
+            <div className="price">{fmtCur(xs[i], currency)}</div>
+            <div className="sub">Underlying price</div>
+
+            <div className="rule" />
+            <div className="sub">95% CI & Mean shown on chart</div>
+          </div>
+        );
+      })()}
 
       {/* KPI row (scrollable, hidden scrollbar) */}
       <div className="kpi-scroll" ref={kpiRef} aria-label="Strategy metrics">
@@ -854,159 +673,70 @@ export default function Chart({
       </div>
 
       <style jsx>{`
-        .chart-wrap {
-          display: block;
-        }
-        .chart-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 8px 6px 2px;
-        }
-        .legend {
-          display: flex;
-          gap: 14px;
-          flex-wrap: wrap;
-        }
-        .leg {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 12.5px;
-          opacity: 0.95;
-          white-space: nowrap;
-        }
-        .dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
-          display: inline-block;
-        }
-        .header-tools {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .greek-ctl {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .greek-ctl select {
-          height: 28px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          background: var(--bg);
-          color: var(--text);
-          padding: 0 8px;
-        }
-        .zoom {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          margin-left: 6px;
-        }
-        .zoom button {
-          width: 28px;
-          height: 28px;
-          border-radius: 8px;
-          border: 1px solid var(--border);
-          background: var(--bg);
-          color: var(--text);
-          font-weight: 700;
-          line-height: 1;
-        }
-        .zoom button:hover {
-          background: var(--card);
-        }
-
-        .tick {
-          font-size: 11px;
-          fill: var(--text);
-          opacity: 0.75;
-        }
-        .axis {
-          font-size: 12px;
-          fill: var(--text);
-          opacity: 0.7;
-        }
-
-        .kpi-scroll {
-          overflow-x: auto;
-          overscroll-behavior-x: contain;
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-          border-top: 1px solid var(--border);
-        }
-        .kpi-scroll::-webkit-scrollbar {
-          display: none;
-        }
-        .metrics {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(140px, 1fr));
-          gap: 10px;
-          padding: 10px 6px 12px;
-          min-width: 840px;
-        }
-        .m .k {
-          font-size: 12px;
-          opacity: 0.7;
-        }
-        .m .v {
-          font-weight: 700;
-        }
-        @media (max-width: 920px) {
-          .metrics {
-            grid-template-columns: repeat(6, minmax(160px, 1fr));
-          }
-        }
-
-        .tip {
-          position: absolute;
-          min-width: 220px;
-          max-width: 260px;
-          padding: 11px 12px;
-          background: rgba(20, 20, 20, 1);
-          color: #eee;
-          border-radius: 10px;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          pointer-events: none;
-          font-size: 11.5px;
-        }
-        .row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          font-weight: 650;
-        }
-        .row + .row {
-          margin-top: 6px;
-        }
-        .val {
-          margin-left: auto;
-          margin-right: 0;
-        }
-        .price {
-          margin-top: 10px;
-          font-weight: 800;
-          font-size: 12.5px;
-          text-align: center;
-        }
-        .sub {
-          font-size: 11px;
-          opacity: 0.75;
-          margin-top: 2px;
-          text-align: center;
-        }
-        .rule {
-          height: 1px;
-          background: rgba(255, 255, 255, 0.12);
-          margin: 9px 0;
-        }
+        .chart-wrap { display: block; }
+        .chart-header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 6px 2px; }
+        .legend { display:flex; gap:14px; flex-wrap:wrap; }
+        .leg { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; opacity:.95; white-space:nowrap; }
+        .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+        .header-tools { display:flex; align-items:center; gap:10px; }
+        .greek-ctl { display:flex; align-items:center; gap:8px; }
+        .greek-ctl select { height:28px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:0 8px; }
+        .zoom { display:flex; align-items:center; gap:6px; margin-left:6px; }
+        .zoom button{ width:28px; height:28px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-weight:700; line-height:1; }
+        .zoom button:hover{ background:var(--card); }
+        .tick { font-size:11px; fill:var(--text); opacity:.75; }
+        .axis { font-size:12px; fill:var(--text); opacity:.7; }
+        .kpi-scroll{ overflow-x:auto; overscroll-behavior-x: contain; -ms-overflow-style: none; scrollbar-width: none; border-top:1px solid var(--border); }
+        .kpi-scroll::-webkit-scrollbar{ display:none; }
+        .metrics{ display:grid; grid-template-columns: repeat(6, minmax(140px, 1fr)); gap:10px; padding:10px 6px 12px; min-width: 840px; }
+        .m .k{ font-size:12px; opacity:.7; } .m .v{ font-weight:700; }
+        @media (max-width:920px){ .metrics{ grid-template-columns: repeat(6, minmax(160px, 1fr)); } }
+        .tip{ position:absolute; min-width:220px; max-width:260px; padding:11px 12px; background: rgba(20,20,20,1); color:#eee; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.08); pointer-events:none; font-size:11.5px; }
+        .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:650; }
+        .row + .row{ margin-top:6px; }
+        .val{ margin-left:auto; margin-right:0; }
+        .price{ margin-top:10px; font-weight:800; font-size:12.5px; text-align:center; }
+        .sub{ font-size:11px; opacity:.75; margin-top:2px; text-align:center; }
+        .rule{ height:1px; background: rgba(255,255,255,.12); margin:9px 0; }
       `}</style>
     </Wrapper>
   );
+}
+
+/* ---------- build area polygons between y=0 and yExp ---------- */
+function buildAreaPaths(xs, ys, xScale, yScale) {
+  const pos = [], neg = [];
+  const eps = 1e-9;
+  let seg = null, sign = 0;
+
+  const push = () => {
+    if (!seg || seg.length < 3) { seg = null; return; }
+    const d = seg.map((p, i) => `${i ? "L" : "M"}${xScale(p[0])},${yScale(p[1])}`).join(" ") + " Z";
+    (sign > 0 ? pos : neg).push(d);
+    seg = null; sign = 0;
+  };
+
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i], y = ys[i];
+    const s = y > eps ? 1 : y < -eps ? -1 : 0;
+
+    if (i > 0) {
+      const y0 = ys[i - 1], s0 = y0 > eps ? 1 : y0 < -eps ? -1 : 0;
+      if (s !== s0) {
+        const x0 = xs[i - 1], dy = y - y0;
+        const xCross = dy === 0 ? x : x0 + ((0 - y0) * (x - x0)) / dy;
+        if (seg) { seg.push([xCross, 0]); push(); }
+        if (s !== 0) { seg = [[xCross, 0], [x, y]]; sign = s; continue; }
+        else { seg = null; sign = 0; continue; }
+      }
+    }
+
+    if (s === 0) { if (seg) { seg.push([x, 0]); push(); } }
+    else {
+      if (!seg) { seg = [[x, 0]]; sign = s; }
+      seg.push([x, y]);
+    }
+  }
+  if (seg) { seg.push([xs[xs.length - 1], 0]); push(); }
+  return { pos, neg };
 }
