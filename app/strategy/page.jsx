@@ -259,11 +259,48 @@ export default function Strategy() {
       {/* Hero */}
       {company?.symbol ? (
         <section className="hero">
-          {/* ... hero UI ... */}
+          <div className="hero-id">
+            <div className="hero-logo" aria-hidden="true">
+              {String(company?.symbol || "?").slice(0, 1)}
+            </div>
+            <div className="hero-texts">
+              <h1 className="hero-name">{heroName}</h1>
+              <div className="hero-pill" aria-label="Ticker and exchange">
+                <span className="tkr">{company.symbol}</span>
+                {exLabel && (
+                  <>
+                    <span className="dot">•</span>
+                    <span className="ex">{exLabel}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="hero-price">
+            <div className="p-big">
+              {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
+              <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
+            </div>
+            <div className="p-sub">
+              At close •{" "}
+              {new Date().toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZoneName: "short",
+              })}
+            </div>
+          </div>
         </section>
       ) : (
         <header className="page-header">
-          {/* ... header UI ... */}
+          <div className="titles">
+            <div className="eyebrow">Portfolio</div>
+            <h1 className="page-title">Strategy</h1>
+            <p className="subtitle">Build, compare, and validate your options strategy.</p>
+          </div>
         </header>
       )}
 
@@ -277,10 +314,26 @@ export default function Strategy() {
         onIvValueChange={(v) => setIvValue(v)}
       />
 
-      {/* Tabs */}
-      {/* ... tabs UI ... */}
+      {/* Tabs header */}
+      <nav className="tabs" role="tablist" aria-label="Sections">
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            className={`tab ${tab === t.key ? "is-active" : ""}`}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
 
-      {/* Overview tab */}
+      {/* Title between tabs and cards */}
+      <h2 className="tab-title">{tabTitle}</h2>
+
+      {/* Tabbed content */}
       {tab === "overview" && (
         <div className="layout-2col">
           <div className="g-item">
@@ -320,6 +373,20 @@ export default function Strategy() {
         </div>
       )}
 
+      {tab === "financials" && (
+        <section>
+          <h3 className="section-title">Financials</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "news" && (
+        <section>
+          <h3 className="section-title">News</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
       {tab === "options" && (
         <OptionsTab
           symbol={company?.symbol || ""}
@@ -327,7 +394,78 @@ export default function Strategy() {
         />
       )}
 
-      {/* ... other tabs ... */}
+      {tab === "bonds" && (
+        <section>
+          <h3 className="section-title">Bonds</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      <style jsx>{`
+        /* Tabs */
+        .tabs{
+          display:flex; gap:6px;
+          margin:12px 0 16px;
+          border-bottom:1px solid var(--border);
+        }
+        .tab{
+          height:42px; padding:0 14px; border:0; background:transparent;
+          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
+          border-bottom:2px solid transparent; margin-bottom:-1px;
+        }
+        .tab:hover{ opacity:1; }
+        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+
+        /* Title between tabs and cards */
+        .tab-title{
+          margin: 2px 0 18px;
+          font-size: 22px;
+          line-height: 1.2;
+          font-weight: 800;
+          letter-spacing: -.2px;
+        }
+
+        /* Hero */
+        .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
+        .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
+        .hero-logo{
+          width:84px; height:84px; border-radius:20px;
+          background: radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.08), rgba(0,0,0,.35));
+          border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
+          font-weight:700; font-size:36px;
+        }
+        .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .hero-pill{
+          display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 14px;
+          border-radius:9999px; border:1px solid var(--border); background:var(--card); font-weight:600;
+          width:fit-content;
+        }
+        .hero-pill .dot{ opacity:.6; }
+
+        .hero-price{ margin-top:12px; }
+        .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
+        .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
+        .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
+
+        /* Grid below — stretch so both cards share the same height */
+        .layout-2col{ display:grid; grid-template-columns: 1fr 320px; gap: var(--row-gap); align-items: stretch; }
+        .g-item{ min-width:0; }
+        .g-span{ grid-column: 1 / -1; min-width:0; }
+        .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
+
+        .section-title{ font-weight:800; margin:8px 0; }
+        .muted{ opacity:.7; }
+
+        @media (max-width:1100px){
+          .layout-2col{ grid-template-columns: 1fr; }
+          .g-span{ grid-column: 1 / -1; }
+          .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
+          .hero-name{ font-size:32px; }
+          .p-big{ font-size:40px; }
+          .tab-title{ font-size:20px; }
+        }
+      `}</style>
     </div>
   );
 }
