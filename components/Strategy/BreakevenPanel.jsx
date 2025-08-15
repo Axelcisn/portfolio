@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import rowsToApiLegs from "./hooks/rowsToApiLegs";
+import rowsToApiLegs from "./utils/rowsToApiLegs"; // ✅ centralized mapper
 
 /* ------------ strategy alias handling ------------ */
 const STRAT_ALIASES = Object.freeze({
@@ -113,7 +113,7 @@ export default function BreakevenPanel({
   // normalize strategy; if unknown we'll omit it (server will infer)
   const normalizedStrategy = useMemo(() => normalizeStrategyKey(strategy), [strategy]);
 
-  // NEW: if "straddle" but strikes mismatch, switch to "strangle"
+  // If "straddle" but strikes mismatch, switch to "strangle"
   const effectiveStrategy = useMemo(
     () => (normalizedStrategy ? disambiguateStraddle(normalizedStrategy, legs) : null),
     [normalizedStrategy, legs]
