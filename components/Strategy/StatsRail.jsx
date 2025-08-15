@@ -12,6 +12,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTimeBasis } from "../ui/TimeBasisContext";
+import { publishStatsCtx } from "./statsBus";
 
 /* ===== helpers ===== */
 const moneySign = (ccy) =>
@@ -212,6 +213,12 @@ export default function StatsRail({
 
   const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
 
+  // Drift mode (CAPM vs Risk-Free), persisted
+  const [driftMode, setDriftMode] = useState(() => {
+    try { return localStorage.getItem("stats.driftMode") || "CAPM"; } catch { return "CAPM"; }
+  });
+  useEffect(() => { try { localStorage.setItem("stats.driftMode", driftMode); } catch {} }, [driftMode]);
+
   useEffect(() => {
     const onPick = (e) => {
       const it = e?.detail || {};
@@ -345,6 +352,23 @@ export default function StatsRail({
     else setInternalIso(nextIso);
   };
 
+  // ---- BROADCAST CONTEXT to consumers (ChainTable)
+  useEffect(() => {
+    publishStatsCtx({
+      basis,
+      days,
+      sigma,                  // annualized (decimal)
+      rf,                     // annual rate
+      erp,
+      beta,
+      muCapm,                 // rf + beta*erp - q
+      q: qDec,                // dividend yield (decimal)
+      spot,
+      currency,
+      driftMode,              // "CAPM" | "RF"
+    });
+  }, [basis, days, sigma, rf, erp, beta, muCapm, qDec, spot, currency, driftMode]);
+
   return (
     <aside className="card">
       <h3>Key stats</h3>
@@ -449,7 +473,12 @@ export default function StatsRail({
       <div className="row">
         <div className="k">Drift</div>
         <div className="v">
-          <select className="select" defaultValue="CAPM" title="Choose drift">
+          <select
+            className="select"
+            value={driftMode}
+            onChange={(e) => setDriftMode(e.target.value)}
+            title="Choose drift"
+          >
             <option value="CAPM">CAPM</option>
             <option value="RF">Risk-Free Rate</option>
           </select>
