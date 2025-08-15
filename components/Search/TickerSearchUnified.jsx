@@ -3,16 +3,14 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 
 /**
- * TickerSearchUnified
+ * Unified ticker/company search (drop-in).
  * Props:
  *  - onSelect(item)
  *  - placeholder
- *  - minLen (default 2)
- *  - limit (default 8)
- *  - debounceMs (default 220)
- *  - nocache (bool, forwarded to fetchResults when immediate fetch needed)
- *
- * Ready for copy/paste.
+ *  - minLen=2, limit=8, debounceMs=220
+ *  - initialValue, onQueryChange(q)
+ *  - endpoint="/api/company/search"  (override if needed)
+ *  - mapResult=(it)=>normalized     (override normalizer if needed)
  */
 const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   {
@@ -21,10 +19,14 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     minLen = 2,
     limit = 8,
     debounceMs = 220,
+    initialValue = "",
+    onQueryChange,
+    endpoint = "/api/company/search",
+    mapResult,
   },
   forwardedRef
 ) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialValue);
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,6 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   const listId = useRef(`tsu-list-${Math.random().toString(36).slice(2, 9)}`);
   const activeId = (i) => `${listId.current}-opt-${i}`;
 
-  // support forwarded ref
   useEffect(() => {
     if (!forwardedRef) return;
     if (typeof forwardedRef === "function") forwardedRef(inputRef.current);
@@ -47,69 +48,74 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
 
   useEffect(() => {
     return () => {
-      if (acRef.current) acRef.current.abort();
+      try { acRef.current?.abort(); } catch {}
       clearTimeout(debounceRef.current);
     };
   }, []);
 
+  const normalize = useCallback(
+    (it) =>
+      (mapResult
+        ? mapResult(it)
+        : {
+            symbol: it.symbol || it.ticker || "",
+            name: it.name || it.longname || it.description || "",
+            exchange: it.exchange || it.exch || "",
+            currency: it.currency || "USD",
+            type: it.type || it.quoteType || "EQUITY",
+            raw: it,
+          }),
+    [mapResult]
+  );
+
   const fetchResults = useCallback(
-    async (qstr, { nocache = false } = {}) => {
+    async (qstr) => {
       if (!qstr || qstr.length < minLen) {
         setResults([]);
         setLoading(false);
         return;
       }
 
-      const key = `${qstr}|${limit}`;
-      if (!nocache && cache.current.has(key)) {
+      const key = `${qstr}|${limit}|${endpoint}`;
+      if (cache.current.has(key)) {
         setResults(cache.current.get(key));
         setLoading(false);
         return;
       }
 
-      if (acRef.current) {
-        try { acRef.current.abort(); } catch {}
-      }
+      try { acRef.current?.abort(); } catch {}
       const ac = new AbortController();
       acRef.current = ac;
       setLoading(true);
 
       try {
-        const u = `/api/company/search?q=${encodeURIComponent(qstr)}&limit=${limit}`;
+        const u = `${endpoint}?q=${encodeURIComponent(qstr)}&limit=${limit}`;
         const r = await fetch(u, { signal: ac.signal, cache: "no-store" });
         if (!r.ok) throw new Error("fetch");
         const j = await r.json();
 
-        // Normalize various possible payload shapes
         let list = [];
         if (Array.isArray(j?.results)) list = j.results;
         else if (Array.isArray(j?.data?.results)) list = j.data.results;
         else if (Array.isArray(j?.data)) list = j.data;
         else if (Array.isArray(j)) list = j;
 
-        const out = (list || []).slice(0, limit).map((it) => ({
-          symbol: it.symbol || it.ticker || "",
-          name: it.name || it.longname || it.description || "",
-          exchange: it.exchange || it.exch || "",
-          currency: it.currency || "USD",
-          type: it.type || it.quoteType || "EQUITY",
-          raw: it,
-        }));
+        const out = (list || []).slice(0, limit).map(normalize);
         cache.current.set(key, out);
         setResults(out);
       } catch (e) {
-        if (e?.name === "AbortError") { /* aborted */ }
-        else setResults([]);
+        if (e?.name !== "AbortError") setResults([]);
       } finally {
         setLoading(false);
       }
     },
-    [limit, minLen]
+    [endpoint, limit, minLen, normalize]
   );
 
   // debounce query
   useEffect(() => {
     clearTimeout(debounceRef.current);
+    onQueryChange?.(q);
     if (!q || q.length < minLen) { setResults([]); setOpen(false); setLoading(false); return; }
     debounceRef.current = setTimeout(() => {
       fetchResults(q);
@@ -117,7 +123,7 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
       setActive(-1);
     }, debounceMs);
     return () => clearTimeout(debounceRef.current);
-  }, [q, fetchResults, debounceMs, minLen]);
+  }, [q, fetchResults, debounceMs, minLen, onQueryChange]);
 
   const close = useCallback(() => { setOpen(false); setActive(-1); }, []);
   const openIfResults = useCallback(() => { if (results.length) setOpen(true); }, [results.length]);
@@ -138,72 +144,73 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
 
   const handleSelect = (item) => {
     setQ(item.symbol || "");
-    setOpen(false);
-    setActive(-1);
+    close();
     onSelect?.(item);
   };
 
   const onKeyDown = (e) => {
     if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-      // open if there are results and navigate
       if (results.length) { setOpen(true); setActive(0); e.preventDefault(); }
       return;
     }
     if (!open) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActive((a) => Math.min(a + 1, results.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActive((a) => Math.max(a - 1, 0));
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      setActive(0);
-    } else if (e.key === "End") {
-      e.preventDefault();
-      setActive(results.length - 1);
-    } else if (e.key === "Enter") {
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (e.key === "Home") { e.preventDefault(); setActive(0); }
+    else if (e.key === "End") { e.preventDefault(); setActive(results.length - 1); }
+    else if (e.key === "Enter") {
       e.preventDefault();
       const idx = active >= 0 ? active : 0;
       const item = results[idx];
       if (item) handleSelect(item);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-    }
+    } else if (e.key === "Escape") { e.preventDefault(); close(); }
   };
 
   // keep active value in view when changed
   useEffect(() => {
     if (active < 0) return;
     const el = document.getElementById(activeId(active));
-    if (el?.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    el?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [active]);
 
   return (
-    <div
-      ref={wrapperRef}
-      className="tsu"
-      style={{ position: "relative" }}
-      role="presentation"
-    >
-      <input
-        ref={inputRef}
-        aria-label="Search tickers"
-        aria-autocomplete="list"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listId.current}
-        aria-activedescendant={active >= 0 ? activeId(active) : undefined}
-        placeholder={placeholder}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        onFocus={() => openIfResults()}
-        onKeyDown={onKeyDown}
-        className="search-input"
-        autoComplete="off"
-        inputMode="search"
-      />
+    <div ref={wrapperRef} className="tsu" style={{ position: "relative" }} role="presentation">
+      <div style={{ position: "relative" }}>
+        <input
+          ref={inputRef}
+          aria-label="Search tickers"
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={listId.current}
+          aria-activedescendant={active >= 0 ? activeId(active) : undefined}
+          placeholder={placeholder}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onFocus={() => openIfResults()}
+          onKeyDown={onKeyDown}
+          className="search-input"
+          autoComplete="off"
+          inputMode="search"
+          style={{ paddingRight: 32 }}
+        />
+        {!!q && (
+          <button
+            type="button"
+            aria-label="Clear"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { setQ(""); setResults([]); close(); inputRef.current?.focus(); }}
+            style={{
+              position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+              border: "1px solid var(--border)", borderRadius: 6, padding: "2px 6px",
+              background: "var(--card)", cursor: "pointer", fontSize: 12, opacity: 0.85
+            }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       {open && (
         <ul
           id={listId.current}
@@ -220,7 +227,7 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
           {results.map((r, i) => (
             <li
               id={activeId(i)}
-              key={r.symbol + i}
+              key={`${r.symbol || "sym"}-${i}`}
               role="option"
               aria-selected={i === active}
               onMouseDown={(ev) => { ev.preventDefault(); handleSelect(r); }} // prevent blur before click
