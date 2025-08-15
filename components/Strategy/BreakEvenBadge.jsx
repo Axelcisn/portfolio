@@ -31,7 +31,7 @@ export default function BreakEvenBadge({
   // Centralized BE fetch (debounced + cached)
   const { be, loading, error } = useBreakEven({
     legs,
-    strategyKey: strategy,  // ✅ pass as strategyKey to match the hook signature
+    strategyKey: strategy,  // pass as strategyKey to match the hook signature
     debounceMs: 150,
   });
 
