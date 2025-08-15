@@ -3,8 +3,6 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
-import analyticPop from "./math/analyticPop";
-import rowsToApiLegs from "./hooks/rowsToApiLegs";
 
 /* ---------- math ---------- */
 const INV_SQRT_2PI = 1 / Math.sqrt(2 * Math.PI);
@@ -228,7 +226,6 @@ export default function Chart({
   const greekWhich=(greekProp||"vega").toLowerCase();
   const gVals = useMemo(()=>xs.map(S=>greekTotal(greekWhich, S, rowsEff, env, contractSize)), [xs, rowsEff, env, contractSize, greekWhich]);
 
-  // ✨ numeric break-evens used for PoP input as well
   const be = useMemo(()=>{
     const out=[]; for(let i=1;i<xs.length;i++){ const y0=yExp[i-1], y1=yExp[i];
       if((y0>0&&y1<0)||(y0<0&&y1>0)){ const t=(-y0)/(y1-y0); out.push(xs[i-1]+t*(xs[i]-xs[i-1])); }
@@ -260,7 +257,7 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // lognormal pdf + cumulative for tooltip probabilities
+  // Time/vol inputs for mean & 95% CI (no tooltip probability for now)
   const avgDays = useMemo(()=> {
     const opt = rowsEff.filter(r=>!TYPE_INFO[r.type]?.stock && Number.isFinite(r.days));
     if(!opt.length) return Math.round(T*365)||30;
@@ -268,30 +265,11 @@ export default function Chart({
   }, [rowsEff,T]);
   const mu=riskFree, sVol=sigma;
   const Tyrs = avgDays/365;
-  const m = Math.log(Math.max(1e-9, Number(spot||1))) + (mu-0.5*sVol*sVol)*Tyrs;
-  const sLn = sVol*Math.sqrt(Tyrs);
-  const lognormPdf = (x)=>x>0?(1/(x*sLn*Math.sqrt(2*Math.PI)))*Math.exp(-Math.pow(Math.log(x)-m,2)/(2*sLn*sLn)):0;
-
-  const pdf = useMemo(()=>xs.map(lognormPdf),[xs, m, sLn]);
-  const cdf = useMemo(()=>{
-    const cum=new Array(xs.length).fill(0);
-    let acc=0;
-    for(let i=1;i<xs.length;i++){
-      const dx = xs[i]-xs[i-1];
-      acc += 0.5*(pdf[i]+pdf[i-1])*dx;
-      cum[i]=acc;
-    }
-    const total = acc || 1;
-    return cum.map(v=>v/total);
-  }, [xs, pdf]);
-
-  // Monte-Carlo overlays via GBM quantiles (no sampling)
-  const z95 = 1.959963984540054; // Φ^-1(0.975)
   const S0 = Number.isFinite(Number(spot)) ? Number(spot) : (ks[0] ?? xDomain[0]);
   const drift = (mu - 0.5*sVol*sVol) * Tyrs;
   const volT  = sVol * Math.sqrt(Tyrs);
-  const ciLow = S0 * Math.exp(drift - volT * z95);
-  const ciHigh= S0 * Math.exp(drift + volT * z95);
+  const ciLow = S0 * Math.exp(drift - 1.959963984540054 * volT);
+  const ciHigh= S0 * Math.exp(drift + 1.959963984540054 * volT);
   const meanPrice = S0 * Math.exp(mu * Tyrs);
 
   const lotSize = useMemo(()=>rowsEff.reduce((s,r)=>s+Math.abs(Number(r.qty||0)),0)||1,[rowsEff]);
@@ -324,20 +302,6 @@ export default function Chart({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  // ✨ NEW: Analytical probability of profit (Win rate)
-  const apiLegs = useMemo(() => rowsToApiLegs(rowsEff), [rowsEff]);
-  const popRes = useMemo(() => {
-    if (!Number.isFinite(Number(spot))) return { pop: null };
-    return analyticPop({
-      S: Number(spot),
-      sigma: sVol,
-      T: Tyrs,
-      legs: apiLegs,
-      be,
-      r: riskFree,
-    });
-  }, [spot, sVol, Tyrs, apiLegs, be, riskFree]);
 
   return (
     <Wrapper className={wrapClass} ref={ref} style={{ position: "relative" }}>
@@ -445,17 +409,15 @@ export default function Chart({
         {be.map((b,i)=>(<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t+innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
       </svg>
 
-      {/* floating tooltip */}
+      {/* floating tooltip — probability row removed for now */}
       {hover && (() => {
         const i = hover.i;
-        const leftProb  = (cdf[i] ?? 0);
-        const rightProb = Math.max(0, 1 - leftProb);
         return (
           <div
             className="tip"
             style={{
               left: Math.min(Math.max(hover.sx + 14, 8), w - 260),
-              top: Math.max(pad.t + 8, Math.min(hover.syNow, h - 140)),
+              top: Math.max(pad.t + 8, Math.min(hover.syNow, h - 120)),
             }}
           >
             <div className="row">
@@ -478,14 +440,7 @@ export default function Chart({
             <div className="sub">Underlying price</div>
 
             <div className="rule" />
-            <div className="prob">
-              <span className="arrow">←</span>
-              <span>{(leftProb*100).toFixed(1)}%</span>
-              <span className="dot mid">•</span>
-              <span>{(rightProb*100).toFixed(1)}%</span>
-              <span className="arrow">→</span>
-            </div>
-            <div className="sub">Probability</div>
+            <div className="sub">95% CI & Mean shown on chart</div>
           </div>
         );
       })()}
@@ -501,9 +456,8 @@ export default function Chart({
           <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp),2)}</div></div>
           <div className="m">
             <div className="k">Win rate</div>
-            <div className="v">
-              {Number.isFinite(popRes?.pop) ? `${(popRes.pop * 100).toFixed(2)}%` : "—"}
-            </div>
+            {/* Placeholder until analyticPoP is wired */}
+            <div className="v">—</div>
           </div>
 
           {/* Breakeven cell uses the shared API-based badge */}
@@ -571,9 +525,6 @@ export default function Chart({
         .price{ margin-top:10px; font-weight:800; font-size:12.5px; text-align:center; }
         .sub{ font-size:11px; opacity:.75; margin-top:2px; text-align:center; }
         .rule{ height:1px; background: rgba(255,255,255,.12); margin:9px 0; }
-        .prob{ display:flex; align-items:center; justify-content:center; gap:10px; font-weight:700; }
-        .prob .arrow{ opacity:.8; }
-        .prob .mid{ opacity:.7; }
       `}</style>
     </Wrapper>
   );
