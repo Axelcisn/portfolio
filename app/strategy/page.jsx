@@ -22,6 +22,13 @@ const EX_NAMES = {
 };
 const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
 
+const pickNearest = (list) => {
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  for (const e of list) if (e >= today) return e;
+  return list[list.length - 1];
+};
+
 export default function Strategy() {
   /* ===== 00 — Local state ===== */
   const [company, setCompany] = useState(null);
@@ -44,10 +51,10 @@ export default function Strategy() {
   // Fallback price (when /api/company returns spot = 0)
   const [fallbackSpot, setFallbackSpot] = useState(null);
 
-  // Expiries shared with StatsRail & OptionsTab – identical to Options logic
+  // Expiries shared across tabs
   const { list: expiries = [] } = useExpiries(company?.symbol);
 
-  // Selected expiry (single source of truth for ISO YYYY-MM-DD)
+  // Controlled expiry selection (shared with OptionsTab)
   const [selectedExpiry, setSelectedExpiry] = useState(null);
 
   /* ===== Memory (persists by symbol) ===== */
@@ -63,23 +70,15 @@ export default function Strategy() {
     if (mem.netPremium != null) setNetPremium(mem.netPremium);
     if (mem.tab) setTab(mem.tab);
     if (mem.expiry) setSelectedExpiry(mem.expiry);
-  }, [memReady]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reconcile selectedExpiry with current expiries list
-  useEffect(() => {
-    if (!Array.isArray(expiries) || expiries.length === 0) {
-      if (selectedExpiry !== null) setSelectedExpiry(null);
-      return;
-    }
-    if (selectedExpiry && expiries.includes(selectedExpiry)) return;
-
-    // pick nearest upcoming (>= today) else last
-    const todayISO = new Date().toISOString().slice(0, 10);
-    const nearest = expiries.find((e) => e >= todayISO) || expiries[expiries.length - 1];
-    setSelectedExpiry(nearest);
-    if (company?.symbol) memSave({ expiry: nearest });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expiries]);
+  }, [memReady]);
+
+  // keep selectedExpiry valid against current list (don’t override if still valid)
+  useEffect(() => {
+    if (!expiries.length) return;
+    if (selectedExpiry && expiries.includes(selectedExpiry)) return;
+    setSelectedExpiry(pickNearest(expiries));
+  }, [expiries, selectedExpiry]);
 
   /* ===== 01 — Derived inputs ===== */
   const rawSpot = Number(company?.spot);
@@ -228,7 +227,7 @@ export default function Strategy() {
     if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
   };
 
-  /* ===== 06 — Tabs state (pure CSS underline) ===== */
+  /* ===== 06 — Tabs ===== */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -346,10 +345,11 @@ export default function Strategy() {
               iv={sigma}
               market={market}
 
-              /* expiry list shared with Options tab */
+              /* expiry list shared across tabs */
               expiries={expiries}
-              selectedExpiry={selectedExpiry}               {/* safe if StatsRail supports it */}
-              onExpiryChange={(iso) => {                   /* always capture and persist */
+              /* Optional: pass current selection for future support */
+              selectedExpiry={selectedExpiry}
+              onExpiryChange={(iso) => {
                 setSelectedExpiry(iso || null);
                 if (company?.symbol) memSave({ expiry: iso || null });
               }}
@@ -393,13 +393,14 @@ export default function Strategy() {
         <OptionsTab
           symbol={company?.symbol || ""}
           currency={company?.currency || currency}
-          /* controlled expiry to keep OptionsTab in sync and persisted */
+          /* share expiries + controlled selection */
           expiries={expiries}
           selectedExpiry={selectedExpiry}
           onChangeExpiry={(iso) => {
             setSelectedExpiry(iso || null);
             if (company?.symbol) memSave({ expiry: iso || null });
           }}
+          onDaysChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
         />
       )}
 
