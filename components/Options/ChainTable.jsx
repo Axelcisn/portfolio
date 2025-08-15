@@ -1,7 +1,13 @@
 // components/Options/ChainTable.jsx
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
 
 /* ---------- tiny utils ---------- */
@@ -37,13 +43,13 @@ export default function ChainTable({
   settings, // row count / sort controls from the popover
   onToggleSort, // header click toggles sort
 }) {
-  const [status, setStatus] = useState("idle"); // idle | loading | ready | error
+  const [status, setStatus] = useState("idle");
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null); // { spot, currency, expiry }
   const [rows, setRows] = useState([]); // merged by strike
   const [expanded, setExpanded] = useState(null); // { strike, side:'call'|'put' } | null
 
-  // StatsRail context — guarded subscribe to avoid invalid cleanup (#310)
+  // StatsRail (days/basis/sigma/drift…)
   const [ctx, setCtx] = useState(() =>
     typeof window !== "undefined" ? snapshotStatsCtx() : null
   );
@@ -56,8 +62,7 @@ export default function ChainTable({
   const effCurrency = meta?.currency || currency || "USD";
   const fmtMoney = (v, d = 2) =>
     isNum(v) ? `${moneySign(effCurrency)}${Number(v).toFixed(d)}` : "—";
-  const fmtPct = (p, d = 2) =>
-    isNum(p) ? `${(p * 100).toFixed(d)}%` : "—";
+  const fmtPct = (p, d = 2) => (isNum(p) ? `${(p * 100).toFixed(d)}%` : "—");
 
   // Settings — safe defaults
   const sortDir = settings?.sort === "desc" ? "desc" : "asc";
@@ -130,7 +135,7 @@ export default function ChainTable({
         byStrike.set(k, { strike: k, call: null, put: null, ivPct: null });
       const row = byStrike.get(k);
       row[side] = {
-        price: pick(o.price),
+        price: pick(o.price), // theoretical/model if provided
         ask: pick(o.ask),
         bid: pick(o.bid),
         ivPct: pick(o.ivPct),
@@ -285,7 +290,6 @@ export default function ChainTable({
     }
   };
 
-  // shimmer skeleton length
   const shimmerCount = useMemo(
     () => (rowLimit === Infinity ? 12 : Math.max(8, Math.min(14, rowLimit || 12))),
     [rowLimit]
@@ -310,14 +314,17 @@ export default function ChainTable({
     const sqrtT = Math.sqrt(T),
       sigSqrtT = sigma * sqrtT;
 
+    // Break-even
     const BE = type === "call" ? K + premium : Math.max(1e-9, K - premium);
 
+    // PoP via lognormal threshold
     const z =
       (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
     const needsAbove =
       (type === "call" && pos === "long") || (type === "put" && pos === "short");
     const PoP = needsAbove ? 1 - Phi(z) : Phi(z);
 
+    // d~ with chosen drift (real-world when CAPM, risk-neutral when rf-q)
     const d1 =
       (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / sigSqrtT;
     const d2 = d1 - sigSqrtT;
@@ -327,11 +334,11 @@ export default function ChainTable({
     if (type === "call") Epay = S0 * expST * Phi(d1) - K * Phi(d2);
     else Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
 
+    // variance via truncated moments
     const dbar =
       (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
     const PgtK = Phi(dbar),
       PltK = 1 - PgtK;
-
     const E1_above = S0 * expST * Phi(d1);
     const E2_above =
       S0 *
@@ -344,7 +351,6 @@ export default function ChainTable({
       S0 *
       Math.exp(2 * drift * T + sigma * sigma * T) *
       Phi(-(d1 + sigSqrtT));
-
     const E2pay =
       type === "call"
         ? E2_above - 2 * K * E1_above + K * K * PgtK
@@ -363,9 +369,10 @@ export default function ChainTable({
   function daysToExpiryISO(iso, tz = "Europe/Rome") {
     if (!iso) return null;
     try {
-      const endLocalString = new Date(`${iso}T23:59:59`).toLocaleString("en-US", {
-        timeZone: tz,
-      });
+      const endLocalString = new Date(`${iso}T23:59:59`).toLocaleString(
+        "en-US",
+        { timeZone: tz }
+      );
       const end = new Date(endLocalString);
       const now = new Date();
       const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
@@ -378,9 +385,13 @@ export default function ChainTable({
   // Effective time & drift from StatsRail context
   const effDays = ctx?.days ?? daysToExpiryISO(meta?.expiry);
   const effBasis = ctx?.basis ?? 365;
-  const T = isNum(effDays) ? Math.max(1, effDays) / effBasis : null;
+  const T =
+    isNum(effDays) && isNum(effBasis)
+      ? Math.max(1, effDays) / effBasis
+      : null;
   const sigma =
-    ctx?.sigma ?? (isNum(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
+    ctx?.sigma ??
+    (isNum(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
   const drift =
     ctx?.driftMode === "CAPM"
       ? Number(ctx?.muCapm) || 0
@@ -409,11 +420,10 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">
           Mid
         </div>
-
         <div
           className="mid cell strike-hdr"
           role="columnheader"
-          aria-sort={sortDir === "desc" ? "descending" : "ascending"}
+          aria-sort={ariaSort}
           tabIndex={0}
           onClick={handleSortClick}
           onKeyDown={handleSortKey}
@@ -424,11 +434,9 @@ export default function ChainTable({
           </span>{" "}
           Strike
         </div>
-
         <div className="mid cell iv-hdr" role="columnheader">
           IV, %
         </div>
-
         <div className="p cell" role="columnheader">
           Mid
         </div>
@@ -506,10 +514,9 @@ export default function ChainTable({
         <div className="body">
           {visible.map((r) => {
             const spotStrike =
-              closestStrike != null &&
-              Number(r.strike) === Number(closestStrike);
+              closestStrike != null && Number(r.strike) === Number(closestStrike);
             const open = isOpen(r.strike);
-            const focus = focusSide(r.strike);
+            const focus = focusSide(r.strike); // 'call' | 'put' | null
 
             const callMid = r?.call?.mid ?? null;
             const putMid = r?.put?.mid ?? null;
@@ -670,21 +677,17 @@ export default function ChainTable({
                             type={typeForChart}
                             pos="short"
                             BE={beForChart}
+                            mu={drift}
                             sigma={sigma}
                             T={T}
-                            drift={drift}
                           />
                         </div>
                         <div className="metrics">
-                          <Metric
-                            label="Break-even"
-                            value={fmtMoney(shortM?.be)}
-                            num={shortM?.be}
-                          />
+                          <Metric label="Break-even" value={fmtMoney(shortM?.be)} tone="neu" />
                           <Metric
                             label="Prob. Profit"
                             value={fmtPct(shortM?.pop)}
-                            num={(shortM?.pop ?? null) - 0.5}
+                            num={(shortM?.pop ?? 0) - 0.5}
                           />
                           <Metric
                             label="Expected Return"
@@ -728,21 +731,17 @@ export default function ChainTable({
                             type={typeForChart}
                             pos="long"
                             BE={beForChart}
+                            mu={drift}
                             sigma={sigma}
                             T={T}
-                            drift={drift}
                           />
                         </div>
                         <div className="metrics">
-                          <Metric
-                            label="Break-even"
-                            value={fmtMoney(longM?.be)}
-                            num={longM?.be}
-                          />
+                          <Metric label="Break-even" value={fmtMoney(longM?.be)} tone="neu" />
                           <Metric
                             label="Prob. Profit"
                             value={fmtPct(longM?.pop)}
-                            num={(longM?.pop ?? null) - 0.5}
+                            num={(longM?.pop ?? 0) - 0.5}
                           />
                           <Metric
                             label="Expected Return"
@@ -783,7 +782,7 @@ export default function ChainTable({
         .wrap {
           --strikeCol: #f2ae2e;
           --ivCol: #f27405;
-          --rowHover: color-mix(in srgb, var(--text, #e5e7eb) 8%, transparent);
+          --rowHover: color-mix(in srgb, #e5e7eb 8%, transparent);
           --spotOrange: #f59e0b;
 
           --panelBg: #0b0f14;
@@ -805,12 +804,13 @@ export default function ChainTable({
           font-weight: 800;
           font-size: 22px;
           letter-spacing: 0.2px;
-          color: var(--text, #e8eaee);
+          color: #e8eaee;
         }
         .h-mid {
           flex: 1;
         }
 
+        /* grid: 10 columns */
         .grid {
           display: grid;
           grid-template-columns:
@@ -878,11 +878,19 @@ export default function ChainTable({
           box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28),
             inset 0 1px 0 rgba(255, 255, 255, 0.04);
         }
+        .title {
+          font-weight: 800;
+          font-size: 16px;
+          margin-bottom: 4px;
+        }
+        .sub {
+          opacity: 0.75;
+          font-size: 13px;
+        }
 
         .body .row {
           padding: 8px 0;
-          border-bottom: 1px solid
-            color-mix(in srgb, var(--panelEdge) 86%, transparent);
+          border-bottom: 1px solid color-mix(in srgb, var(--panelEdge) 86%, transparent);
           transition: background-color 0.18s ease, box-shadow 0.18s ease;
         }
         .clickable {
@@ -896,11 +904,7 @@ export default function ChainTable({
         }
         .body .row.is-spot {
           background-color: color-mix(in srgb, var(--spotOrange) 16%, transparent);
-          border-bottom-color: color-mix(
-            in srgb,
-            var(--spotOrange) 45%,
-            var(--panelEdge)
-          );
+          border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--panelEdge));
         }
 
         .val {
@@ -921,24 +925,20 @@ export default function ChainTable({
           border-radius: 8px;
         }
 
+        /* Expanded panel */
         .details {
           overflow: hidden;
           max-height: 0;
           opacity: 0;
           transform: translateY(-4px);
-          transition: max-height 0.28s ease, opacity 0.28s ease,
-            transform 0.28s ease;
+          transition: max-height 0.28s ease, opacity 0.28s ease, transform 0.28s ease;
           border-bottom: 1px solid transparent;
         }
         .details.open {
-          max-height: 700px;
+          max-height: 720px;
           opacity: 1;
           transform: translateY(0);
-          border-bottom-color: color-mix(
-            in srgb,
-            var(--panelEdge) 86%,
-            transparent
-          );
+          border-bottom-color: color-mix(in srgb, var(--panelEdge) 86%, transparent);
         }
         .details-inner {
           padding: 18px 12px 22px;
@@ -971,7 +971,7 @@ export default function ChainTable({
 
         .panel-grid {
           display: grid;
-          grid-template-rows: 220px auto;
+          grid-template-rows: 230px auto;
           gap: 14px;
         }
         .chart {
@@ -988,43 +988,45 @@ export default function ChainTable({
           overflow: hidden;
         }
 
+        /* Metrics with pills */
         .metrics {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 16px 22px;
+          gap: 14px 20px;
         }
         .metric {
           display: flex;
           align-items: center;
           justify-content: flex-start;
-          gap: 18px;
+          gap: 18px; /* more gap between label and value */
         }
         .metric .k {
           color: #eaeef5;
-          opacity: 0.82;
+          opacity: 0.86;
           font-size: 17px;
         }
         .metric .v {
-          margin-left: 12px;
           font-weight: 800;
           font-variant-numeric: tabular-nums;
           background: var(--chipBg);
           border: 1px solid var(--chipEdge);
           padding: 7px 14px;
           border-radius: 999px;
-          font-size: 15.5px;
+          font-size: 15px;
           line-height: 1;
           color: #e7eaf0;
+          min-width: 64px;
+          text-align: center;
         }
         .metric .v.pos {
           color: #22c55e;
-          background: rgba(34, 197, 94, 0.1);
+          background: rgba(34, 197, 94, 0.12);
           border-color: rgba(34, 197, 94, 0.28);
         }
         .metric .v.neg {
           color: #ef4444;
-          background: rgba(239, 68, 68, 0.1);
-          border-color: rgba(239, 68, 68, 0.3);
+          background: rgba(239, 68, 68, 0.12);
+          border-color: rgba(239, 68, 68, 0.28);
         }
         .metric .v.neu {
           color: #cbd5e1;
@@ -1050,6 +1052,7 @@ export default function ChainTable({
           background: #0c1117;
         }
 
+        /* Loading shimmer */
         .is-loading .row:hover {
           background: transparent;
         }
@@ -1094,7 +1097,7 @@ export default function ChainTable({
 
         @media (max-width: 980px) {
           .panel-grid {
-            grid-template-rows: 200px auto;
+            grid-template-rows: 210px auto;
           }
           .details-inner {
             grid-template-columns: 1fr;
@@ -1105,17 +1108,18 @@ export default function ChainTable({
   );
 }
 
-/* ---------- Metric pill (auto tone: pos / neg / neutral) ---------- */
-function Metric({ label, value, num }) {
-  let tone = "neu";
-  if (isNum(num)) {
-    if (num > 0) tone = "pos";
-    else if (num < 0) tone = "neg";
+/* ---------- Metric pill (auto tone) ---------- */
+function Metric({ label, value, num, tone }) {
+  let cls = tone || "neu";
+  if (tone !== "neu" && isNum(num)) {
+    if (num > 0) cls = "pos";
+    else if (num < 0) cls = "neg";
+    else cls = "neu";
   }
   return (
     <div className="metric">
       <span className="k">{label}</span>
-      <span className={`v ${tone}`}>{value ?? "—"}</span>
+      <span className={`v ${cls}`}>{value ?? "—"}</span>
     </div>
   );
 }
@@ -1136,72 +1140,70 @@ function fmtG(v) {
   return isNum(v) ? Number(v).toFixed(2) : "—";
 }
 
-/* ---------- Mini payoff chart (CI area fill + darker blurred buttons) ---------- */
-function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
+/* ---------- Mini payoff chart (center on S0, CI fill, darker footer, +/− zoom) ---------- */
+function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
   if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
     return <span className="chart-hint">Chart</span>;
   }
 
-  const W = 520,
-    H = 210,
+  const W = 560,
+    H = 240,
     pad = 12;
 
-  const centerPx = Number.isFinite(BE) ? BE : S0;
-  const baseSpan =
-    0.38 * (S0 || K) + 0.18 * Math.abs((S0 || 0) - (K || 0));
-  const [zoom, setZoom] = useState(1);
-  const zoomIn = () => setZoom((z) => Math.min(20, Math.round(z * 1.12 * 100) / 100));
-  const zoomOut = () => setZoom((z) => Math.max(0.5, Math.round((z / 1.12) * 100) / 100));
+  // Center on current price to keep puts balanced visually
+  const centerX = S0;
 
+  // gentle default span (covers ~ ±40% around S0)
+  const baseSpan = 0.4 * S0;
+
+  const [zoom, setZoom] = useState(1); // larger => closer
   const span = baseSpan / zoom;
-  const xmin = Math.max(0.01, centerPx - span);
-  const xmax = centerPx + span;
-
-  const idRef = useRef(`pl_${Math.random().toString(36).slice(2)}`);
-  const aboveId = `${idRef.current}_above`;
-  const belowId = `${idRef.current}_below`;
+  const xmin = Math.max(0.01, centerX - span);
+  const xmax = centerX + span;
 
   const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
 
-  const payoffAt = (s) => {
+  // ----- payoff samples -----
+  const N = 220;
+  const xs = [];
+  for (let i = 0; i <= N; i++) xs.push(xmin + (i / N) * (xmax - xmin));
+
+  const pay = xs.map((s) => {
     if (type === "call") {
       const intr = Math.max(s - K, 0);
       return pos === "long" ? intr - premium : premium - intr;
     }
     const intr = Math.max(K - s, 0);
     return pos === "long" ? intr - premium : premium - intr;
-  };
+  });
 
-  const N = 160;
-  const xs = Array.from({ length: N + 1 }, (_, i) => xmin + (i / N) * (xmax - xmin));
-  const pay = xs.map(payoffAt);
-
+  // y-range padded so fills never clip
   const yMin = Math.min(...pay, -premium * 1.35);
   const yMax = Math.max(...pay, premium * 1.35);
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
   const baselineY = ymap(0);
 
+  // payoff path
   const lineD = xs
     .map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`)
     .join(" ");
+
+  // single polygon to baseline (used for both profit/loss via clipping)
   const areaD = [
     `M ${xmap(xs[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
     ...xs.map((s, i) => `L ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`),
     `L ${xmap(xs[xs.length - 1]).toFixed(2)} ${baselineY.toFixed(2)} Z`,
   ].join(" ");
 
-  const mu = Number(drift || 0);
-  const canPdf = sigma > 0 && T > 0;
-  const m = canPdf ? Math.log(S0) + (mu - 0.5 * sigma * sigma) * T : 0;
-  const v = canPdf ? sigma * Math.sqrt(T) : 1;
+  // ----- lognormal PDF with chosen drift mu -----
+  const m = Math.log(S0) + (Number(mu) - 0.5 * sigma * sigma) * T;
+  const v = sigma * Math.sqrt(T);
   const pdf = (s) =>
     (1 / (s * v * Math.sqrt(2 * Math.PI))) *
     Math.exp(-0.5 * Math.pow((Math.log(s) - m) / v, 2));
-
-  const pdfVals = canPdf ? xs.map(pdf) : xs.map(() => 0);
+  const pdfVals = xs.map(pdf);
   const pdfMax = Math.max(...pdfVals) || 1;
-  const amp = 0.55 * (H - 2 * pad);
-
+  const amp = 0.58 * (H - 2 * pad); // take ~58% of height
   const pdfPath = xs
     .map((s, i) => {
       const y = baselineY - (pdfVals[i] / pdfMax) * amp;
@@ -1209,244 +1211,130 @@ function MiniPL({ S0, K, premium, type, pos, BE, sigma, T, drift }) {
     })
     .join(" ");
 
-  let ciAreaD = null;
-  let xCIL = null,
-    xCIH = null;
-  if (canPdf) {
-    const sLo = Math.exp(m - 1.96 * v);
-    const sHi = Math.exp(m + 1.96 * v);
-    const lo = Math.max(xmin, Math.min(xmax, sLo));
-    const hi = Math.max(xmin, Math.min(xmax, sHi));
-    xCIL = xmap(lo);
-    xCIH = xmap(hi);
+  // 95% CI (no vertical lines; fill under the curve between sL..sH)
+  const z = 1.96;
+  const sL = Math.exp(m - v * z);
+  const sH = Math.exp(m + v * z);
+  const ciL = Math.max(xmin, sL);
+  const ciH = Math.min(xmax, sH);
+  const ciPts = xs.filter((s) => s >= ciL && s <= ciH);
+  const ciPoly =
+    ciPts.length >= 2
+      ? [
+          `M ${xmap(ciPts[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
+          ...ciPts.map((s) => {
+            const y = baselineY - (pdf(s) / pdfMax) * amp;
+            return `L ${xmap(s).toFixed(2)} ${y.toFixed(2)}`;
+          }),
+          `L ${xmap(ciPts[ciPts.length - 1]).toFixed(2)} ${baselineY.toFixed(2)} Z`,
+        ].join(" ")
+      : null;
 
-    const iStart = Math.max(0, Math.floor(((lo - xmin) / (xmax - xmin)) * N));
-    const iEnd = Math.min(N, Math.ceil(((hi - xmin) / (xmax - xmin)) * N));
-
-    if (iEnd - iStart >= 1) {
-      const xsCI = xs.slice(iStart, iEnd + 1);
-      const pathUp = xsCI
-        .map((s, j) => {
-          const i = iStart + j;
-          const y = baselineY - (pdfVals[i] / pdfMax) * amp;
-          return `${j ? "L" : "M"} ${xmap(s).toFixed(2)} ${y.toFixed(2)}`;
-        })
-        .join(" ");
-      const xEnd = xmap(xs[iEnd]);
-      const xBeg = xmap(xs[iStart]);
-      ciAreaD = `${pathUp} L ${xEnd.toFixed(2)} ${baselineY.toFixed(
-        2
-      )} L ${xBeg.toFixed(2)} ${baselineY.toFixed(2)} Z`;
-    }
-  }
-
+  // extra lines
   const xBE = Number.isFinite(BE) ? xmap(BE) : null;
   const xSpot = xmap(S0);
-  const xMean = xmap(S0 * Math.exp(mu * T));
+  const meanPrice = S0 * Math.exp(Number(mu) * T);
+  const xMean = xmap(meanPrice);
 
+  // ticks placed on the X-axis line
   const tickFmt = (s) => Math.round(s).toString();
-  const leftTick = tickFmt(xmin);
-  const midTick = tickFmt(centerPx);
-  const rightTick = tickFmt(xmax);
 
-  const [tip, setTip] = useState(null);
-  const onMove = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const price = xmin + ((x - pad) / (W - 2 * pad)) * (xmax - xmin);
-    const pr = payoffAt(price);
-    const y = ymap(pr);
-    const top = Math.min(H - 26, Math.max(10, y + 12));
-    const left = Math.min(W - 130, Math.max(10, x + 10));
-    setTip({ x: left, y: top, price, pr });
-  };
-  const onLeave = () => setTip(null);
+  // zoom buttons
+  const zoomIn = () => setZoom((z) => Math.min(30, z * 1.15));
+  const zoomOut = () => setZoom((z) => Math.max(0.5, z / 1.15));
+
+  // unique clip ids
+  const idsRef = useRef({
+    above: `above-${Math.random().toString(36).slice(2)}`,
+    below: `below-${Math.random().toString(36).slice(2)}`,
+  });
+  const aboveId = idsRef.current.above;
+  const belowId = idsRef.current.below;
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      {/* frosted/dark glass footer */}
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 28,
-          background: "rgba(8,12,20,.45)",
-          backdropFilter: "blur(8px) saturate(120%)",
-          WebkitBackdropFilter: "blur(8px) saturate(120%)",
-          borderTop: "1px solid rgba(255,255,255,.08)",
-          boxShadow: "0 -20px 30px rgba(0,0,0,.35) inset",
-          borderBottomLeftRadius: 12,
-          borderBottomRightRadius: 12,
-          pointerEvents: "none",
-          zIndex: 0,
-        }}
-      />
-      <svg
-        width="100%"
-        height="100%"
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        onMouseMove={onMove}
-        onMouseLeave={onLeave}
-        style={{ touchAction: "none", position: "relative", zIndex: 1 }}
-        shapeRendering="geometricPrecision"
-      >
-        <defs>
-          <clipPath id={aboveId}>
-            <rect x="0" y="0" width={W} height={baselineY} />
-          </clipPath>
-          <clipPath id={belowId}>
-            <rect x="0" y={baselineY} width={W} height={H - baselineY} />
-          </clipPath>
-        </defs>
+    <svg
+      width="100%"
+      height="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      style={{ touchAction: "none" }}
+      shapeRendering="geometricPrecision"
+    >
+      <defs>
+        <clipPath id={aboveId}>
+          <rect x="0" y="0" width={W} height={baselineY} />
+        </clipPath>
+        <clipPath id={belowId}>
+          <rect x="0" y={baselineY} width={W} height={H - baselineY} />
+        </clipPath>
+        <filter id="glass">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
+        </filter>
+      </defs>
 
-        {/* frame */}
+      {/* background */}
+      <rect x="1" y="1" width={W - 2} height={H - 2} rx="10" ry="10" fill="none" stroke="rgba(255,255,255,.04)" />
+
+      {/* profit / loss fills (use single path then clip) */}
+      <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
+      <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
+
+      {/* PDF 95% CI fill (soft pink/purple) */}
+      {ciPoly && <path d={ciPoly} fill="rgba(216, 180, 254, 0.28)" />}
+
+      {/* payoff line */}
+      <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.7" vectorEffect="non-scaling-stroke" />
+
+      {/* probability curve */}
+      <path d={pdfPath} fill="none" stroke="#facc15" strokeWidth="2" opacity="0.95" vectorEffect="non-scaling-stroke" />
+
+      {/* vertical guides */}
+      {Number.isFinite(xBE) && (
+        <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.9" />
+      )}
+      <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
+      <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
+
+      {/* X-axis (P&L zero) */}
+      <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="rgba(255,255,255,.22)" />
+
+      {/* X-axis ticks right on the axis */}
+      <g fontSize="12" fontWeight="700" fill="rgba(148,163,184,.9)">
+        <text x={pad} y={baselineY - 6}>{tickFmt(xmin)}</text>
+        <text x={xmap(centerX)} y={baselineY - 6} textAnchor="middle" fill="#60a5fa">
+          {tickFmt(centerX)}
+        </text>
+        <text x={W - pad} y={baselineY - 6} textAnchor="end">
+          {tickFmt(xmax)}
+        </text>
+      </g>
+
+      {/* glassy footer strip for controls */}
+      <g>
         <rect
-          x="1"
-          y="1"
-          width={W - 2}
-          height={H - 2}
-          rx="10"
-          ry="10"
-          fill="none"
-          stroke="rgba(255,255,255,.04)"
+          x="0"
+          y={H - 48}
+          width={W}
+          height="48"
+          fill="rgba(2,6,23,.42)"
+          stroke="rgba(255,255,255,.06)"
+          filter="url(#glass)"
         />
-
-        {/* 95% CI fill under the bell curve */}
-        {ciAreaD && (
-          <path
-            d={ciAreaD}
-            fill="rgba(196,181,253,.22)"
-            stroke="rgba(196,181,253,.35)"
-            strokeLinejoin="round"
-          />
-        )}
-        {xCIL != null && (
-          <line
-            x1={xCIL}
-            y1={pad}
-            x2={xCIL}
-            y2={H - pad}
-            stroke="rgba(196,181,253,.45)"
-            strokeDasharray="6 6"
-          />
-        )}
-        {xCIH != null && (
-          <line
-            x1={xCIH}
-            y1={pad}
-            x2={xCIH}
-            y2={H - pad}
-            stroke="rgba(196,181,253,.45)"
-            strokeDasharray="6 6"
-          />
-        )}
-
-        {/* zero line */}
-        <line x1={12} y1={baselineY} x2={W - 12} y2={baselineY} stroke="currentColor" opacity="0.18" />
-
-        {/* profit / loss areas (single path, clipped) */}
-        <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
-        <path d={areaD} fill="rgba(239,68,68,.15)" clipPath={`url(#${belowId})`} />
-
-        {/* payoff line */}
-        <path
-          d={lineD}
-          fill="none"
-          stroke="rgba(255,255,255,.92)"
-          strokeWidth="1.6"
-          vectorEffect="non-scaling-stroke"
-        />
-
-        {/* probability overlay */}
-        {sigma > 0 && T > 0 && (
-          <path
-            d={pdfPath}
-            fill="none"
-            stroke="#facc15"
-            strokeWidth="2"
-            opacity="0.95"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
-
-        {/* vertical guides */}
-        {Number.isFinite(xBE) && (
-          <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.9" />
-        )}
-        <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.1" opacity="0.9" />
-        <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.1" opacity="0.9" />
-
-        {/* ticks aligned with the X-axis */}
-        <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="600">
-          <text x={12} y={baselineY - 6}>{leftTick}</text>
-          <text x={W / 2} y={baselineY - 6} textAnchor="middle" fill="#60a5fa">{midTick}</text>
-          <text x={W - 12} y={baselineY - 6} textAnchor="end">{rightTick}</text>
-        </g>
-
-        {/* tooltip */}
-        {tip && (
-          <g transform={`translate(${tip.x},${tip.y})`}>
-            <rect
-              x="0"
-              y="-16"
-              rx="8"
-              ry="8"
-              width="130"
-              height="22"
-              fill="rgba(17,24,39,.85)"
-              stroke="rgba(255,255,255,.14)"
-            />
-            <text x="8" y="0" fontSize="12" fill="#e5e7eb" fontWeight="700">
-              ${tip.price.toFixed(2)} • {tip.pr >= 0 ? "+" : ""}
-              {tip.pr.toFixed(2)}
-            </text>
+        {/* zoom controls */}
+        <g transform={`translate(${W - 98}, ${H - 36})`} >
+          <rect x="-8" y="-12" rx="14" ry="14" width="92" height="32" fill="rgba(15,23,42,.55)" stroke="rgba(255,255,255,.12)" />
+          <g role="button" tabIndex="0" onClick={zoomOut} style={{ cursor: "pointer" }}>
+            <circle cx="18" cy="4" r="14" fill="rgba(15,23,42,.85)" stroke="rgba(255,255,255,.16)" />
+            <line x1="10" y1="4" x2="26" y2="4" stroke="#cbd5e1" strokeWidth="2" />
           </g>
-        )}
-      </svg>
-
-      {/* Zoom buttons */}
-      <div
-        aria-label="Zoom controls"
-        style={{
-          position: "absolute",
-          right: 8,
-          bottom: 8,
-          display: "flex",
-          gap: 8,
-          zIndex: 2,
-        }}
-      >
-        <button type="button" onClick={zoomOut} aria-label="Zoom out" title="Zoom out" style={btnStyle}>
-          −
-        </button>
-        <button type="button" onClick={zoomIn} aria-label="Zoom in" title="Zoom in" style={btnStyle}>
-          +
-        </button>
-      </div>
-    </div>
+          <g role="button" tabIndex="0" onClick={zoomIn} style={{ cursor: "pointer" }}>
+            <circle cx="58" cy="4" r="14" fill="rgba(15,23,42,.85)" stroke="rgba(255,255,255,.16)" />
+            <line x1="50" y1="4" x2="66" y2="4" stroke="#cbd5e1" strokeWidth="2" />
+            <line x1="58" y1="-4" x2="58" y2="12" stroke="#cbd5e1" strokeWidth="2" />
+          </g>
+        </g>
+      </g>
+    </svg>
   );
 }
-
-const btnStyle = {
-  width: 28,
-  height: 28,
-  lineHeight: "26px",
-  borderRadius: 999,
-  border: "1px solid rgba(255,255,255,.14)",
-  background: "rgba(8,12,20,.60)",
-  color: "#e5e7eb",
-  fontWeight: 800,
-  fontSize: 16,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  cursor: "pointer",
-  userSelect: "none",
-  backdropFilter: "blur(6px) saturate(115%)",
-  WebkitBackdropFilter: "blur(6px) saturate(115%)",
-  boxShadow: "0 2px 10px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05)",
-};
