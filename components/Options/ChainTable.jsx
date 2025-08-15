@@ -19,6 +19,12 @@ export default function ChainTable({
   const [expanded, setExpanded] = useState(null); // { strike, side: 'call'|'put' } | null
 
   const fmt = (v, d = 2) => (Number.isFinite(v) ? v.toFixed(d) : "—");
+  const moneySign = (ccy) =>
+    ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
+
+  const effCurrency = meta?.currency || currency || "USD";
+  const fmtMoney = (v, d = 2) =>
+    Number.isFinite(v) ? `${moneySign(effCurrency)}${Number(v).toFixed(d)}` : "—";
 
   // Settings — safe defaults
   const sortDir = (settings?.sort === "desc" ? "desc" : "asc");
@@ -62,11 +68,11 @@ export default function ChainTable({
   }
 
   const pick = (x) => (Number.isFinite(x) ? x : null);
-  const midFrom = (ask, bid, price) => {
-    const a = pick(ask), b = pick(bid), p = pick(price);
-    if (a != null && b != null) return (a + b) / 2;
-    if (p != null) return p;
-    return a ?? b ?? null;
+
+  // STRICT Mid: only when BOTH ask & bid exist; otherwise null (render "—")
+  const strictMid = (ask, bid) => {
+    const a = pick(ask), b = pick(bid);
+    return a != null && b != null ? (a + b) / 2 : null;
   };
 
   const takeGreeks = (o) => ({
@@ -97,7 +103,7 @@ export default function ChainTable({
     for (const c of calls || []) add("call", c);
     for (const p of puts || []) add("put", p);
 
-    // finalize iv midpoint + compute mids
+    // finalize iv midpoint + compute strict mids
     const out = Array.from(byStrike.values());
     for (const r of out) {
       const cIV = r.call?.ivPct;
@@ -106,8 +112,8 @@ export default function ChainTable({
         Number.isFinite(cIV) && Number.isFinite(pIV)
           ? (cIV + pIV) / 2
           : (Number.isFinite(cIV) ? cIV : (Number.isFinite(pIV) ? pIV : null));
-      if (r.call) r.call.mid = midFrom(r.call.ask, r.call.bid, r.call.price);
-      if (r.put)  r.put.mid  = midFrom(r.put.ask,  r.put.bid,  r.put.price);
+      if (r.call) r.call.mid = strictMid(r.call.ask, r.call.bid);
+      if (r.put)  r.put.mid  = strictMid(r.put.ask,  r.put.bid);
     }
 
     return out.sort((a, b) => a.strike - b.strike);
@@ -336,20 +342,20 @@ export default function ChainTable({
                   aria-expanded={open ? "true" : "false"}
                 >
                   {/* Calls (left) — clicking any CALL cell focuses/open CALL side */}
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(r?.call?.price)}</div>
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(r?.call?.ask)}</div>
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(r?.call?.bid)}</div>
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmt(callMid)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.price)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.ask)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.bid)}</div>
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(callMid)}</div>
 
                   {/* Center */}
                   <div className="mid cell val strike-val">{fmt(r.strike)}</div>
                   <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
                   {/* Puts (right) — clicking any PUT cell focuses/open PUT side */}
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(putMid)}</div>
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(r?.put?.bid)}</div>
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(r?.put?.ask)}</div>
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmt(r?.put?.price)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(putMid)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.bid)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.ask)}</div>
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.price)}</div>
                 </div>
 
                 {/* Expanded details */}
