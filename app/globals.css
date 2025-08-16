@@ -829,72 +829,46 @@ html:not(.dark) .ch-avatar{
   .tv-layout{ grid-template-columns: 1fr; }
 }
 
-/* ===========================
-   THEME TOKENS FOR CHAIN TABLE
-   =========================== */
+/* ===============================
+   ChainTable theme tokens (shared)
+   Append at the bottom of app/globals.css
+   =============================== */
 
-/* ✅ Light theme (default) */
+/* ✅ NEW: light theme token mapping built on your existing variables */
 :root {
-  /* ✅ canonical tokens */
-  --card:            #ffffff;           /* card surface */
-  --surface:         #f8fafc;           /* panel/chart surface */
-  --surface-soft:    rgba(15,23,42,.03);/* subtle layering */
-  --border:          #e5e7eb;
-  --text:            #0f172a;
+  /* ✅ expose existing base tokens for clarity (no change to your values) */
+  /* (we reference your already-defined --card, --text, --border, --accent) */
+  --token-card: var(--card);         /* ✅ alias for ChainTable */
+  --token-text: var(--text);         /* ✅ alias for ChainTable */
+  --token-border: var(--border);     /* ✅ alias for ChainTable */
+  --token-accent: var(--accent);     /* ✅ alias for ChainTable */
 
-  /* ✅ pill tokens */
-  --chip-bg:         rgba(15,23,42,.04);
-  --chip-border:     rgba(15,23,42,.12);
+  /* ✅ NEW: ChainTable surfaces */
+  --surface: var(--token-card); /* ✅ main panel/chart surface */
+  /* ✅ subtle layered surface (tinted from the base card using current text color) */
+  --surface-soft: color-mix(in oklab, var(--token-card) 88%, transparent);
 
-  /* ✅ status / accents */
-  --positive:        #16a34a;
-  --negative:        #ef4444;
-  --accent:          #60a5fa;           /* Current Price accent */
+  /* ✅ NEW: metric pill styling (uses current text color so it adapts to theme) */
+  --chip-bg: color-mix(in oklab, var(--token-text) 9%, transparent);
+  --chip-border: color-mix(in oklab, var(--token-text) 22%, transparent);
 
-  /* ✅ helpful extras for charts/lines */
-  --accent-pink:     #f472b6;           /* Mean (MC) */
-  --accent-ci:       #f5a7cf;           /* 95% CI lines */
-  --accent-be:       #10b981;           /* Break-even */
+  /* ✅ NEW: semantic colors */
+  --positive: #22c55e; /* green */
+  --negative: #ef4444; /* red */
 
-  /* ✅ map legacy names used inside ChainTable.jsx */
-  --panelBg:         var(--card);
-  --panelEdge:       var(--border);
-  --chipBg:          var(--chip-bg);
-  --chipEdge:        var(--chip-border);
-
-  /* ✅ hint to the UA */
-  color-scheme: light;
+  /* ✅ keep accent available */
+  --accent: var(--token-accent);
 }
 
-/* ✅ Dark theme (NightShift) — works with either data-theme or a .dark class */
-html[data-theme="dark"],
-:root[data-theme="dark"],
-.dark :root,
-.dark {
-  --card:            #0b0f14;
-  --surface:         #0f141b;
-  --surface-soft:    rgba(255,255,255,.05);
-  --border:          rgba(255,255,255,.10);
-  --text:            #e6e8eb;
+/* ✅ NEW: dark theme overrides (triggered by <html class="dark"> from your toggle) */
+html.dark {
+  /* 🔄 slightly deepen surfaces in dark without hard-coding black backgrounds */
+  --surface: color-mix(in oklab, var(--token-card) 94%, black);
+  --surface-soft: color-mix(in oklab, var(--token-card) 86%, black);
 
-  --chip-bg:         rgba(255,255,255,.06);
-  --chip-border:     rgba(255,255,255,.14);
+  /* 🔄 make pills a touch stronger in dark for readability */
+  --chip-bg: color-mix(in oklab, var(--token-text) 12%, transparent);
+  --chip-border: color-mix(in oklab, var(--token-text) 28%, transparent);
 
-  --positive:        #22c55e;
-  --negative:        #ef4444;
-  --accent:          #60a5fa;
-
-  --accent-pink:     #f472b6;
-  --accent-ci:       #f5a7cf;
-  --accent-be:       #10b981;
-
-  --panelBg:         var(--card);
-  --panelEdge:       var(--border);
-  --chipBg:          var(--chip-bg);
-  --chipEdge:        var(--chip-border);
-
-  color-scheme: dark;
+  /* (Keeping the same positive/negative hues works well across themes) */
 }
-
-/* ✅ (Optional) ensure body picks up the text color by default */
-body { color: var(--text); background: var(--surface); }
