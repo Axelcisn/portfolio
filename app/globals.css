@@ -660,7 +660,7 @@ html:not(.dark) .ch-avatar{
 /* Segmented controls — add small gap so selected buttons never merge visually */
 .seg{
   display:inline-flex; align-items:center;
-  gap:4px;                             /* <— the tiny separation requested */
+  gap:4px;
   border:1px solid var(--border);
   border-radius:9999px;
   background:var(--bg);
@@ -749,7 +749,7 @@ html:not(.dark) .ch-avatar{
 /* Option pills — reduced left padding; check reserve appears only when selected */
 .fopt{
   display:inline-flex; align-items:center; gap:8px;
-  height:34px; padding:0 12px 0 10px;          /* <— reduced left padding */
+  height:34px; padding:0 12px 0 10px;
   border-radius:9999px;
   border:1px solid var(--border);
   background:transparent;
@@ -791,9 +791,6 @@ html:not(.dark) .ch-avatar{
 }
 
 /* ===== Global override: remove white "skeleton" pill on updates ===== */
-/* Many components add a short-lived skeleton overlay (.skl / .skeleton / .shimmer).
-   We neutralize it globally so live number updates don't flash white bars. */
-
 .skl,
 .skeleton,
 .skeleton-line,
@@ -803,8 +800,6 @@ html:not(.dark) .ch-avatar{
   background: transparent !important;
   animation: none !important;
 }
-
-/* Kill any highlight sweep added via ::after */
 .skl::after,
 .skeleton::after,
 .skeleton-line::after,
@@ -812,9 +807,6 @@ html:not(.dark) .ch-avatar{
 .loading-line::after {
   content: none !important;
 }
-
-/* Optional: if any cell toggles an "is-pending" class during refresh,
-   just soften the value slightly (no overlay). */
 .is-pending {
   opacity: .92;
   transition: opacity .12s ease;
@@ -824,51 +816,109 @@ html:not(.dark) .ch-avatar{
 .tv-layout{
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-
 @media (max-width:1100px){
   .tv-layout{ grid-template-columns: 1fr; }
 }
 
 /* ===============================
    ChainTable theme tokens (shared)
-   Append at the bottom of app/globals.css
    =============================== */
 
-/* ✅ NEW: light theme token mapping built on your existing variables */
+/* Light theme mapping built on your existing variables */
 :root {
-  /* ✅ expose existing base tokens for clarity (no change to your values) */
-  /* (we reference your already-defined --card, --text, --border, --accent) */
-  --token-card: var(--card);         /* ✅ alias for ChainTable */
-  --token-text: var(--text);         /* ✅ alias for ChainTable */
-  --token-border: var(--border);     /* ✅ alias for ChainTable */
-  --token-accent: var(--accent);     /* ✅ alias for ChainTable */
+  --token-card: var(--card);
+  --token-text: var(--text);
+  --token-border: var(--border);
+  --token-accent: var(--accent);
 
-  /* ✅ NEW: ChainTable surfaces */
-  --surface: var(--token-card); /* ✅ main panel/chart surface */
-  /* ✅ subtle layered surface (tinted from the base card using current text color) */
+  /* ChainTable surfaces */
+  --surface: var(--token-card);
   --surface-soft: color-mix(in oklab, var(--token-card) 88%, transparent);
 
-  /* ✅ NEW: metric pill styling (uses current text color so it adapts to theme) */
+  /* Metric pill styling */
   --chip-bg: color-mix(in oklab, var(--token-text) 9%, transparent);
   --chip-border: color-mix(in oklab, var(--token-text) 22%, transparent);
 
-  /* ✅ NEW: semantic colors */
+  /* Semantic colors */
   --positive: #22c55e; /* green */
   --negative: #ef4444; /* red */
 
-  /* ✅ keep accent available */
   --accent: var(--token-accent);
 }
 
-/* ✅ NEW: dark theme overrides (triggered by <html class="dark"> from your toggle) */
+/* Dark theme overrides */
 html.dark {
-  /* 🔄 slightly deepen surfaces in dark without hard-coding black backgrounds */
   --surface: color-mix(in oklab, var(--token-card) 94%, black);
   --surface-soft: color-mix(in oklab, var(--token-card) 86%, black);
 
-  /* 🔄 make pills a touch stronger in dark for readability */
   --chip-bg: color-mix(in oklab, var(--token-text) 12%, transparent);
   --chip-border: color-mix(in oklab, var(--token-text) 28%, transparent);
+}
 
-  /* (Keeping the same positive/negative hues works well across themes) */
+/* ===============================
+   Chain metrics (boxed pills)
+   =============================== */
+
+.chain-metrics .opt-metrics{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px 22px;
+}
+.chain-metrics .opt-metric{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+}
+.chain-metrics .opt-label{
+  color:color-mix(in oklab, var(--text) 88%, transparent);
+  opacity:.9;
+  font-size:16px;
+  font-weight:600;
+}
+.chain-metrics .opt-pill{
+  font-weight:800;
+  font-variant-numeric:tabular-nums;
+  background:var(--chip-bg);
+  border:1px solid var(--chip-border);
+  padding:8px 12px;
+  border-radius:999px;
+  font-size:15px;
+  line-height:1;
+  color:var(--text);
+  min-width:84px;
+  text-align:right;
+}
+.chain-metrics .opt-pill.pos{
+  color:var(--positive);
+  background:color-mix(in oklab, var(--positive) 12%, var(--chip-bg));
+  border-color:color-mix(in oklab, var(--positive) 32%, var(--chip-border));
+}
+.chain-metrics .opt-pill.neg{
+  color:var(--negative);
+  background:color-mix(in oklab, var(--negative) 12%, var(--chip-bg));
+  border-color:color-mix(in oklab, var(--negative) 28%, var(--chip-border));
+}
+.chain-metrics .opt-pill.neu{
+  color:color-mix(in oklab, var(--text) 90%, transparent);
+}
+
+/* optional: greeks chips */
+.chain-metrics .greeks{
+  grid-column:1 / -1;
+  margin-top:4px;
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:8px;
+}
+.chain-metrics .greek{
+  font-size:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid var(--chip-border);
+  border-radius:10px;
+  padding:6px 8px;
+  color:var(--text);
+  background:var(--chip-bg);
 }
