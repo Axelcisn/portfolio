@@ -983,23 +983,23 @@ export default function ChainTable({
           transform: translateY(0);
           border-bottom-color: rgba(255, 255, 255, 0.06);
         }
+        /* Transparent wrapper so only cards are visible (works in light mode too) */
         .details-inner {
-          padding: 18px 12px 22px;
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 16px;
-          background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
-            rgba(0, 0, 0, 0.12);
-          border-radius: 16px;
-          box-shadow: 0 22px 48px rgba(0, 0, 0, 0.3),
-            inset 0 1px 0 rgba(255, 255, 255, 0.03);
+          background: transparent !important;
+          box-shadow: none !important;
+          border: 0 !important;
+          border-radius: 0;
+          padding: 0;
         }
         .panel-col {
           display: flex;
           flex-direction: column;
           gap: 12px;
           padding: 14px;
-          border: 0; /* remove visible borders */
+          border: 0;
           border-radius: 14px;
           background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
             #0b0f14;
@@ -1075,7 +1075,7 @@ export default function ChainTable({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 16px; /* extra spacing */
+          gap: 16px;
         }
         .metric .k {
           color: #eaeef5;
@@ -1083,13 +1083,13 @@ export default function ChainTable({
           font-size: 17px;
         }
         .metric .v {
-          margin-left: 100px; /* separation between label/value */
+          margin-left: 100px;
           font-weight: 800;
           font-variant-numeric: tabular-nums;
           background: rgba(255, 255, 255, 0.06);
           border: 1px solid rgba(255, 255, 255, 0.12);
           padding: 8px 12px;
-          border-radius: 999px; /* pill */
+          border-radius: 999px;
           font-size: 15px;
           line-height: 1;
           color: #e7eaf0;
@@ -1253,7 +1253,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const ciL = Math.exp(mLN - v * z975);
   const ciU = Math.exp(mLN + v * z975);
 
-  // make sure the vertical lines are always visible
+  // ensure lines are visible
   xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
   xmax = Math.max(xmax, S0, meanPrice, ciU) * 1.005;
 
@@ -1297,7 +1297,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const xL = xmap(ciL);
   const xU = xmap(ciU);
 
-  // ticks
+  // ticks aligned to the zero P&L axis (not the bottom edge)
   const tickFmt = (s) => Math.round(s).toString();
   const leftTick = tickFmt(xmin);
   const midTick = tickFmt(centerPx);
@@ -1360,11 +1360,11 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
           </>
         )}
 
-        {/* ticks aligned to axis */}
+        {/* ticks aligned to axis line */}
         <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="700">
-          <text x={pad} y={H - 6}>{leftTick}</text>
-          <text x={W / 2} y={H - 6} textAnchor="middle">{midTick}</text>
-          <text x={W - pad} y={H - 6} textAnchor="end">{rightTick}</text>
+          <text x={pad} y={baselineY + 14}>{leftTick}</text>
+          <text x={W / 2} y={baselineY + 14} textAnchor="middle">{midTick}</text>
+          <text x={W - pad} y={baselineY + 14} textAnchor="end">{rightTick}</text>
         </g>
       </svg>
 
@@ -1397,7 +1397,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   );
 }
 
-/* Clean inline style for the legend’s + / – buttons (no template strings) */
+/* Clean inline style for the legend’s + / – buttons (avoids template string issues) */
 const legendBtnStyle = {
   width: 30,
   height: 30,
