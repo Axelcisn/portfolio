@@ -1,4 +1,5 @@
 // components/Options/ChainTable.jsx
+// ✅ full-file replacement to use theme tokens + robust metric pills
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
@@ -412,18 +413,10 @@ export default function ChainTable({
 
       {/* Column headers */}
       <div className="grid head-row" role="row">
-        <div className="c cell" role="columnheader">
-          Price
-        </div>
-        <div className="c cell" role="columnheader">
-          Ask
-        </div>
-        <div className="c cell" role="columnheader">
-          Bid
-        </div>
-        <div className="c cell" role="columnheader">
-          Mid
-        </div>
+        <div className="c cell" role="columnheader">Price</div>
+        <div className="c cell" role="columnheader">Ask</div>
+        <div className="c cell" role="columnheader">Bid</div>
+        <div className="c cell" role="columnheader">Mid</div>
         <div
           className="mid cell strike-hdr"
           role="columnheader"
@@ -433,26 +426,14 @@ export default function ChainTable({
           onKeyDown={handleSortKey}
           title="Toggle strike sort"
         >
-          <span className="arrow" aria-hidden="true">
-            {arrowChar}
-          </span>{" "}
+          <span className="arrow" aria-hidden="true">{arrowChar}</span>{" "}
           Strike
         </div>
-        <div className="mid cell iv-hdr" role="columnheader">
-          IV, %
-        </div>
-        <div className="p cell" role="columnheader">
-          Mid
-        </div>
-        <div className="p cell" role="columnheader">
-          Bid
-        </div>
-        <div className="p cell" role="columnheader">
-          Ask
-        </div>
-        <div className="p cell" role="columnheader">
-          Price
-        </div>
+        <div className="mid cell iv-hdr" role="columnheader">IV, %</div>
+        <div className="p cell" role="columnheader">Mid</div>
+        <div className="p cell" role="columnheader">Bid</div>
+        <div className="p cell" role="columnheader">Ask</div>
+        <div className="p cell" role="columnheader">Price</div>
       </div>
 
       {/* States */}
@@ -478,36 +459,16 @@ export default function ChainTable({
         <div className="body is-loading" aria-busy="true" aria-label="Loading options">
           {Array.from({ length: shimmerCount }).map((_, i) => (
             <div className="grid row" role="row" aria-hidden="true" key={i}>
-              <div className="c cell">
-                <span className="skl w-70" />
-              </div>
-              <div className="c cell">
-                <span className="skl w-60" />
-              </div>
-              <div className="c cell">
-                <span className="skl w-60" />
-              </div>
-              <div className="c cell">
-                <span className="skl w-60" />
-              </div>
-              <div className="mid cell">
-                <span className="skl w-50" />
-              </div>
-              <div className="mid cell">
-                <span className="skl w-45" />
-              </div>
-              <div className="p cell">
-                <span className="skl w-60" />
-              </div>
-              <div className="p cell">
-                <span className="skl w-60" />
-              </div>
-              <div className="p cell">
-                <span className="skl w-60" />
-              </div>
-              <div className="p cell">
-                <span className="skl w-70" />
-              </div>
+              <div className="c cell"><span className="skl w-70" /></div>
+              <div className="c cell"><span className="skl w-60" /></div>
+              <div className="c cell"><span className="skl w-60" /></div>
+              <div className="c cell"><span className="skl w-60" /></div>
+              <div className="mid cell"><span className="skl w-50" /></div>
+              <div className="mid cell"><span className="skl w-45" /></div>
+              <div className="p cell"><span className="skl w-60" /></div>
+              <div className="p cell"><span className="skl w-60" /></div>
+              <div className="p cell"><span className="skl w-60" /></div>
+              <div className="p cell"><span className="skl w-70" /></div>
             </div>
           ))}
         </div>
@@ -518,8 +479,7 @@ export default function ChainTable({
         <div className="body">
           {visible.map((r) => {
             const spotStrike =
-              closestStrike != null &&
-              Number(r.strike) === Number(closestStrike);
+              closestStrike != null && Number(r.strike) === Number(closestStrike);
             const open = isOpen(r.strike);
             const focus = focusSide(r.strike); // 'call' | 'put' | null
 
@@ -542,58 +502,20 @@ export default function ChainTable({
                   ? Math.max(1e-9, r.strike - putPrem)
                   : null;
                 longM = Number.isFinite(putPrem)
-                  ? metricsForOption({
-                      type: "put",
-                      pos: "long",
-                      S0,
-                      K: r.strike,
-                      premium: putPrem,
-                      sigma,
-                      T,
-                      drift,
-                    })
+                  ? metricsForOption({ type: "put", pos: "long", S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
                 shortM = Number.isFinite(putPrem)
-                  ? metricsForOption({
-                      type: "put",
-                      pos: "short",
-                      S0,
-                      K: r.strike,
-                      premium: putPrem,
-                      sigma,
-                      T,
-                      drift,
-                    })
+                  ? metricsForOption({ type: "put", pos: "short", S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
               } else {
                 typeForChart = "call";
                 premForChart = callPrem;
-                beForChart = Number.isFinite(callPrem)
-                  ? r.strike + callPrem
-                  : null;
+                beForChart = Number.isFinite(callPrem) ? r.strike + callPrem : null;
                 longM = Number.isFinite(callPrem)
-                  ? metricsForOption({
-                      type: "call",
-                      pos: "long",
-                      S0,
-                      K: r.strike,
-                      premium: callPrem,
-                      sigma,
-                      T,
-                      drift,
-                    })
+                  ? metricsForOption({ type: "call", pos: "long", S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
                 shortM = Number.isFinite(callPrem)
-                  ? metricsForOption({
-                      type: "call",
-                      pos: "short",
-                      S0,
-                      K: r.strike,
-                      premium: callPrem,
-                      sigma,
-                      T,
-                      drift,
-                    })
+                  ? metricsForOption({ type: "call", pos: "short", S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
               }
             }
@@ -616,35 +538,21 @@ export default function ChainTable({
             return (
               <div key={r.strike}>
                 <div
-                  className={`grid row ${spotStrike ? "is-spot" : ""} ${
-                    open ? "is-open" : ""
-                  } ${focus ? `focus-${focus}` : ""}`}
+                  className={`grid row ${spotStrike ? "is-spot" : ""} ${open ? "is-open" : ""} ${focus ? `focus-${focus}` : ""}`}
                   role="row"
                   aria-expanded={open ? "true" : "false"}
                 >
                   {/* Calls (left) */}
-                  <div
-                    className="c cell val clickable"
-                    onClick={() => openDetails(r.strike, "call")}
-                  >
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>
                     {fmtMoney(r?.call?.price)}
                   </div>
-                  <div
-                    className="c cell val clickable"
-                    onClick={() => openDetails(r.strike, "call")}
-                  >
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>
                     {fmtMoney(r?.call?.ask)}
                   </div>
-                  <div
-                    className="c cell val clickable"
-                    onClick={() => openDetails(r.strike, "call")}
-                  >
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>
                     {fmtMoney(r?.call?.bid)}
                   </div>
-                  <div
-                    className="c cell val clickable"
-                    onClick={() => openDetails(r.strike, "call")}
-                  >
+                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>
                     {fmtMoney(callMid)}
                   </div>
 
@@ -653,44 +561,26 @@ export default function ChainTable({
                   <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
                   {/* Puts (right) */}
-                  <div
-                    className="p cell val clickable"
-                    onClick={() => openDetails(r.strike, "put")}
-                  >
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>
                     {fmtMoney(putMid)}
                   </div>
-                  <div
-                    className="p cell val clickable"
-                    onClick={() => openDetails(r.strike, "put")}
-                  >
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>
                     {fmtMoney(r?.put?.bid)}
                   </div>
-                  <div
-                    className="p cell val clickable"
-                    onClick={() => openDetails(r.strike, "put")}
-                  >
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>
                     {fmtMoney(r?.put?.ask)}
                   </div>
-                  <div
-                    className="p cell val clickable"
-                    onClick={() => openDetails(r.strike, "put")}
-                  >
+                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>
                     {fmtMoney(r?.put?.price)}
                   </div>
                 </div>
 
                 {/* Expanded panel */}
-                <div
-                  className={`details ${open ? "open" : ""}`}
-                  role="region"
-                  aria-label={`Details for strike ${r.strike}`}
-                >
+                <div className={`details ${open ? "open" : ""}`} role="region" aria-label={`Details for strike ${r.strike}`}>
                   <div className="details-inner">
                     {/* SHORT */}
                     <div className="panel-col">
-                      <div className="panel-head">
-                        {focus === "put" ? "Short Put" : "Short Call"}
-                      </div>
+                      <div className="panel-head">{focus === "put" ? "Short Put" : "Short Call"}</div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
@@ -706,44 +596,18 @@ export default function ChainTable({
                             showLegend
                           />
                         </div>
-                        <div className="metrics">
+                        <div className="opt-metrics">
                           <Metric label="Current Price" value={fmtMoney(S0)} />
-                          <Metric
-                            label="95% CI (MC)"
-                            value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`}
-                          />
+                          <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
                           <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
-                          <Metric
-                            label="Break-even"
-                            value={fmtMoney(shortM?.be)}
-                          />
-
-                          <Metric
-                            label="Prob. Profit"
-                            value={fmtPct(shortM?.pop)}
-                            num={(shortM?.pop ?? null) - 0.5}
-                          />
-                          <Metric
-                            label="Expected Return"
-                            value={fmtPct(shortM?.expR)}
-                            num={shortM?.expR}
-                          />
-                          <Metric
-                            label="Expected Profit"
-                            value={fmtMoney(shortM?.expP)}
-                            num={shortM?.expP}
-                          />
-                          <Metric
-                            label="Sharpe"
-                            value={fmt(shortM?.sharpe, 2)}
-                          />
+                          <Metric label="Break-even" value={fmtMoney(shortM?.be)} />
+                          <Metric label="Prob. Profit" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} />
+                          <Metric label="Expected Return" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
+                          <Metric label="Expected Profit" value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
+                          <Metric label="Sharpe" value={fmt(shortM?.sharpe, 2)} />
                           {showGreeks && (
                             <div className="greeks">
-                              {focus === "put" ? (
-                                <GreekList greeks={r?.put?.greeks} />
-                              ) : (
-                                <GreekList greeks={r?.call?.greeks} />
-                              )}
+                              {focus === "put" ? <GreekList greeks={r?.put?.greeks} /> : <GreekList greeks={r?.call?.greeks} />}
                             </div>
                           )}
                         </div>
@@ -752,9 +616,7 @@ export default function ChainTable({
 
                     {/* LONG */}
                     <div className="panel-col">
-                      <div className="panel-head">
-                        {focus === "put" ? "Long Put" : "Long Call"}
-                      </div>
+                      <div className="panel-head">{focus === "put" ? "Long Put" : "Long Call"}</div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
@@ -770,44 +632,18 @@ export default function ChainTable({
                             showLegend
                           />
                         </div>
-                        <div className="metrics">
+                        <div className="opt-metrics">
                           <Metric label="Current Price" value={fmtMoney(S0)} />
-                          <Metric
-                            label="95% CI (MC)"
-                            value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`}
-                          />
+                          <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
                           <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
-                          <Metric
-                            label="Break-even"
-                            value={fmtMoney(longM?.be)}
-                          />
-
-                          <Metric
-                            label="Prob. Profit"
-                            value={fmtPct(longM?.pop)}
-                            num={(longM?.pop ?? null) - 0.5}
-                          />
-                          <Metric
-                            label="Expected Return"
-                            value={fmtPct(longM?.expR)}
-                            num={longM?.expR}
-                          />
-                          <Metric
-                            label="Expected Profit"
-                            value={fmtMoney(longM?.expP)}
-                            num={longM?.expP}
-                          />
-                          <Metric
-                            label="Sharpe"
-                            value={fmt(longM?.sharpe, 2)}
-                          />
+                          <Metric label="Break-even" value={fmtMoney(longM?.be)} />
+                          <Metric label="Prob. Profit" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} />
+                          <Metric label="Expected Return" value={fmtPct(longM?.expR)} num={longM?.expR} />
+                          <Metric label="Expected Profit" value={fmtMoney(longM?.expP)} num={longM?.expP} />
+                          <Metric label="Sharpe" value={fmt(longM?.sharpe, 2)} />
                           {showGreeks && (
                             <div className="greeks">
-                              {focus === "put" ? (
-                                <GreekList greeks={r?.put?.greeks} />
-                              ) : (
-                                <GreekList greeks={r?.call?.greeks} />
-                              )}
+                              {focus === "put" ? <GreekList greeks={r?.put?.greeks} /> : <GreekList greeks={r?.call?.greeks} />}
                             </div>
                           )}
                         </div>
@@ -821,26 +657,17 @@ export default function ChainTable({
         </div>
       )}
 
-      {/* ✅ REPLACED: full tokenized styles; removed local hard-coded darks */}
       <style jsx>{`
-        /* ===========================
-           ChainTable styles (tokenized)
-           ===========================
-           ❌ Removed local --panelBg override
-           ✅ Surfaces/borders/text use global CSS variables (tokens) with fallbacks
-           ✅ Removed dark overlays so light theme isn’t tinted
-           ✅ Metrics' pill visuals use token-based colors
-           🔄 Row hover, shadows, and subtle gradients blend from tokens
-        */
-
         .wrap {
+          /* ✅ brand-ish accents kept as constants */
           --strikeCol: #f2ae2e;
           --ivCol: #f27405;
-          /* 🔄 rowHover now blends from theme text instead of fixed #e5e7eb */
-          --rowHover: color-mix(in srgb, var(--text, #111827) 8%, transparent);
           --spotOrange: #f59e0b;
 
-          /* ❌ removed: --panelBg hard-code */
+          /* 🔄 row hover derived from theme text */
+          --rowHover: color-mix(in srgb, var(--text) 8%, transparent);
+
+          /* ❌ removed local --panelBg: it prevented NightShift updates */
           /* --panelBg: #0b0f14; */
 
           margin-top: 10px;
@@ -857,12 +684,11 @@ export default function ChainTable({
           font-weight: 800;
           font-size: 22px;
           letter-spacing: 0.2px;
-          /* 🔄 tokenized heading color */
-          color: var(--text, #e8eaee);
+          /* 🔄 use theme text */
+          color: var(--text);
+          opacity: 0.92;
         }
-        .h-mid {
-          flex: 1;
-        }
+        .h-mid { flex: 1; }
 
         /* grid: 10 columns */
         .grid {
@@ -874,13 +700,13 @@ export default function ChainTable({
 
         .head-row {
           padding: 8px 0 10px;
-          /* 🔄 borders now tokenized */
-          border-top: 1px solid var(--border, rgba(0,0,0,0.08));
-          border-bottom: 1px solid var(--border, rgba(0,0,0,0.08));
+          /* 🔄 border via token */
+          border-top: 1px solid var(--border);
+          border-bottom: 1px solid var(--border);
           font-weight: 700;
           font-size: 13.5px;
-          /* 🔄 softened text via token blend */
-          color: color-mix(in srgb, var(--text, #374151) 85%, transparent);
+          /* 🔄 text via token */
+          color: color-mix(in srgb, var(--text) 80%, transparent);
         }
         .head-row .strike-hdr {
           color: var(--strikeCol);
@@ -905,86 +731,51 @@ export default function ChainTable({
           display: flex;
           align-items: center;
         }
-        .c,
-        .p,
-        .mid {
-          justify-content: center;
-          text-align: center;
-        }
-        .arrow {
-          margin-right: 6px;
-          font-weight: 900;
-        }
+        .c, .p, .mid { justify-content: center; text-align: center; }
+        .arrow { margin-right: 6px; font-weight: 900; }
 
         .card {
-          /* Apple-like card, no visible border */
+          /* ✅ Apple-like card using theme tokens */
           border: 0;
           border-radius: 16px;
-          /* 🔄 background now uses theme tokens instead of fixed dark */
           background:
-            radial-gradient(
-              1200px 400px at 20% -20%,
-              color-mix(in srgb, var(--text, #111827) 6%, transparent),
-              transparent 40%
-            ),
-            var(--card, #ffffff);
-          /* 🔄 text via token */
-          color: var(--text, #111827);
+            radial-gradient(1200px 400px at 20% -20%, color-mix(in srgb, var(--text) 6%, transparent), transparent 40%),
+            var(--card);
+          color: var(--text);
           padding: 18px 20px;
           margin-top: 14px;
-          /* 🔄 shadows blend from tokens (no fixed black) */
           box-shadow:
-            0 12px 24px color-mix(in srgb, var(--text, #111827) 10%, transparent),
-            inset 0 1px 0 color-mix(in srgb, var(--text, #111827) 6%, transparent);
+            0 12px 24px rgba(0, 0, 0, 0.18),
+            inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
         }
-        .title {
-          font-weight: 800;
-          font-size: 16px;
-          margin-bottom: 4px;
-        }
-        .sub {
-          opacity: 0.75;
-          font-size: 13px;
-        }
+        .title { font-weight: 800; font-size: 16px; margin-bottom: 4px; }
+        .sub { opacity: 0.75; font-size: 13px; }
 
         .body .row {
           padding: 8px 0;
-          /* 🔄 border tokenized */
-          border-bottom: 1px solid var(--border, rgba(0,0,0,0.08));
+          /* 🔄 border via token */
+          border-bottom: 1px solid var(--border);
           transition: background-color 0.18s ease, box-shadow 0.18s ease;
         }
-        .clickable {
-          cursor: pointer;
-        }
-        .body .row:last-child {
-          border-bottom: 0;
-        }
-        .body .row:hover {
-          background-color: var(--rowHover);
-        }
+        .clickable { cursor: pointer; }
+        .body .row:last-child { border-bottom: 0; }
+        .body .row:hover { background-color: var(--rowHover); }
         .body .row.is-spot {
-          /* unchanged accent, only border blends with token */
           background-color: color-mix(in srgb, var(--spotOrange) 16%, transparent);
-          border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border, rgba(0,0,0,0.08)));
+          border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
         }
 
         .val {
           font-weight: 700;
           font-size: 13.5px;
-          /* 🔄 tokenized */
-          color: var(--text, #111827);
+          color: var(--text);
         }
-        .body .row .strike-val {
-          color: var(--strikeCol);
-        }
-        .body .row .iv-val {
-          color: var(--ivCol);
-        }
+        .body .row .strike-val { color: var(--strikeCol); }
+        .body .row .iv-val { color: var(--ivCol); }
 
         .body .row.is-open.focus-call .c.cell,
         .body .row.is-open.focus-put .p.cell {
-          /* 🔄 tokenized selection highlight (no fixed rgba) */
-          background: var(--surface-soft, rgba(17,24,39,0.04));
+          background: color-mix(in srgb, var(--text) 4%, transparent);
           border-radius: 8px;
         }
 
@@ -1001,11 +792,10 @@ export default function ChainTable({
           max-height: 760px;
           opacity: 1;
           transform: translateY(0);
-          /* 🔄 tokenized */
-          border-bottom-color: var(--border, rgba(0,0,0,0.08));
+          border-bottom-color: var(--border);
         }
 
-        /* ✅ fully transparent wrapper so only the cards are visible in both themes */
+        /* ✅ transparent wrapper so only cards are visible */
         .details-inner {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -1022,21 +812,20 @@ export default function ChainTable({
           flex-direction: column;
           gap: 12px;
           padding: 14px;
-          border: 0; /* keep no visible borders per spec */
+          border: 0;
           border-radius: 14px;
-          /* 🔄 tokenized panel surface (no fixed #0b0f14) */
+          /* 🔄 use themed surface */
           background:
-            linear-gradient(180deg, color-mix(in srgb, var(--text, #111827) 2%, transparent), transparent),
-            var(--card, #ffffff);
+            linear-gradient(180deg, color-mix(in srgb, var(--text) 2%, transparent), transparent),
+            var(--surface);
           box-shadow:
-            0 10px 26px color-mix(in srgb, var(--text, #111827) 10%, transparent),
-            inset 0 1px 0 color-mix(in srgb, var(--text, #111827) 4%, transparent);
+            0 10px 26px rgba(0, 0, 0, 0.18),
+            inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
         }
         .panel-head {
           font-weight: 800;
           font-size: 18px;
-          /* 🔄 tokenized */
-          color: var(--text, #111827);
+          color: var(--text);
         }
 
         .panel-grid {
@@ -1047,15 +836,11 @@ export default function ChainTable({
         .chart {
           position: relative;
           border-radius: 12px;
-          /* 🔄 tokenized chart surface & glow */
+          /* 🔄 background uses tokens + gentle accent glow */
           background:
-            radial-gradient(
-              1400px 600px at -10% -30%,
-              color-mix(in srgb, var(--accent, #60a5fa) 12%, transparent),
-              transparent 40%
-            ),
-            var(--surface, #f8fafc);
-          box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text, #111827) 6%, transparent);
+            radial-gradient(1400px 600px at -10% -30%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 40%),
+            var(--surface);
+          box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
           overflow: hidden;
         }
 
@@ -1064,78 +849,73 @@ export default function ChainTable({
           gap: 12px;
           align-items: center;
           padding: 8px 10px 12px;
-          /* 🔄 tokenized legend text */
-          color: color-mix(in srgb, var(--text, #111827) 82%, transparent);
+          color: color-mix(in srgb, var(--text) 75%, transparent);
           font-size: 12px;
           font-weight: 700;
         }
-        .li {
-          display: flex;
-          gap: 8px;
-          align-items: center;
-        }
-        .dot {
-          width: 9px;
-          height: 9px;
+        .li { display: flex; gap: 8px; align-items: center; }
+        .dot { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+        .dot.blue { background: #60a5fa; }
+        .dot.pink { background: #f472b6; }
+        .dot.be { background: #10b981; }
+        .dash { width: 18px; height: 0; border-top: 2px dotted #f5a7cf; display: inline-block; }
+
+        /* ✅ token-based zoom buttons */
+        .zoomBtn {
+          width: 30px;
+          height: 30px;
           border-radius: 999px;
-          display: inline-block;
-        }
-        .dot.blue { background: #60a5fa; }   /* current price marker */
-        .dot.pink { background: #f472b6; }   /* mean (MC) marker */
-        .dot.be { background: var(--positive, #10b981); } /* 🔄 uses positive token */
-        .dash {
-          width: 18px;
-          height: 0;
-          border-top: 2px dotted #f5a7cf; /* CI boundary marker */
-          display: inline-block;
+          border: 1px solid var(--chip-border);
+          color: var(--text);
+          font-weight: 800;
+          font-size: 16px;
+          line-height: 28px;
+          background: var(--surface-soft);
+          box-shadow: 0 2px 10px rgba(0,0,0,.25), inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+          backdrop-filter: blur(6px);
+          cursor: pointer;
         }
 
-        /* 🔄 tokenized metrics (class names will be namespaced in step 4) */
-        .metrics {
+        /* ✅ namespaced, robust metrics */
+        .opt-metrics {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 14px 22px;
         }
-        .metric {
+        .opt-metric {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 16px;
         }
-        .metric .k {
-          color: color-mix(in srgb, var(--text, #111827) 82%, transparent);
-          font-size: 17px;
+        .opt-label {
+          color: color-mix(in srgb, var(--text) 88%, transparent);
+          font-size: 16px;
+          font-weight: 600;
         }
-        .metric .v {
-          /* ❌ removed brittle margin-left for better responsiveness */
-          /* margin-left: 100px; */
+        .opt-pill {
           font-weight: 800;
           font-variant-numeric: tabular-nums;
-          /* 🔄 pill now uses tokens */
-          background: var(--chip-bg, rgba(0,0,0,0.04));
-          border: 1px solid var(--chip-border, rgba(0,0,0,0.12));
+          background: var(--chip-bg);
+          border: 1px solid var(--chip-border);
           padding: 8px 12px;
           border-radius: 999px;
           font-size: 15px;
           line-height: 1;
-          color: var(--text, #111827);
+          color: var(--text);
           backdrop-filter: blur(4px);
         }
-        .metric .v.pos {
-          /* 🔄 positive tone from tokens */
-          color: var(--positive, #10b981);
-          background: color-mix(in srgb, var(--positive, #10b981) 14%, transparent);
-          border-color: color-mix(in srgb, var(--positive, #10b981) 35%, transparent);
+        .opt-pill.pos {
+          color: var(--positive);
+          background: color-mix(in srgb, var(--positive) 14%, var(--chip-bg));
+          border-color: color-mix(in srgb, var(--positive) 32%, var(--chip-border));
         }
-        .metric .v.neg {
-          /* 🔄 negative tone from tokens */
-          color: var(--negative, #ef4444);
-          background: color-mix(in srgb, var(--negative, #ef4444) 14%, transparent);
-          border-color: color-mix(in srgb, var(--negative, #ef4444) 35%, transparent);
+        .opt-pill.neg {
+          color: var(--negative);
+          background: color-mix(in srgb, var(--negative) 12%, var(--chip-bg));
+          border-color: color-mix(in srgb, var(--negative) 28%, var(--chip-border));
         }
-        .metric .v.neu {
-          color: color-mix(in srgb, var(--text, #111827) 90%, transparent);
-        }
+        .opt-pill.neu { color: color-mix(in srgb, var(--text) 85%, transparent); }
 
         .greeks {
           grid-column: 1 / -1;
@@ -1146,28 +926,24 @@ export default function ChainTable({
         }
         .greek {
           font-size: 12px;
-          opacity: 0.95;
+          opacity: 0.9;
           display: flex;
           align-items: center;
           justify-content: center;
-          /* 🔄 tokenized chip */
-          border: 1px solid var(--border, rgba(0,0,0,0.08));
+          border: 1px solid var(--chip-border);
           border-radius: 10px;
           padding: 6px 8px;
-          color: color-mix(in srgb, var(--text, #111827) 86%, transparent);
-          background: var(--surface, #f8fafc);
+          color: color-mix(in srgb, var(--text) 85%, transparent);
+          background: var(--chip-bg);
         }
 
         /* Loading shimmer */
-        .is-loading .row:hover {
-          background: transparent;
-        }
+        .is-loading .row:hover { background: transparent; }
         .skl {
           display: inline-block;
           height: 14px;
           border-radius: 8px;
-          /* 🔄 tokenized shimmer base */
-          background: color-mix(in srgb, var(--text, #111827) 10%, transparent);
+          background: color-mix(in srgb, var(--text) 8%, transparent);
           position: relative;
           overflow: hidden;
         }
@@ -1176,30 +952,18 @@ export default function ChainTable({
           position: absolute;
           inset: 0;
           transform: translateX(-100%);
-          /* 🔄 tokenized shimmer sweep */
-          background: linear-gradient(
-            90deg,
-            transparent,
-            color-mix(in srgb, var(--text, #111827) 35%, transparent),
-            transparent
-          );
+          background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 35%, transparent), transparent);
           animation: shimmer 1.15s ease-in-out infinite;
         }
         .w-45 { width: 45%; }
         .w-50 { width: 50%; }
         .w-60 { width: 60%; }
         .w-70 { width: 70%; }
-        @keyframes shimmer {
-          100% { transform: translateX(100%); }
-        }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
 
         @media (max-width: 980px) {
-          .panel-grid {
-            grid-template-rows: 220px auto;
-          }
-          .details-inner {
-            grid-template-columns: 1fr;
-          }
+          .panel-grid { grid-template-rows: 220px auto; }
+          .details-inner { grid-template-columns: 1fr; }
         }
       `}</style>
     </div>
@@ -1209,13 +973,13 @@ export default function ChainTable({
 /* ---------- Metric pill (auto tone: pos / neg / neutral) ---------- */
 function Metric({ label, value, num }) {
   let tone = "neu";
-  if (Number.isFinite(num)) {
-    tone = num > 0 ? "pos" : num < 0 ? "neg" : "neu";
-  }
+  if (Number.isFinite(num)) tone = num > 0 ? "pos" : num < 0 ? "neg" : "neu";
   return (
-    <div className="metric">
-      <span className="k">{label}</span>
-      <span className={`v ${tone}`}>{value ?? "—"}</span>
+    <div className="opt-metric">
+      {/* ✅ namespaced label class */}
+      <span className="opt-label">{label}</span>
+      {/* ✅ namespaced pill class + tone */}
+      <span className={`opt-pill ${tone}`}>{value ?? "—"}</span>
     </div>
   );
 }
@@ -1238,20 +1002,8 @@ function fmtG(v) {
 
 /* ---------- Mini payoff chart (legend outside, CI/mean/current lines) ---------- */
 function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
-  if (
-    !(S0 > 0) ||
-    !(K > 0) ||
-    !(premium >= 0) ||
-    !type ||
-    !pos ||
-    !(sigma > 0) ||
-    !(T > 0)
-  ) {
-    return (
-      <span className="chart-hint" style={{ padding: 12, color: "#94a3b8" }}>
-        Chart
-      </span>
-    );
+  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos || !(sigma > 0) || !(T > 0)) {
+    return <span className="chart-hint" style={{ padding: 12, color: "color-mix(in srgb, var(--text) 70%, transparent)" }}>Chart</span>;
   }
 
   const uid = useId().replace(/:/g, "");
@@ -1274,14 +1026,12 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const ciL = Math.exp(mLN - v * z975);
   const ciU = Math.exp(mLN + v * z975);
 
-  // ensure lines are visible
+  // ✅ ensure lines are visible after zoom
   xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
   xmax = Math.max(xmax, S0, meanPrice, ciU) * 1.005;
 
   // sizing
-  const W = 520,
-    H = 250,
-    pad = 12;
+  const W = 520, H = 250, pad = 12;
   const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
 
   // payoff samples
@@ -1301,9 +1051,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
   const baselineY = ymap(0);
 
-  const lineD = xs
-    .map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`)
-    .join(" ");
+  const lineD = xs.map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`).join(" ");
 
   const areaD = [
     `M ${xmap(xs[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
@@ -1318,7 +1066,6 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const xL = xmap(ciL);
   const xU = xmap(ciU);
 
-  // ticks aligned to the zero P&L axis (not the bottom edge)
   const tickFmt = (s) => Math.round(s).toString();
   const leftTick = tickFmt(xmin);
   const midTick = tickFmt(centerPx);
@@ -1339,37 +1086,23 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
         shapeRendering="geometricPrecision"
       >
         <defs>
-          <clipPath id={aboveId}>
-            <rect x="0" y="0" width={W} height={baselineY} />
-          </clipPath>
-          <clipPath id={belowId}>
-            <rect x="0" y={baselineY} width={W} height={H - baselineY} />
-          </clipPath>
+          <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
+          <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
         </defs>
 
-        {/* 🔄 baseline stroke uses a neutral tone; OK to keep as-is */}
-        <line
-          x1={pad}
-          y1={baselineY}
-          x2={W - pad}
-          y2={baselineY}
-          stroke="rgba(0,0,0,.18)"
-        />
+        {/* baseline */}
+        {/* 🔄 border color via token */}
+        <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="var(--border)" />
 
         {/* profit / loss areas */}
-        <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
-        <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
+        {/* ✅ tinted by theme-positive/negative */}
+        <path d={areaD} fill="color-mix(in srgb, var(--positive) 14%, transparent)" clipPath={`url(#${aboveId})`} />
+        <path d={areaD} fill="color-mix(in srgb, var(--negative) 15%, transparent)" clipPath={`url(#${belowId})`} />
 
         {/* payoff line */}
-        <path
-          d={lineD}
-          fill="none"
-          stroke="rgba(0,0,0,.6)"
-          strokeWidth="1.6"
-          vectorEffect="non-scaling-stroke"
-        />
+        <path d={lineD} fill="none" stroke="var(--text)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
 
-        {/* vertical guides (accents keep their colors) */}
+        {/* vertical guides (kept fixed brand accents) */}
         <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.2" opacity="0.95" />
         <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.2" opacity="0.95" />
         <line x1={xL} y1={pad} x2={xL} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
@@ -1382,7 +1115,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
         )}
 
         {/* ticks aligned to axis line */}
-        <g fontSize="12" fill="rgba(0,0,0,.55)" fontWeight="700">
+        <g fontSize="12" fill="color-mix(in srgb, var(--text) 75%, transparent)" fontWeight="700">
           <text x={pad} y={baselineY + 14}>{leftTick}</text>
           <text x={W / 2} y={baselineY + 14} textAnchor="middle">{midTick}</text>
           <text x={W - pad} y={baselineY + 14} textAnchor="end">{rightTick}</text>
@@ -1392,49 +1125,16 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
       {/* Legend + zoom (outside the plot) */}
       {showLegend && (
         <div className="legend">
-          <div className="li">
-            <span className="dot blue" /> Current
-          </div>
-          <div className="li">
-            <span className="dot pink" /> Mean (MC)
-          </div>
-          <div className="li">
-            <span className="dash" /> 95% CI
-          </div>
-          <div className="li">
-            <span className="dot be" /> Break-even
-          </div>
+          <div className="li"><span className="dot blue" /> Current</div>
+          <div className="li"><span className="dot pink" /> Mean (MC)</div>
+          <div className="li"><span className="dash" /> 95% CI</div>
+          <div className="li"><span className="dot be" /> Break-even</div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button type="button" aria-label="Zoom out" onClick={zoomOut} style={legendBtnStyle}>
-              –
-            </button>
-            <button type="button" aria-label="Zoom in" onClick={zoomIn} style={legendBtnStyle}>
-              +
-            </button>
+            <button type="button" aria-label="Zoom out" onClick={zoomOut} className="zoomBtn">–</button>
+            <button type="button" aria-label="Zoom in" onClick={zoomIn} className="zoomBtn">+</button>
           </div>
         </div>
       )}
     </>
   );
 }
-
-/* ✅ REPLACED: Legend buttons use tokens instead of fixed rgba */
-const legendBtnStyle = {
-  width: 30,
-  height: 30,
-  borderRadius: 999,
-  /* 🔄 subtle border works in both themes */
-  border: "1px solid var(--chip-border, rgba(0,0,0,0.12))",
-  /* 🔄 tokenized text color */
-  color: "var(--text, #111827)",
-  fontWeight: 800,
-  fontSize: 16,
-  lineHeight: "30px",
-  /* ✅ soft surface token (no fixed dark) */
-  background: "var(--surface-soft, rgba(0,0,0,0.04))",
-  /* 🔄 token-blended shadow + inner crisp edge */
-  boxShadow:
-    "0 2px 10px color-mix(in srgb, var(--text, #111827) 10%, transparent), inset 0 1px 0 var(--border, rgba(0,0,0,0.08))",
-  backdropFilter: "blur(6px)",
-  cursor: "pointer",
-};
