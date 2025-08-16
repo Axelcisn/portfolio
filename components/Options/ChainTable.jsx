@@ -431,7 +431,6 @@ export default function ChainTable({
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
-                            // ✅ keep BE centered but expand range to include S0/mean/CI
                             S0={S0} K={r.strike} premium={premForChart}
                             type={typeForChart} pos="short" BE={beForChart}
                             sigma={sigma} T={T} mu={mu}
@@ -439,13 +438,12 @@ export default function ChainTable({
                           />
                         </div>
                         <div className="metrics">
-                          {/* ✅ New pills & spacing; green/red for +/- values */}
                           <Metric label="Current Price" value={fmtMoney(S0)} />
                           <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
                           <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
                           <Metric label="Break-even" value={fmtMoney(shortM?.be)} />
 
-                          <Metric label="Prob. Profit" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} goodWhenHigh />
+                          <Metric label="Prob. Profit" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} />
                           <Metric label="Expected Return" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
                           <Metric label="Expected Profit" value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
                           <Metric label="Sharpe" value={fmt(shortM?.sharpe, 2)} />
@@ -464,7 +462,6 @@ export default function ChainTable({
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
-                            // ✅ same config on long side
                             S0={S0} K={r.strike} premium={premForChart}
                             type={typeForChart} pos="long" BE={beForChart}
                             sigma={sigma} T={T} mu={mu}
@@ -477,7 +474,7 @@ export default function ChainTable({
                           <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
                           <Metric label="Break-even" value={fmtMoney(longM?.be)} />
 
-                          <Metric label="Prob. Profit" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} goodWhenHigh />
+                          <Metric label="Prob. Profit" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} />
                           <Metric label="Expected Return" value={fmtPct(longM?.expR)} num={longM?.expR} />
                           <Metric label="Expected Profit" value={fmtMoney(longM?.expP)} num={longM?.expP} />
                           <Metric label="Sharpe" value={fmt(longM?.sharpe, 2)} />
@@ -557,8 +554,8 @@ export default function ChainTable({
         .arrow{ margin-right:6px; font-weight:900; }
 
         .card{
-          /* ✅ Apple-like card, no visible border */
-          border:0;                               /* ✅ */
+          /* Apple-like card, no visible border */
+          border:0;
           border-radius:16px;
           background: radial-gradient(1200px 400px at 20% -20%, rgba(255,255,255,.06), transparent 40%), var(--panelBg);
           color:#e6e8eb;
@@ -611,7 +608,7 @@ export default function ChainTable({
         .panel-col{
           display:flex; flex-direction:column; gap:12px;
           padding: 14px;
-          border:0;                               /* ✅ remove visible borders */
+          border:0;  /* remove visible borders */
           border-radius:14px;
           background: linear-gradient(180deg, rgba(255,255,255,.02), transparent), #0b0f14;
           box-shadow: 0 10px 26px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04);
@@ -627,7 +624,7 @@ export default function ChainTable({
           overflow:hidden;
         }
 
-        .legend{            /* ✅ legend outside plot */
+        .legend{  /* legend outside plot */
           display:flex; gap:12px; align-items:center; padding:8px 10px 12px;
           color:#cbd5e1; font-size:12px; font-weight:700;
         }
@@ -642,15 +639,15 @@ export default function ChainTable({
           display:grid; grid-template-columns: 1fr 1fr; gap:14px 22px;
         }
         .metric{
-          display:flex; align-items:center; justify-content:space-between; gap:16px;  /* ✅ more spacing */
+          display:flex; align-items:center; justify-content:space-between; gap:16px;  /* extra spacing */
         }
         .metric .k{ color:#eaeef5; opacity:.82; font-size:17px; }
         .metric .v{
-          margin-left:10px;                         /* ✅ extra separation */
+          margin-left:10px;                         /* separation between label/value */
           font-weight:800; font-variant-numeric: tabular-nums;
           background: rgba(255,255,255,.06);
           border:1px solid rgba(255,255,255,.12);
-          padding:8px 12px; border-radius:999px;     /* ✅ pill */
+          padding:8px 12px; border-radius:999px;     /* pill */
           font-size:15px; line-height:1; color:#e7eaf0;
           backdrop-filter: blur(4px);
         }
@@ -689,10 +686,9 @@ export default function ChainTable({
 }
 
 /* ---------- Metric pill (auto tone: pos / neg / neutral) ---------- */
-function Metric({ label, value, num, goodWhenHigh }) {
+function Metric({ label, value, num }) {
   let tone = "neu";
   if (isNum(num)) {
-    // For PoP we pass (pop - 0.5) so positive means "good"
     if (num > 0) tone = "pos";
     else if (num < 0) tone = "neg";
   }
@@ -737,7 +733,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   let xmin = Math.max(0.01, centerPx - span0);
   let xmax = centerPx + span0;
 
-  // ✅ compute analytic MC mean & 95% CI (no shading, no curve)
+  // analytic mean & 95% CI (no shading/curve)
   const v = sigma * Math.sqrt(T);
   const mLN = Math.log(S0) + (mu - 0.5 * sigma * sigma) * T;
   const z975 = 1.959963984540054;
@@ -745,7 +741,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const ciL = Math.exp(mLN - v * z975);
   const ciU = Math.exp(mLN + v * z975);
 
-  // ✅ ensure S0, mean & CI lines are always inside the visible range
+  // ensure S0, mean & CI lines are inside the visible range
   xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
   xmax = Math.max(xmax, S0, meanPrice, ciU) * 1.005;
 
@@ -795,7 +791,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const midTick  = tickFmt(centerPx);
   const rightTick= tickFmt(xmax);
 
-  // ✅ Zoom buttons (darker, subtle blur)
+  // Zoom buttons
   const zoomIn = () => setZoom((z) => Math.min(20, z * 1.15));
   const zoomOut= () => setZoom((z) => Math.max(0.5, z / 1.15));
 
@@ -812,28 +808,20 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
         <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="rgba(255,255,255,.18)" />
 
         {/* profit / loss areas */}
-        <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />  {/* ✅ */}
-        <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} /> {/* ✅ */}
-
-        {/* ❌ removed CI shading */}
-        {/* ❌ removed Monte-Carlo curve */}
+        <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
+        <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
 
         {/* payoff line */}
         <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
 
         {/* vertical guides (all inside range) */}
-        {/* Current price */}
         <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.2" opacity="0.95" />
-        {/* Mean (MC) */}
         <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.2" opacity="0.95" />
-        {/* 95% CI bounds (dotted) */}
         <line x1={xL} y1={pad} x2={xL} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
         <line x1={xU} y1={pad} x2={xU} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
-        {/* Break-even */}
         {Number.isFinite(xBE) && (
           <>
             <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.95" />
-            {/* circle marker on baseline */}
             <circle cx={xBE} cy={baselineY} r="4" fill="#10b981" opacity="0.95" />
           </>
         )}
@@ -846,7 +834,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
         </g>
       </svg>
 
-      {/* ✅ Legend placed outside the plot area */}
+      {/* Legend placed outside the plot area */}
       {showLegend && (
         <div className="legend">
           <div className="li"><span className="dot blue" /> Current</div>
@@ -854,11 +842,8 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
           <div className="li"><span className="dash" /> 95% CI</div>
           <div className="li"><span className="dot be" /> Break-even</div>
           <div style={{marginLeft:"auto", display:"flex", gap:8}}>
-            {/* ✅ refined + / – buttons */}
-            <button type="button" aria-label="Zoom out" onClick={zoomOut}
-              style={btnStyle}>–</button>
-            <button type="button" aria-label="Zoom in" onClick={zoomIn}
-              style={btnStyle}>+</button>
+            <button type="button" aria-label="Zoom out" onClick={zoomOut} style={btnStyle}>–</button>
+            <button type="button" aria-label="Zoom in"  onClick={zoomIn}  style={btnStyle}>+</button>
           </div>
         </div>
       )}
@@ -866,12 +851,14 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   );
 }
 
-/* ✅ darker/blurred button style for legend controls */
+/* darker/blurred button style for legend controls */
 const btnStyle = {
   width: 30, height: 30, borderRadius: 999, border: "0",
   color: "#e5e7eb", fontWeight: 800, fontSize: 16, lineHeight: "30px",
   background: "rgba(15, 23, 42, .55)",
   boxShadow: "0 2px 10px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06)",
   backdropFilter: "blur(6px)",
+  cursor: "pointer"
+};  backdropFilter: "blur(6px)",
   cursor: "pointer"
 };
