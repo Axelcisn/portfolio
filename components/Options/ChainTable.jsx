@@ -1083,7 +1083,7 @@ export default function ChainTable({
           font-size: 17px;
         }
         .metric .v {
-          margin-left: 10px; /* separation between label/value */
+          margin-left: 100px; /* separation between label/value */
           font-weight: 800;
           font-variant-numeric: tabular-nums;
           background: rgba(255, 255, 255, 0.06);
