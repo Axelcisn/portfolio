@@ -377,7 +377,7 @@ export default function ChainTable({
     const expReturn = expProfit / Math.max(1e-12, premium);
     const sharpe = sdPay > 0 ? expProfit / sdPay : null;
 
-    return { be: BE, pop: PoP, expP: expProfit, expR: expReturn, sharpe, ep, el };
+    return { be: BE, pop: PoP, expP: expProfit, expR: expReturn, sharpe, ep, el, eX: expProfit };
   }
 
   function daysToExpiryISO(iso, tz = "Europe/Rome") {
@@ -611,6 +611,54 @@ export default function ChainTable({
                           <Metric label="Spot Price" value={fmtMoney(S0)} />
                           <Metric label="MC(S)" value={fmtMoney(meanMC)} />
                           <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
+
+                          {/* Consistency note (short) */}
+                          {(() => {
+                            const rnMode = ctx?.driftMode !== "CAPM";
+                            const tol = Math.max(0.01, Math.abs(premForChart ?? 0) * 0.02); // ≥ 1c or ~2% of premium
+
+                            const epPlus = shortM?.ep;                 // E[X⁺] if available
+                            const eLoss  = shortM?.el;                 // E[X⁻] (positive)
+                            const eNet   = shortM?.eX ?? shortM?.expP; // E[X]
+
+                            const idDiff = (isNum(epPlus) && isNum(eLoss) && isNum(eNet))
+                              ? Math.abs((epPlus - eLoss) - eNet)
+                              : null;
+
+                            // Risk-neutral expected price check (discount E[payoff] by e^{-rT})
+                            let rnDiff = null;
+                            if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
+                              const sigT = sigma * Math.sqrt(T);
+                              const d1 = (Math.log(S0 / r.strike) + (drift + 0.5 * sigma * sigma) * T) / sigT;
+                              const d2 = d1 - sigT;
+                              const expST = Math.exp(drift * T);
+                              const Epay = typeForChart === "call"
+                                ? S0 * expST * Phi(d1) - r.strike * Phi(d2)
+                                : r.strike * Phi(-d2) - S0 * expST * Phi(-d1);
+                              const rRate = Number(ctx?.rf) || 0;
+                              const priceRN = Epay * Math.exp(-rRate * T);
+                              rnDiff = Math.abs(priceRN - premForChart);
+                            }
+
+                            const showNote =
+                              (idDiff != null && idDiff > tol) ||
+                              (rnDiff != null && rnDiff > tol);
+
+                            if (!showNote) return null;
+
+                            return (
+                              <div className="consistency">
+                                <span>⚠︎ Consistency</span>
+                                {idDiff != null && idDiff > tol && (
+                                  <span>EP − EL vs E[X]: {fmtMoney(idDiff)}</span>
+                                )}
+                                {rnDiff != null && rnDiff > tol && (
+                                  <span>RN price vs mid: {fmtMoney(rnDiff)}</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put" ? (
@@ -623,7 +671,7 @@ export default function ChainTable({
                         </div>
                       </div>
                     </div>
-                
+
                     {/* LONG */}
                     <div className="panel-col">
                       <div className="panel-head">{focus === "put" ? "Long Put" : "Long Call"}</div>
@@ -660,6 +708,53 @@ export default function ChainTable({
                           <Metric label="Spot Price" value={fmtMoney(S0)} />
                           <Metric label="MC(S)" value={fmtMoney(meanMC)} />
                           <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
+
+                          {/* Consistency note (long) */}
+                          {(() => {
+                            const rnMode = ctx?.driftMode !== "CAPM";
+                            const tol = Math.max(0.01, Math.abs(premForChart ?? 0) * 0.02);
+
+                            const epPlus = longM?.ep;
+                            const eLoss  = longM?.el;
+                            const eNet   = longM?.eX ?? longM?.expP;
+
+                            const idDiff = (isNum(epPlus) && isNum(eLoss) && isNum(eNet))
+                              ? Math.abs((epPlus - eLoss) - eNet)
+                              : null;
+
+                            let rnDiff = null;
+                            if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
+                              const sigT = sigma * Math.sqrt(T);
+                              const d1 = (Math.log(S0 / r.strike) + (drift + 0.5 * sigma * sigma) * T) / sigT;
+                              const d2 = d1 - sigT;
+                              const expST = Math.exp(drift * T);
+                              const Epay = typeForChart === "call"
+                                ? S0 * expST * Phi(d1) - r.strike * Phi(d2)
+                                : r.strike * Phi(-d2) - S0 * expST * Phi(-d1);
+                              const rRate = Number(ctx?.rf) || 0;
+                              const priceRN = Epay * Math.exp(-rRate * T);
+                              rnDiff = Math.abs(priceRN - premForChart);
+                            }
+
+                            const showNote =
+                              (idDiff != null && idDiff > tol) ||
+                              (rnDiff != null && rnDiff > tol);
+
+                            if (!showNote) return null;
+
+                            return (
+                              <div className="consistency">
+                                <span>⚠︎ Consistency</span>
+                                {idDiff != null && idDiff > tol && (
+                                  <span>EP − EL vs E[X]: {fmtMoney(idDiff)}</span>
+                                )}
+                                {rnDiff != null && rnDiff > tol && (
+                                  <span>RN price vs mid: {fmtMoney(rnDiff)}</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put" ? (
@@ -675,7 +770,12 @@ export default function ChainTable({
                   </div>
                 </div>
                 {/* /Expanded panel */}
-                
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <style jsx>{`
         .wrap {
           --strikeCol: #f2ae2e;
@@ -959,6 +1059,17 @@ export default function ChainTable({
           padding: 6px 8px;
           color: var(--text);
           background: var(--chip-bg);
+        }
+
+        /* Subtle note for math checks */
+        .consistency{
+          grid-column: 1 / -1;
+          margin-top: 2px;
+          font-size: 12px;
+          color: color-mix(in srgb, var(--text) 70%, transparent);
+          display: flex;
+          gap: 10px;
+          align-items: center;
         }
 
         /* Loading shimmer */
