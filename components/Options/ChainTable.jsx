@@ -1,5 +1,5 @@
 // components/Options/ChainTable.jsx
-// Correct version: theme-tokenized, boxed metric pills (green/red), cleaned layout
+// Correct version: theme-tokenized, boxed metric pills (green/red), cleaned layout, compact CI pill, label updates
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
@@ -446,13 +446,12 @@ export default function ChainTable({
             const callPrem = callMid ?? r?.call?.price ?? null;
             const putPrem = putMid ?? r?.put?.price ?? null;
 
-            let longM = null, shortM = null, beForChart = null, typeForChart = null, premForChart = null;
+            let longM = null, shortM = null, typeForChart = null, premForChart = null;
 
             if (open && S0 && T && sigma && Number.isFinite(r.strike)) {
               if (focus === "put") {
                 typeForChart = "put";
                 premForChart = putPrem;
-                beForChart = Number.isFinite(putPrem) ? Math.max(1e-9, r.strike - putPrem) : null;
                 longM = Number.isFinite(putPrem)
                   ? metricsForOption({ type: "put", pos: "long", S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
@@ -462,7 +461,6 @@ export default function ChainTable({
               } else {
                 typeForChart = "call";
                 premForChart = callPrem;
-                beForChart = Number.isFinite(callPrem) ? r.strike + callPrem : null;
                 longM = Number.isFinite(callPrem)
                   ? metricsForOption({ type: "call", pos: "long", S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
@@ -552,15 +550,15 @@ export default function ChainTable({
                           />
                         </div>
                         <div className="opt-metrics">
-                          {/* Reordered: BE → PoP → Exp P → Exp R → Sharpe → (context) */}
+                          {/* Reordered: BE → P(Profit) → E[Profit] → E[Return] → Sharpe → (context) */}
                           <Metric label="Break-even" value={fmtMoney(shortM?.be)} />
-                          <Metric label="Prob. Profit" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} />
-                          <Metric label="Expected Profit" value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
-                          <Metric label="Expected Return" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
+                          <Metric label="P(Profit)" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} />
+                          <Metric label="E[Profit]" value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
+                          <Metric label="E[Return]" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
                           <Metric label="Sharpe" value={fmt(shortM?.sharpe, 2)} num={shortM?.sharpe} />
-                          <Metric label="Current Price" value={fmtMoney(S0)} />
-                          <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
-                          <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
+                          <Metric label="Spot Price" value={fmtMoney(S0)} />
+                          <Metric label="MC(S)" value={fmtMoney(meanMC)} />
+                          <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put" ? (
@@ -594,13 +592,13 @@ export default function ChainTable({
                         </div>
                         <div className="opt-metrics">
                           <Metric label="Break-even" value={fmtMoney(longM?.be)} />
-                          <Metric label="Prob. Profit" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} />
-                          <Metric label="Expected Profit" value={fmtMoney(longM?.expP)} num={longM?.expP} />
-                          <Metric label="Expected Return" value={fmtPct(longM?.expR)} num={longM?.expR} />
+                          <Metric label="P(Profit)" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} />
+                          <Metric label="E[Profit]" value={fmtMoney(longM?.expP)} num={longM?.expP} />
+                          <Metric label="E[Return]" value={fmtPct(longM?.expR)} num={longM?.expR} />
                           <Metric label="Sharpe" value={fmt(longM?.sharpe, 2)} num={longM?.sharpe} />
-                          <Metric label="Current Price" value={fmtMoney(S0)} />
-                          <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
-                          <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
+                          <Metric label="Spot Price" value={fmtMoney(S0)} />
+                          <Metric label="MC(S)" value={fmtMoney(meanMC)} />
+                          <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
                           {showGreeks && (
                             <div className="greeks">
                               {focus === "put" ? (
@@ -764,7 +762,7 @@ export default function ChainTable({
           display: flex;
           flex-direction: column;
           gap: 12px;
-          padding: 16px;
+          padding: 18px; /* a touch more space moved from chart to card */
           border: 0;
           border-radius: 14px;
           background:
@@ -794,7 +792,8 @@ export default function ChainTable({
               transparent 40%
             ),
             var(--surface);
-          box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+          /* Removed inner border line to eliminate “in-graph” spacing */
+          box-shadow: none;
           overflow: hidden;
         }
 
@@ -841,12 +840,14 @@ export default function ChainTable({
           align-items: center;
           justify-content: space-between;
           gap: 16px;
+          min-width: 0; /* allow children to shrink */
         }
         .opt-label {
           color: color-mix(in srgb, var(--text) 88%, transparent);
           opacity: 0.9;
           font-size: 16px;
           font-weight: 600;
+          white-space: nowrap; /* keep label single-line */
         }
         .opt-pill {
           font-weight: 800;
@@ -859,8 +860,15 @@ export default function ChainTable({
           line-height: 1;
           color: var(--text);
           min-width: 84px;
+          max-width: 100%;
           text-align: right;
           backdrop-filter: blur(4px);
+          white-space: nowrap; /* keep values on one line */
+        }
+        .opt-pill.compact {
+          font-size: 13px;
+          padding: 6px 10px;
+          letter-spacing: 0;
         }
         .opt-pill.pos {
           color: var(--positive);
@@ -935,13 +943,13 @@ export default function ChainTable({
 }
 
 /* ---------- Metric pill (boxed, auto tone: pos/neg/neutral) ---------- */
-function Metric({ label, value, num }) {
+function Metric({ label, value, num, compact = false }) {
   let tone = "neu";
   if (Number.isFinite(num)) tone = num > 0 ? "pos" : num < 0 ? "neg" : "neu";
   return (
     <div className="opt-metric">
       <span className="opt-label">{label}</span>
-      <span className={`opt-pill ${tone}`}>{value ?? "—"}</span>
+      <span className={`opt-pill ${tone} ${compact ? "compact" : ""}`}>{value ?? "—"}</span>
     </div>
   );
 }
