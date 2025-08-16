@@ -1,22 +1,23 @@
 // components/Options/ChainTable.jsx
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
 
 /* ---------- tiny utils ---------- */
 const isNum = (x) => Number.isFinite(x);
 const pick = (x) => (isNum(x) ? x : null);
 const moneySign = (ccy) => (ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$");
+const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 
 /* erf / Phi for PoP and PDF math */
 function erf(x) {
   const sign = x < 0 ? -1 : 1;
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429, p=0.3275911;
   x = Math.abs(x);
-  const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-x * x);
-  return sign * y;
+  const t = 1/(1+p*x);
+  const y = 1 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t*Math.exp(-x*x);
+  return sign*y;
 }
 const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
 
@@ -26,16 +27,16 @@ export default function ChainTable({
   provider,
   groupBy,
   expiry,
-  settings,
-  onToggleSort,
+  settings,        // row count / sort controls from the popover
+  onToggleSort,    // header click toggles sort
 }) {
-  const [status, setStatus] = useState("idle");
+  const [status, setStatus] = useState("idle");     // idle | loading | ready | error
   const [error, setError] = useState(null);
-  const [meta, setMeta] = useState(null);      // { spot, currency, expiry }
-  const [rows, setRows] = useState([]);        // merged by strike
-  const [expanded, setExpanded] = useState(null); // { strike, side:'call'|'put' } | null
+  const [meta, setMeta] = useState(null);           // { spot, currency, expiry }
+  const [rows, setRows] = useState([]);             // merged by strike
+  const [expanded, setExpanded] = useState(null);   // { strike, side:'call'|'put' } | null
 
-  // StatsRail (days/basis/sigma/drift…)
+  // StatsRail (days/basis/sigma/drift…) — guard unsubscribe to avoid #310
   const [ctx, setCtx] = useState(() => (typeof window !== "undefined" ? snapshotStatsCtx() : null));
   useEffect(() => {
     const unsub = subscribeStatsCtx(setCtx);
@@ -46,7 +47,6 @@ export default function ChainTable({
   const effCurrency = meta?.currency || currency || "USD";
   const fmtMoney = (v, d = 2) => (isNum(v) ? `${moneySign(effCurrency)}${Number(v).toFixed(d)}` : "—");
   const fmtPct   = (p, d = 2) => (isNum(p) ? `${(p * 100).toFixed(d)}%` : "—");
-  const fmtRange = (a, b) => (isNum(a) && isNum(b) ? `${fmtMoney(a,2)} – ${fmtMoney(b,2)}` : "—");
 
   // Settings — safe defaults
   const sortDir  = settings?.sort === "desc" ? "desc" : "asc";
@@ -125,7 +125,9 @@ export default function ChainTable({
     const out = Array.from(byStrike.values());
     for (const r of out) {
       const cIV = r.call?.ivPct, pIV = r.put?.ivPct;
-      r.ivPct = isNum(cIV) && isNum(pIV) ? (cIV + pIV) / 2 : isNum(cIV) ? cIV : isNum(pIV) ? pIV : null;
+      r.ivPct = isNum(cIV) && isNum(pIV) ? (cIV + pIV) / 2
+              : isNum(cIV) ? cIV
+              : isNum(pIV) ? pIV : null;
       if (r.call) r.call.mid = strictMid(r.call.ask, r.call.bid);
       if (r.put)  r.put.mid  = strictMid(r.put.ask,  r.put.bid);
     }
@@ -143,10 +145,7 @@ export default function ChainTable({
       setStatus("loading");
       const isoFromTab = expiry?.iso || null;
       const dateISO = isoFromTab || (await resolveDate(symbol, expiry));
-      if (!dateISO) {
-        if (!cancelled){ setStatus("error"); setError("No chain for selected expiry."); }
-        return;
-      }
+      if (!dateISO) { if (!cancelled){ setStatus("error"); setError("No chain for selected expiry."); } return; }
 
       try {
         const u = `/api/options?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(dateISO)}`;
@@ -223,6 +222,7 @@ export default function ChainTable({
   const handleSortClick = (e) => { e.preventDefault(); onToggleSort?.(); };
   const handleSortKey   = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleSort?.(); } };
 
+  // shimmer skeleton length
   const shimmerCount = useMemo(() => (rowLimit === Infinity ? 12 : Math.max(8, Math.min(14, rowLimit || 12))), [rowLimit]);
 
   // Expansion / focus
@@ -243,27 +243,31 @@ export default function ChainTable({
     }
     const sqrtT = Math.sqrt(T), sigSqrtT = sigma * sqrtT;
 
+    // Break-even
     const BE = type === "call" ? (K + premium) : Math.max(1e-9, K - premium);
 
+    // PoP via lognormal threshold
     const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const needsAbove = (type === "call" && pos === "long") || (type === "put" && pos === "short");
     const PoP = needsAbove ? (1 - Phi(z)) : Phi(z);
 
+    // d~
     const d1 = (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const d2 = d1 - sigSqrtT;
 
     const expST = Math.exp(drift * T);
     let Epay;
     if (type === "call")      Epay = S0 * expST * Phi(d1) - K * Phi(d2);
-    else                      Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
+    else /* type === put */   Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
 
+    // variance via truncated moments
     const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / (sigSqrtT);
     const PgtK = Phi(dbar), PltK = 1 - PgtK;
     const E1_above = S0 * expST * Phi(d1);
     const E2_above = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(d1 + sigSqrtT);
     const E1_below = S0 * expST * Phi(-d1);
     const E2_below = S0*S0 * Math.exp(2*drift*T + sigma*sigma*T) * Phi(-(d1 + sigSqrtT));
-    const E2pay = (type === "call")
+    const E2pay = type === "call"
       ? (E2_above - 2*K*E1_above + K*K*PgtK)
       : (K*K*PltK - 2*K*E1_below + E2_below);
     const varPay = Math.max(0, E2pay - Epay*Epay);
@@ -311,15 +315,8 @@ export default function ChainTable({
         <div className="c cell" role="columnheader">Ask</div>
         <div className="c cell" role="columnheader">Bid</div>
         <div className="c cell" role="columnheader">Mid</div>
-        <div
-          className="mid cell strike-hdr"
-          role="columnheader"
-          aria-sort={sortDir === "desc" ? "descending" : "ascending"}
-          tabIndex={0}
-          onClick={handleSortClick}
-          onKeyDown={handleSortKey}
-          title="Toggle strike sort"
-        >
+        <div className="mid cell strike-hdr" role="columnheader" aria-sort={ariaSort}
+             tabIndex={0} onClick={handleSortClick} onKeyDown={handleSortKey} title="Toggle strike sort">
           <span className="arrow" aria-hidden="true">{arrowChar}</span> Strike
         </div>
         <div className="mid cell iv-hdr" role="columnheader">IV, %</div>
@@ -373,7 +370,7 @@ export default function ChainTable({
           {visible.map((r) => {
             const spotStrike = closestStrike != null && Number(r.strike) === Number(closestStrike);
             const open  = isOpen(r.strike);
-            const focus = focusSide(r.strike);
+            const focus = focusSide(r.strike); // 'call' | 'put' | null
 
             const callMid = r?.call?.mid ?? null;
             const putMid  = r?.put?.mid  ?? null;
@@ -393,22 +390,22 @@ export default function ChainTable({
               }
             }
 
-            // Monte Carlo summary (for metrics/legend)
-            const have = isNum(S0) && isNum(sigma) && isNum(T);
-            const m = have ? Math.log(S0) + (Number(drift) - 0.5 * sigma * sigma) * T : null;
-            const v = have ? sigma * Math.sqrt(T) : null;
-            const sL = have ? Math.exp(m - 1.96 * v) : null;
-            const sH = have ? Math.exp(m + 1.96 * v) : null;
-            const meanPrice = have ? S0 * Math.exp(Number(drift) * T) : null;
+            /* ---------- MC (analytic) helpers for lines & metrics ---------- */
+            const mu = drift;
+            const v = isNum(sigma) && isNum(T) ? sigma * Math.sqrt(T) : null;
+            const mLN = isNum(S0) && isNum(mu) && isNum(v) ? Math.log(S0) + (mu - 0.5 * sigma * sigma) * T : null;
+            const z975 = 1.959963984540054;
+            const ciL = isNum(mLN) ? Math.exp(mLN - v * z975) : null;
+            const ciU = isNum(mLN) ? Math.exp(mLN + v * z975) : null;
+            const meanMC = isNum(S0) && isNum(mu) && isNum(T) ? S0 * Math.exp(mu * T) : null;
 
             return (
               <div key={r.strike}>
                 <div
                   className={`grid row ${spotStrike ? "is-spot" : ""} ${open ? "is-open" : ""} ${focus ? `focus-${focus}` : ""}`}
-                  role="row"
-                  aria-expanded={open ? "true" : "false"}
+                  role="row" aria-expanded={open ? "true" : "false"}
                 >
-                  {/* Calls */}
+                  {/* Calls (left) */}
                   <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.price)}</div>
                   <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.ask)}</div>
                   <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.bid)}</div>
@@ -418,7 +415,7 @@ export default function ChainTable({
                   <div className="mid cell val strike-val">{fmt(r.strike)}</div>
                   <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
-                  {/* Puts */}
+                  {/* Puts (right) */}
                   <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(putMid)}</div>
                   <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.bid)}</div>
                   <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.ask)}</div>
@@ -434,38 +431,27 @@ export default function ChainTable({
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
-                            S0={S0}
-                            K={r.strike}
-                            premium={premForChart}
-                            type={typeForChart}
-                            pos="short"
-                            BE={beForChart}
-                            mu={drift}
-                            sigma={sigma}
-                            T={T}
+                            // ✅ keep BE centered but expand range to include S0/mean/CI
+                            S0={S0} K={r.strike} premium={premForChart}
+                            type={typeForChart} pos="short" BE={beForChart}
+                            sigma={sigma} T={T} mu={mu}
+                            showLegend
                           />
                         </div>
-
-                        {/* Legend moved *outside* the chart */}
-                        <ChartLegend />
-
                         <div className="metrics">
-                          <Metric label="Current Price" value={fmtMoney(S0)} tone="neu" />
-                          <Metric label="95% CI (MC)" value={fmtRange(sL, sH)} tone="neu" />
-                          <Metric label="Mean (MC)" value={fmtMoney(meanPrice)} tone="neu" />
-                          <Metric label="Break-even" value={fmtMoney(shortM?.be)} tone="neu" />
+                          {/* ✅ New pills & spacing; green/red for +/- values */}
+                          <Metric label="Current Price" value={fmtMoney(S0)} />
+                          <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
+                          <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
+                          <Metric label="Break-even" value={fmtMoney(shortM?.be)} />
 
-                          <Metric label="Prob. Profit" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? 0) - 0.5} />
+                          <Metric label="Prob. Profit" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} goodWhenHigh />
                           <Metric label="Expected Return" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
                           <Metric label="Expected Profit" value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
-                          <Metric label="Sharpe" value={fmt(shortM?.sharpe, 2)} num={shortM?.sharpe} />
-
+                          <Metric label="Sharpe" value={fmt(shortM?.sharpe, 2)} />
                           {showGreeks && (
                             <div className="greeks">
-                              {(focus === "put")
-                                ? <GreekList greeks={r?.put?.greeks} />
-                                : <GreekList greeks={r?.call?.greeks} />
-                              }
+                              {(focus === "put") ? <GreekList greeks={r?.put?.greeks} /> : <GreekList greeks={r?.call?.greeks} />}
                             </div>
                           )}
                         </div>
@@ -478,38 +464,26 @@ export default function ChainTable({
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
-                            S0={S0}
-                            K={r.strike}
-                            premium={premForChart}
-                            type={typeForChart}
-                            pos="long"
-                            BE={beForChart}
-                            mu={drift}
-                            sigma={sigma}
-                            T={T}
+                            // ✅ same config on long side
+                            S0={S0} K={r.strike} premium={premForChart}
+                            type={typeForChart} pos="long" BE={beForChart}
+                            sigma={sigma} T={T} mu={mu}
+                            showLegend
                           />
                         </div>
-
-                        {/* Legend moved *outside* the chart */}
-                        <ChartLegend />
-
                         <div className="metrics">
-                          <Metric label="Current Price" value={fmtMoney(S0)} tone="neu" />
-                          <Metric label="95% CI (MC)" value={fmtRange(sL, sH)} tone="neu" />
-                          <Metric label="Mean (MC)" value={fmtMoney(meanPrice)} tone="neu" />
-                          <Metric label="Break-even" value={fmtMoney(longM?.be)} tone="neu" />
+                          <Metric label="Current Price" value={fmtMoney(S0)} />
+                          <Metric label="95% CI (MC)" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} />
+                          <Metric label="Mean (MC)" value={fmtMoney(meanMC)} />
+                          <Metric label="Break-even" value={fmtMoney(longM?.be)} />
 
-                          <Metric label="Prob. Profit" value={fmtPct(longM?.pop)} num={(longM?.pop ?? 0) - 0.5} />
+                          <Metric label="Prob. Profit" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} goodWhenHigh />
                           <Metric label="Expected Return" value={fmtPct(longM?.expR)} num={longM?.expR} />
                           <Metric label="Expected Profit" value={fmtMoney(longM?.expP)} num={longM?.expP} />
-                          <Metric label="Sharpe" value={fmt(longM?.sharpe, 2)} num={longM?.sharpe} />
-
+                          <Metric label="Sharpe" value={fmt(longM?.sharpe, 2)} />
                           {showGreeks && (
                             <div className="greeks">
-                              {(focus === "put")
-                                ? <GreekList greeks={r?.put?.greeks} />
-                                : <GreekList greeks={r?.call?.greeks} />
-                              }
+                              {(focus === "put") ? <GreekList greeks={r?.put?.greeks} /> : <GreekList greeks={r?.call?.greeks} />}
                             </div>
                           )}
                         </div>
@@ -531,7 +505,7 @@ export default function ChainTable({
           --spotOrange: #f59e0b;
 
           --panelBg: #0b0f14;
-          --panelEdge: #121821;
+          --panelEdge: rgba(255,255,255,.06);
 
           margin-top:10px;
         }
@@ -542,7 +516,7 @@ export default function ChainTable({
         }
         .h-left, .h-right{
           font-weight:800; font-size:22px; letter-spacing:.2px;
-          color: #e8eaee;
+          color:#e8eaee;
         }
         .h-mid{ flex:1; }
 
@@ -583,7 +557,8 @@ export default function ChainTable({
         .arrow{ margin-right:6px; font-weight:900; }
 
         .card{
-          border:1px solid var(--panelEdge);
+          /* ✅ Apple-like card, no visible border */
+          border:0;                               /* ✅ */
           border-radius:16px;
           background: radial-gradient(1200px 400px at 20% -20%, rgba(255,255,255,.06), transparent 40%), var(--panelBg);
           color:#e6e8eb;
@@ -616,97 +591,85 @@ export default function ChainTable({
           border-radius: 8px;
         }
 
-        /* Expanded panel */
+        /* Expanded details */
         .details{
           overflow:hidden; max-height:0; opacity:0; transform: translateY(-4px);
           transition: max-height .28s ease, opacity .28s ease, transform .28s ease;
           border-bottom:1px solid transparent;
         }
         .details.open{
-          max-height: 760px; opacity:1; transform: translateY(0);
+          max-height: 740px; opacity:1; transform: translateY(0);
           border-bottom-color: color-mix(in srgb, var(--panelEdge) 86%, transparent);
         }
         .details-inner{
           padding: 18px 12px 22px;
           display:grid; grid-template-columns: 1fr 1fr; gap:16px;
-          background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.00));
+          background: linear-gradient(180deg, rgba(255,255,255,.03), transparent), rgba(0,0,0,.12);
           border-radius: 16px;
-          box-shadow: 0 22px 48px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.04);
+          box-shadow: 0 22px 48px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.03);
         }
         .panel-col{
           display:flex; flex-direction:column; gap:12px;
-          border:0;
           padding: 14px;
+          border:0;                               /* ✅ remove visible borders */
           border-radius:14px;
-          background:
-            radial-gradient(120% 140% at 10% -20%, rgba(255,255,255,.06), transparent 60%),
-            #0c1117;
-          box-shadow:
-            0 24px 48px rgba(0,0,0,.35),
-            0 3px 8px rgba(0,0,0,.25),
-            inset 0 0 0 1px rgba(255,255,255,.03);
+          background: linear-gradient(180deg, rgba(255,255,255,.02), transparent), #0b0f14;
+          box-shadow: 0 10px 26px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04);
         }
         .panel-head{ font-weight:800; font-size:18px; color:#f5f7fa; }
 
-        .panel-grid{ display:grid; grid-template-rows: 250px auto auto; gap:14px; }
+        .panel-grid{ display:grid; grid-template-rows: 250px auto; gap:14px; }
         .chart{
           position:relative;
-          border-radius:14px;
-          border:0;
-          background:
-            radial-gradient(1200px 600px at -10% -30%, rgba(66,129,255,.08), transparent 45%),
-            #0f141b;
-          box-shadow:
-            inset 0 1px 0 rgba(255,255,255,.05),
-            0 16px 40px rgba(0,0,0,.35);
+          border-radius:12px;
+          background: radial-gradient(1400px 600px at -10% -30%, rgba(66,129,255,.08), transparent 40%), #0f141b;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
           overflow:hidden;
         }
 
-        /* Legend (outside chart) */
-        .legend{
-          display:flex; flex-wrap:wrap; align-items:center; gap:14px 22px;
-          padding: 6px 4px 2px;
-          color:#e5e7eb; font-weight:700; font-size:12.5px;
-          opacity:.95;
+        .legend{            /* ✅ legend outside plot */
+          display:flex; gap:12px; align-items:center; padding:8px 10px 12px;
+          color:#cbd5e1; font-size:12px; font-weight:700;
         }
-        .legend .item{ display:inline-flex; align-items:center; gap:10px; }
-        .legend .dot{ width:12px; height:12px; border-radius:999px; display:inline-block; }
-        .legend .ring{ background:transparent; border:2px dashed #f9a8d4; }
-        .legend .be{ background:#10b981; box-shadow:0 0 0 1px rgba(255,255,255,.65) inset; }
+        .li{ display:flex; gap:8px; align-items:center; }
+        .dot{ width:9px; height:9px; border-radius:999px; display:inline-block; }
+        .dot.blue{ background:#60a5fa; }
+        .dot.pink{ background:#f472b6; }
+        .dot.be{   background:#10b981; }
+        .dash{ width:18px; height:0; border-top:2px dotted #f5a7cf; display:inline-block; }
 
-        /* Metrics with *strong* pill styling */
         .metrics{
-          display:grid; grid-template-columns: 1fr 1fr; gap:16px 24px;
+          display:grid; grid-template-columns: 1fr 1fr; gap:14px 22px;
         }
         .metric{
-          display:flex; align-items:center; justify-content:flex-start; gap:22px;
+          display:flex; align-items:center; justify-content:space-between; gap:16px;  /* ✅ more spacing */
         }
-        .metric .k{ color:#eaeef5; opacity:.86; font-size:17px; }
-        .metrics .metric .v{
-          display:inline-flex; align-items:center; justify-content:center;
+        .metric .k{ color:#eaeef5; opacity:.82; font-size:17px; }
+        .metric .v{
+          margin-left:10px;                         /* ✅ extra separation */
           font-weight:800; font-variant-numeric: tabular-nums;
-          padding:7px 14px; border-radius:999px;
-          font-size:15px; line-height:1;
-          background: rgba(148,163,184,.10);
-          color:#e7eaf0;
-          border:1px solid rgba(148,163,184,.22);
-          white-space:nowrap;  /* keep pill on one line */
+          background: rgba(255,255,255,.06);
+          border:1px solid rgba(255,255,255,.12);
+          padding:8px 12px; border-radius:999px;     /* ✅ pill */
+          font-size:15px; line-height:1; color:#e7eaf0;
+          backdrop-filter: blur(4px);
         }
-        .metrics .metric .v.pos{ color:#22c55e; background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.28); }
-        .metrics .metric .v.neg{ color:#ef4444; background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.28); }
-        .metrics .metric .v.neu{ color:#cbd5e1; }
+        .metric .v.pos{ color:#22c55e; background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.32); }
+        .metric .v.neg{ color:#ef4444; background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.28); }
+        .metric .v.neu{ color:#cbd5e1; }
 
         .greeks{ grid-column: 1 / -1; margin-top: 4px; display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; }
         .greek{
           font-size:12px; opacity:.9; display:flex; align-items:center; justify-content:center;
-          border-radius:10px; padding:6px 8px; color:#cfd6e1; background:#0c1117; box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
+          border:1px solid rgba(255,255,255,.08); border-radius:10px; padding:6px 8px; color:#cfd6e1;
+          background:#0c1117;
         }
 
         /* Loading shimmer */
         .is-loading .row:hover{ background: transparent; }
         .skl{
-          display:inline-block; height: 14px; border-radius: 8px; background: rgba(255,255,255,.08);
-          position: relative; overflow: hidden;
+          display:inline-block; height: 14px; border-radius: 8px;
+          background: rgba(255,255,255,.08); position: relative; overflow: hidden;
         }
         .skl::after{
           content:""; position:absolute; inset:0; transform: translateX(-100%);
@@ -717,7 +680,7 @@ export default function ChainTable({
         @keyframes shimmer{ 100% { transform: translateX(100%); } }
 
         @media (max-width: 980px){
-          .panel-grid{ grid-template-rows: 220px auto auto; }
+          .panel-grid{ grid-template-rows: 220px auto; }
           .details-inner{ grid-template-columns: 1fr; }
         }
       `}</style>
@@ -725,30 +688,18 @@ export default function ChainTable({
   );
 }
 
-/* ---------- Metric pill ---------- */
-function Metric({ label, value, num, tone }) {
-  let cls = "neu";
-  if (tone === "neu") cls = "neu";
-  else if (isNum(num)) {
-    if (num > 0) cls = "pos";
-    else if (num < 0) cls = "neg";
+/* ---------- Metric pill (auto tone: pos / neg / neutral) ---------- */
+function Metric({ label, value, num, goodWhenHigh }) {
+  let tone = "neu";
+  if (isNum(num)) {
+    // For PoP we pass (pop - 0.5) so positive means "good"
+    if (num > 0) tone = "pos";
+    else if (num < 0) tone = "neg";
   }
   return (
     <div className="metric">
       <span className="k">{label}</span>
-      <span className={`v ${cls}`}>{value ?? "—"}</span>
-    </div>
-  );
-}
-
-/* ---------- Legend outside the chart ---------- */
-function ChartLegend() {
-  return (
-    <div className="legend">
-      <div className="item"><span className="dot" style={{ background: "#60a5fa" }} /> Current price</div>
-      <div className="item"><span className="dot" style={{ background: "#f472b6" }} /> Mean (MC)</div>
-      <div className="item"><span className="dot ring" /> 95% CI boundaries</div>
-      <div className="item"><span className="dot be" /> Break-even</div>
+      <span className={`v ${tone}`}>{value ?? "—"}</span>
     </div>
   );
 }
@@ -767,110 +718,160 @@ function GreekList({ greeks }) {
 }
 function fmtG(v){ return isNum(v) ? Number(v).toFixed(2) : "—"; }
 
-/* ---------- Mini payoff chart (legend removed; CI lines removed) ---------- */
-function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T }) {
-  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos) {
-    return <span className="chart-hint">Chart</span>;
+/* ---------- Mini payoff chart (legend outside, lines guaranteed in-range) ---------- */
+function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
+  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos || !(sigma > 0) || !(T > 0)) {
+    return <span className="chart-hint" style={{padding:12, color:"#94a3b8"}}>Chart</span>;
   }
 
-  const W = 560, H = 250, pad = 12;
+  const uid = useId().replace(/:/g, "");
+  const aboveId = `above-${uid}`;
+  const belowId = `below-${uid}`;
 
-  // center around current price
-  const centerX = S0;
-  const baseSpan = 0.4 * S0;
-  const [zoom, setZoom] = useState(1);
-  const span = baseSpan / zoom;
-  const xmin = Math.max(0.01, centerX - span);
-  const xmax = centerX + span;
+  // ----- base range centered at BE (or S0) -----
+  const centerPx = Number.isFinite(BE) ? BE : S0;
+  const baseSpan = 0.40 * (S0 || K) + 0.20 * Math.abs((S0 || 0) - (K || 0));
 
+  const [zoom, setZoom] = React.useState(1);                 // 1 = default; larger → closer
+  const span0 = baseSpan / zoom;
+  let xmin = Math.max(0.01, centerPx - span0);
+  let xmax = centerPx + span0;
+
+  // ✅ compute analytic MC mean & 95% CI (no shading, no curve)
+  const v = sigma * Math.sqrt(T);
+  const mLN = Math.log(S0) + (mu - 0.5 * sigma * sigma) * T;
+  const z975 = 1.959963984540054;
+  const meanPrice = S0 * Math.exp(mu * T);
+  const ciL = Math.exp(mLN - v * z975);
+  const ciU = Math.exp(mLN + v * z975);
+
+  // ✅ ensure S0, mean & CI lines are always inside the visible range
+  xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
+  xmax = Math.max(xmax, S0, meanPrice, ciU) * 1.005;
+
+  // ----- sizing -----
+  const W = 520, H = 250, pad = 12;
   const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
 
-  // payoff samples
-  const N = 220;
-  const xs = [];
-  for (let i = 0; i <= N; i++) xs.push(xmin + (i / N) * (xmax - xmin));
-  const payoff = (s) => {
+  // ----- payoff samples -----
+  const N = 160;
+  const xs = Array.from({length:N+1}, (_,i)=> xmin + (i/N)*(xmax-xmin));
+  const pay = xs.map((s) => {
     if (type === "call") {
       const intr = Math.max(s - K, 0);
-      return pos === "long" ? intr - premium : premium - intr;
+      return pos === "long" ? (intr - premium) : (premium - intr);
+    } else {
+      const intr = Math.max(K - s, 0);
+      return pos === "long" ? (intr - premium) : (premium - intr);
     }
-    const intr = Math.max(K - s, 0);
-    return pos === "long" ? intr - premium : premium - intr;
-  };
-  const pay = xs.map(payoff);
+  });
 
+  // y-range padded so fills never clip
   const yMin = Math.min(...pay, -premium * 1.35);
   const yMax = Math.max(...pay, premium * 1.35);
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
   const baselineY = ymap(0);
 
+  // payoff polyline
   const lineD = xs.map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`).join(" ");
+
+  // single area path + clip (prevents seams)
   const areaD = [
     `M ${xmap(xs[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
     ...xs.map((s, i) => `L ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`),
     `L ${xmap(xs[xs.length - 1]).toFixed(2)} ${baselineY.toFixed(2)} Z`,
   ].join(" ");
 
-  // unique clip ids
-  const idsRef = useRef({
-    above: `above-${Math.random().toString(36).slice(2)}`,
-    below: `below-${Math.random().toString(36).slice(2)}`
-  });
-  const aboveId = idsRef.current.above;
-  const belowId = idsRef.current.below;
-
+  // positions for guides
   const xSpot = xmap(S0);
-  const xBE = Number.isFinite(BE) ? xmap(BE) : null;
+  const xMean = xmap(meanPrice);
+  const xBE   = Number.isFinite(BE) ? xmap(BE) : null;
+  const xL    = xmap(ciL);
+  const xU    = xmap(ciU);
 
-  const zoomIn  = () => setZoom((z) => Math.min(30, z * 1.15));
-  const zoomOut = () => setZoom((z) => Math.max(0.5, z / 1.15));
+  // ticks at left / center / right aligned to axis line
+  const tickFmt = (s) => Math.round(s).toString();
+  const leftTick = tickFmt(xmin);
+  const midTick  = tickFmt(centerPx);
+  const rightTick= tickFmt(xmax);
+
+  // ✅ Zoom buttons (darker, subtle blur)
+  const zoomIn = () => setZoom((z) => Math.min(20, z * 1.15));
+  const zoomOut= () => setZoom((z) => Math.max(0.5, z / 1.15));
 
   return (
-    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" shapeRendering="geometricPrecision">
-      <defs>
-        <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
-        <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
-        <filter id="btnBlur"><feGaussianBlur in="SourceGraphic" stdDeviation="6" /></filter>
-      </defs>
+    <>
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true"
+           style={{touchAction:"none"}} shapeRendering="geometricPrecision">
+        <defs>
+          <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
+          <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
+        </defs>
 
-      {/* zero (P&L) line */}
-      <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="rgba(255,255,255,.22)" />
+        {/* axis baseline */}
+        <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="rgba(255,255,255,.18)" />
 
-      {/* profit / loss areas */}
-      <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
-      <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} />
+        {/* profit / loss areas */}
+        <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />  {/* ✅ */}
+        <path d={areaD} fill="rgba(239, 68, 68, .15)" clipPath={`url(#${belowId})`} /> {/* ✅ */}
 
-      {/* payoff line */}
-      <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+        {/* ❌ removed CI shading */}
+        {/* ❌ removed Monte-Carlo curve */}
 
-      {/* spot line */}
-      <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.2" opacity="0.95" />
+        {/* payoff line */}
+        <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
 
-      {/* Break-even marker */}
-      {Number.isFinite(xBE) && <circle cx={xBE} cy={baselineY} r="5" fill="#10b981" stroke="rgba(255,255,255,.8)" strokeWidth="1" />}
+        {/* vertical guides (all inside range) */}
+        {/* Current price */}
+        <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.2" opacity="0.95" />
+        {/* Mean (MC) */}
+        <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.2" opacity="0.95" />
+        {/* 95% CI bounds (dotted) */}
+        <line x1={xL} y1={pad} x2={xL} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
+        <line x1={xU} y1={pad} x2={xU} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
+        {/* Break-even */}
+        {Number.isFinite(xBE) && (
+          <>
+            <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.95" />
+            {/* circle marker on baseline */}
+            <circle cx={xBE} cy={baselineY} r="4" fill="#10b981" opacity="0.95" />
+          </>
+        )}
 
-      {/* ticks on axis (numbers aligned *on* the axis) */}
-      <g fontSize="12" fontWeight="700" fill="rgba(148,163,184,.9)">
-        <text x={pad} y={baselineY - 6}>{Math.round(xmin)}</text>
-        <text x={xSpot} y={baselineY - 6} textAnchor="middle" fill="#60a5fa">{Math.round(S0)}</text>
-        <text x={W - pad} y={baselineY - 6} textAnchor="end">{Math.round(xmax)}</text>
-      </g>
-
-      {/* Zoom controls */}
-      <g transform={`translate(${W - 110}, ${H - 38})`}>
-        <rect x="-6" y="-10" rx="18" ry="18" width="106" height="36"
-              fill="rgba(15,23,42,.55)" style={{ backdropFilter: "blur(6px)" }}
-              stroke="none" filter="url(#btnBlur)" />
-        <g role="button" tabIndex="0" onClick={zoomOut} style={{ cursor: "pointer" }} transform="translate(16,8)">
-          <circle cx="0" cy="0" r="14" fill="rgba(17,24,39,.9)" />
-          <line x1="-8" y1="0" x2="8" y2="0" stroke="#cbd5e1" strokeWidth="2" />
+        {/* bottom ticks aligned to axis */}
+        <g fontSize="12" fill="rgba(148,163,184,.85)" fontWeight="700">
+          <text x={pad} y={H - 6}>{leftTick}</text>
+          <text x={(W / 2)} y={H - 6} textAnchor="middle">{midTick}</text>
+          <text x={W - pad} y={H - 6} textAnchor="end">{rightTick}</text>
         </g>
-        <g role="button" tabIndex="0" onClick={zoomIn} style={{ cursor: "pointer" }} transform="translate(62,8)">
-          <circle cx="0" cy="0" r="14" fill="rgba(17,24,39,.9)" />
-          <line x1="-8" y1="0" x2="8" y2="0" stroke="#cbd5e1" strokeWidth="2" />
-          <line x1="0" y1="-8" x2="0" y2="8" stroke="#cbd5e1" strokeWidth="2" />
-        </g>
-      </g>
-    </svg>
+      </svg>
+
+      {/* ✅ Legend placed outside the plot area */}
+      {showLegend && (
+        <div className="legend">
+          <div className="li"><span className="dot blue" /> Current</div>
+          <div className="li"><span className="dot pink" /> Mean (MC)</div>
+          <div className="li"><span className="dash" /> 95% CI</div>
+          <div className="li"><span className="dot be" /> Break-even</div>
+          <div style={{marginLeft:"auto", display:"flex", gap:8}}>
+            {/* ✅ refined + / – buttons */}
+            <button type="button" aria-label="Zoom out" onClick={zoomOut}
+              style={btnStyle}>–</button>
+            <button type="button" aria-label="Zoom in" onClick={zoomIn}
+              style={btnStyle}>+</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
+
+/* ✅ darker/blurred button style for legend controls */
+const btnStyle = {
+  width: 30, height: 30, borderRadius: 999, border: "0",
+  color: "#e5e7eb", fontWeight: 800, fontSize: 16, lineHeight: "30px",
+  background: "rgba(15, 23, 42, .55)",
+  boxShadow: "0 2px 10px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06)",
+  backdropFilter: "blur(6px)",
+  cursor: "pointer"
+};
