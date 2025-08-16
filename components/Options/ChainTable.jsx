@@ -290,50 +290,94 @@ export default function ChainTable({
   const isOpen = (strike) => expanded && expanded.strike === strike;
   const focusSide = (strike) => (isOpen(strike) ? expanded.side : null);
 
-  /* ---------- metrics math (PoP, BE, ER, EP, Sharpe) ---------- */
+  /* ---------- metrics math (PoP, BE, E[Profit], E[Loss], Sharpe) ---------- */
   function metricsForOption({ type, pos, S0, K, premium, sigma, T, drift }) {
+    // guards
     if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !(sigma > 0) || !(T > 0)) {
-      return { be: null, pop: null, expP: null, expR: null, sharpe: null };
+      return { be: null, pop: null, expP: null, expR: null, sharpe: null, ep: null, el: null };
     }
-    const sqrtT = Math.sqrt(T), sigSqrtT = sigma * sqrtT;
 
-    // break-even
-    const BE = type === "call" ? K + premium : Math.max(1e-9, K - premium);
+    const v = sigma * Math.sqrt(T);
+    const Sexp = S0 * Math.exp(drift * T);
 
-    // PoP via lognormal threshold
-    const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
-    const needsAbove =
-      (type === "call" && pos === "long") || (type === "put" && pos === "short");
+    // helpers at threshold a in price space
+    const d1 = (a) => (Math.log(S0 / a) + (drift + 0.5 * sigma * sigma) * T) / v;
+    const dbar = (a) => (Math.log(S0 / a) + (drift - 0.5 * sigma * sigma) * T) / v;
+
+    // Break-even spot
+    const BE = type === "call" ? (K + premium) : Math.max(1e-9, K - premium);
+
+    // P(Profit)
+    const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / v;
+    const needsAbove = (type === "call" && pos === "long") || (type === "put" && pos === "short");
     const PoP = needsAbove ? 1 - Phi(z) : Phi(z);
 
-    // d~
-    const d1 = (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / sigSqrtT;
-    const d2 = d1 - sigSqrtT;
-
-    const expST = Math.exp(drift * T);
+    // Expected option payoff (not P&L)
     let Epay;
-    if (type === "call") Epay = S0 * expST * Phi(d1) - K * Phi(d2);
-    else Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
+    if (type === "call") {
+      const d1K = d1(K), dbK = dbar(K);
+      Epay = Sexp * Phi(d1K) - K * Phi(dbK);
+    } else {
+      const d1K = d1(K), dbK = dbar(K);
+      Epay = K * Phi(-dbK) - Sexp * Phi(-d1K);
+    }
 
-    // variance via truncated moments
-    const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
-    const PgtK = Phi(dbar), PltK = 1 - PgtK;
-    const E1_above = S0 * expST * Phi(d1);
-    const E2_above = S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T) * Phi(d1 + sigSqrtT);
-    const E1_below = S0 * expST * Phi(-d1);
-    const E2_below = S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T) * Phi(-(d1 + sigSqrtT));
-    const E2pay =
-      type === "call"
-        ? E2_above - 2 * K * E1_above + K * K * PgtK
-        : K * K * PltK - 2 * K * E1_below + E2_below;
+    // Positive part of P&L for LONG (ep_long = E[X^+])
+    let ep_long;
+    if (type === "call") {
+      const a = K + premium;
+      const d1a = d1(a), dba = dbar(a);
+      ep_long = Sexp * Phi(d1a) - a * Phi(dba);
+    } else {
+      const a = K - premium;
+      if (a <= 1e-12) {
+        ep_long = 0;
+      } else {
+        const d1a = d1(a), dba = dbar(a);
+        ep_long = a * Phi(-dba) - Sexp * Phi(-d1a);
+      }
+    }
+
+    // Mean P&L for LONG
+    const expProfit_long = Epay - premium;
+    // Expected loss (positive number) for LONG
+    const el_long = ep_long - expProfit_long; // = E[X^+] - E[X]
+
+    // Map to LONG / SHORT outputs
+    let expProfit, ep, el;
+    if (pos === "long") {
+      expProfit = expProfit_long;
+      ep = ep_long;
+      el = el_long;
+    } else {
+      expProfit = -expProfit_long;
+      ep = el_long; // E[(−X)^+] = E[X^-]
+      el = ep_long; // E[(−X)^-] = E[X^+]
+    }
+
+    // Variance of payoff (keep as before)
+    const S2exp = S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T);
+    let E2pay;
+    if (type === "call") {
+      const d1K = d1(K), dbK = dbar(K);
+      const E1_above = Sexp * Phi(d1K);
+      const E2_above = S2exp * Phi(d1K + v);
+      const PgtK = Phi(dbK);
+      E2pay = E2_above - 2 * K * E1_above + K * K * PgtK;
+    } else {
+      const d1K = d1(K), dbK = dbar(K);
+      const E1_below = Sexp * Phi(-d1K);
+      const E2_below = S2exp * Phi(-(d1K + v));
+      const PltK = Phi(-dbK);
+      E2pay = K * K * PltK - 2 * K * E1_below + E2_below;
+    }
     const varPay = Math.max(0, E2pay - Epay * Epay);
     const sdPay = Math.sqrt(varPay);
 
-    const expProfit = pos === "long" ? Epay - premium : premium - Epay;
     const expReturn = expProfit / Math.max(1e-12, premium);
     const sharpe = sdPay > 0 ? expProfit / sdPay : null;
 
-    return { be: BE, pop: PoP, expP: expProfit, expR: expReturn, sharpe };
+    return { be: BE, pop: PoP, expP: expProfit, expR: expReturn, sharpe, ep, el };
   }
 
   function daysToExpiryISO(iso, tz = "Europe/Rome") {
