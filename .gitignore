@@ -2,3 +2,7 @@ node_modules
 .next
 out
 .DS_Store
+# --- filename: .gitignore  (add if not present; otherwise append these lines)
+# Local/preview env snapshots (never commit)
+.env.snapshot*
+.env*.local
