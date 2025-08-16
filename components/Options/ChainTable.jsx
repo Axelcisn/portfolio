@@ -1,10 +1,5 @@
-Here’s the updated, full file for components/Options/ChainTable.jsx with:
-	•	compact, single-line metric pills (CI fits on one line),
-	•	labels updated to your notation,
-	•	payoff chart made tighter (no inner border space; space moved to the cards).
-
 // components/Options/ChainTable.jsx
-// ✅ compact pills, updated labels, tight chart padding
+// theme-tokenized, boxed metric pills (green/red), compact CI row, tight chart padding
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
@@ -29,9 +24,7 @@ function erf(x) {
   const t = 1 / (1 + p * x);
   const y =
     1 -
-    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) *
-      t *
-      Math.exp(-x * x));
+    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x));
   return sign * y;
 }
 const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
@@ -43,8 +36,8 @@ export default function ChainTable({
   provider,
   groupBy,
   expiry,
-  settings, // row count / sort controls from the popover
-  onToggleSort, // header click toggles sort
+  settings,
+  onToggleSort,
 }) {
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
@@ -84,14 +77,17 @@ export default function ChainTable({
   // Month label helper (Jan shows year)
   const monthLabel = (d) => {
     const m = d.toLocaleString(undefined, { month: "short" });
-    return d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
+    return d.getMonth() === 0 ? `${m} '${String(d.getFullYear()).slice(-2)}` : m;
   };
 
   // Date fallback resolver (YYYY-MM-DD)
   async function resolveDate(sym, sel) {
     if (!sym || !sel?.m || !sel?.d) return null;
     try {
-      const r = await fetch(`/api/expiries?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+      const r = await fetch(
+        `/api/expiries?symbol=${encodeURIComponent(sym)}`,
+        { cache: "no-store" }
+      );
       const j = await r.json();
       const list = Array.isArray(j?.expiries) ? j.expiries : [];
       const matches = list.filter((s) => {
@@ -101,16 +97,19 @@ export default function ChainTable({
       });
       if (!matches.length) return null;
       const now = Date.now();
-      matches.sort((a, b) => Math.abs(new Date(a) - now) - Math.abs(new Date(b) - now));
+      matches.sort(
+        (a, b) => Math.abs(new Date(a) - now) - Math.abs(new Date(b) - now)
+      );
       return matches[0];
     } catch {
       return null;
     }
   }
 
-  // STRICT mid (only if both sides exist)
+  // Strict mid (only if both sides exist)
   const strictMid = (ask, bid) => {
-    const a = pick(ask), b = pick(bid);
+    const a = pick(ask),
+      b = pick(bid);
     return a != null && b != null ? (a + b) / 2 : null;
   };
 
@@ -144,7 +143,8 @@ export default function ChainTable({
 
     const out = Array.from(byStrike.values());
     for (const r of out) {
-      const cIV = r.call?.ivPct, pIV = r.put?.ivPct;
+      const cIV = r.call?.ivPct,
+        pIV = r.put?.ivPct;
       r.ivPct =
         Number.isFinite(cIV) && Number.isFinite(pIV)
           ? (cIV + pIV) / 2
@@ -188,7 +188,9 @@ export default function ChainTable({
       }
 
       try {
-        const u = `/api/options?symbol=${encodeURIComponent(symbol)}&date=${encodeURIComponent(dateISO)}`;
+        const u = `/api/options?symbol=${encodeURIComponent(
+          symbol
+        )}&date=${encodeURIComponent(dateISO)}`;
         const r = await fetch(u, { cache: "no-store" });
         const j = await r.json();
         if (!r.ok || j?.ok === false) throw new Error(j?.error || "Fetch failed");
@@ -219,7 +221,8 @@ export default function ChainTable({
   function selectAroundATM(sortedAsc, atmIndex, N) {
     const len = sortedAsc.length;
     if (!Number.isFinite(N) || N === Infinity || N >= len) return sortedAsc;
-    let atm = Number.isFinite(atmIndex) && atmIndex >= 0 ? atmIndex : Math.floor(len / 2);
+    let atm =
+      Number.isFinite(atmIndex) && atmIndex >= 0 ? atmIndex : Math.floor(len / 2);
 
     const remaining = N - 1;
     let below = Math.floor(remaining / 2);
@@ -247,10 +250,14 @@ export default function ChainTable({
     const spot = Number(meta?.spot);
     let atmIdx = null;
     if (Number.isFinite(spot)) {
-      let bestI = 0, bestD = Infinity;
+      let bestI = 0,
+        bestD = Infinity;
       for (let i = 0; i < baseAsc.length; i++) {
         const d = Math.abs(baseAsc[i].strike - spot);
-        if (d < bestD) { bestD = d; bestI = i; }
+        if (d < bestD) {
+          bestD = d;
+          bestI = i;
+        }
       }
       atmIdx = bestI;
     }
@@ -262,11 +269,13 @@ export default function ChainTable({
   const closestStrike = useMemo(() => {
     const spot = Number(meta?.spot);
     if (!rows?.length || !Number.isFinite(spot)) return null;
-    let best = null, bestDiff = Infinity;
+    let best = null,
+      bestDiff = Infinity;
     for (const r of rows) {
       const d = Math.abs(Number(r?.strike) - spot);
       if (Number.isFinite(d) && d < bestDiff) {
-        bestDiff = d; best = r?.strike ?? null;
+        bestDiff = d;
+        best = r?.strike ?? null;
       }
     }
     return best;
@@ -274,9 +283,15 @@ export default function ChainTable({
 
   const arrowChar = sortDir === "desc" ? "↓" : "↑";
   const ariaSort = sortDir === "desc" ? "descending" : "ascending";
-  const handleSortClick = (e) => { e.preventDefault(); onToggleSort?.(); };
+  const handleSortClick = (e) => {
+    e.preventDefault();
+    onToggleSort?.();
+  };
   const handleSortKey = (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggleSort?.(); }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggleSort?.();
+    }
   };
 
   // shimmer skeleton length
@@ -301,19 +316,23 @@ export default function ChainTable({
     if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !(sigma > 0) || !(T > 0)) {
       return { be: null, pop: null, expP: null, expR: null, sharpe: null };
     }
-    const sqrtT = Math.sqrt(T), sigSqrtT = sigma * sqrtT;
+    const sqrtT = Math.sqrt(T),
+      sigSqrtT = sigma * sqrtT;
 
     // break-even
     const BE = type === "call" ? K + premium : Math.max(1e-9, K - premium);
 
     // PoP via lognormal threshold
-    const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
+    const z =
+      (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
     const needsAbove =
-      (type === "call" && pos === "long") || (type === "put" && pos === "short");
+      (type === "call" && pos === "long") ||
+      (type === "put" && pos === "short");
     const PoP = needsAbove ? 1 - Phi(z) : Phi(z);
 
     // d~
-    const d1 = (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / sigSqrtT;
+    const d1 =
+      (Math.log(S0 / K) + (drift + 0.5 * sigma * sigma) * T) / sigSqrtT;
     const d2 = d1 - sigSqrtT;
 
     const expST = Math.exp(drift * T);
@@ -322,12 +341,16 @@ export default function ChainTable({
     else Epay = K * Phi(-d2) - S0 * expST * Phi(-d1);
 
     // variance via truncated moments (for Sharpe)
-    const dbar = (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
-    const PgtK = Phi(dbar), PltK = 1 - PgtK;
+    const dbar =
+      (Math.log(S0 / K) + (drift - 0.5 * sigma * sigma) * T) / sigSqrtT;
+    const PgtK = Phi(dbar),
+      PltK = 1 - PgtK;
     const E1_above = S0 * expST * Phi(d1);
-    const E2_above = S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T) * Phi(d1 + sigSqrtT);
+    const E2_above =
+      S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T) * Phi(d1 + sigSqrtT);
     const E1_below = S0 * expST * Phi(-d1);
-    const E2_below = S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T) * Phi(-(d1 + sigSqrtT));
+    const E2_below =
+      S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T) * Phi(-(d1 + sigSqrtT));
     const E2pay =
       type === "call"
         ? E2_above - 2 * K * E1_above + K * K * PgtK
@@ -345,7 +368,10 @@ export default function ChainTable({
   function daysToExpiryISO(iso, tz = "Europe/Rome") {
     if (!iso) return null;
     try {
-      const endLocalString = new Date(`${iso}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
+      const endLocalString = new Date(`${iso}T23:59:59`).toLocaleString(
+        "en-US",
+        { timeZone: tz }
+      );
       const end = new Date(endLocalString);
       const now = new Date();
       const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
@@ -358,11 +384,15 @@ export default function ChainTable({
   // Effective time & drift from StatsRail context
   const effDays = ctx?.days ?? daysToExpiryISO(meta?.expiry);
   const effBasis = ctx?.basis ?? 365;
-  const T = Number.isFinite(effDays) ? Math.max(1, effDays) / effBasis : null;
+  const T =
+    Number.isFinite(effDays) ? Math.max(1, effDays) / effBasis : null;
   const sigma =
-    ctx?.sigma ?? (Number.isFinite(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
+    ctx?.sigma ??
+    (Number.isFinite(visible?.[0]?.ivPct) ? visible[0].ivPct / 100 : null);
   const drift =
-    ctx?.driftMode === "CAPM" ? Number(ctx?.muCapm) || 0 : (Number(ctx?.rf) || 0) - (Number(ctx?.q) || 0);
+    ctx?.driftMode === "CAPM"
+      ? Number(ctx?.muCapm) || 0
+      : (Number(ctx?.rf) || 0) - (Number(ctx?.q) || 0);
   const S0 = Number(meta?.spot) || Number(ctx?.spot) || null;
 
   return (
@@ -417,7 +447,11 @@ export default function ChainTable({
 
       {/* Loading shimmer */}
       {status === "loading" && (
-        <div className="body is-loading" aria-busy="true" aria-label="Loading options">
+        <div
+          className="body is-loading"
+          aria-busy="true"
+          aria-label="Loading options"
+        >
           {Array.from({ length: shimmerCount }).map((_, i) => (
             <div className="grid row" role="row" aria-hidden="true" key={i}>
               <div className="c cell"><span className="skl w-70" /></div>
@@ -440,7 +474,8 @@ export default function ChainTable({
         <div className="body">
           {visible.map((r) => {
             const spotStrike =
-              closestStrike != null && Number(r.strike) === Number(closestStrike);
+              closestStrike != null &&
+              Number(r.strike) === Number(closestStrike);
             const open = isOpen(r.strike);
             const focus = focusSide(r.strike); // 'call' | 'put' | null
 
@@ -449,35 +484,82 @@ export default function ChainTable({
             const callPrem = callMid ?? r?.call?.price ?? null;
             const putPrem = putMid ?? r?.put?.price ?? null;
 
-            let longM = null, shortM = null, beForChart = null, typeForChart = null, premForChart = null;
+            let longM = null,
+              shortM = null,
+              beForChart = null,
+              typeForChart = null,
+              premForChart = null;
 
             if (open && S0 && T && sigma && Number.isFinite(r.strike)) {
               if (focus === "put") {
                 typeForChart = "put";
                 premForChart = putPrem;
-                beForChart = Number.isFinite(putPrem) ? Math.max(1e-9, r.strike - putPrem) : null;
+                beForChart = Number.isFinite(putPrem)
+                  ? Math.max(1e-9, r.strike - putPrem)
+                  : null;
                 longM = Number.isFinite(putPrem)
-                  ? metricsForOption({ type: "put", pos: "long", S0, K: r.strike, premium: putPrem, sigma, T, drift })
+                  ? metricsForOption({
+                      type: "put",
+                      pos: "long",
+                      S0,
+                      K: r.strike,
+                      premium: putPrem,
+                      sigma,
+                      T,
+                      drift,
+                    })
                   : null;
                 shortM = Number.isFinite(putPrem)
-                  ? metricsForOption({ type: "put", pos: "short", S0, K: r.strike, premium: putPrem, sigma, T, drift })
+                  ? metricsForOption({
+                      type: "put",
+                      pos: "short",
+                      S0,
+                      K: r.strike,
+                      premium: putPrem,
+                      sigma,
+                      T,
+                      drift,
+                    })
                   : null;
               } else {
                 typeForChart = "call";
                 premForChart = callPrem;
-                beForChart = Number.isFinite(callPrem) ? r.strike + callPrem : null;
+                beForChart = Number.isFinite(callPrem)
+                  ? r.strike + callPrem
+                  : null;
                 longM = Number.isFinite(callPrem)
-                  ? metricsForOption({ type: "call", pos: "long", S0, K: r.strike, premium: callPrem, sigma, T, drift })
+                  ? metricsForOption({
+                      type: "call",
+                      pos: "long",
+                      S0,
+                      K: r.strike,
+                      premium: callPrem,
+                      sigma,
+                      T,
+                      drift,
+                    })
                   : null;
                 shortM = Number.isFinite(callPrem)
-                  ? metricsForOption({ type: "call", pos: "short", S0, K: r.strike, premium: callPrem, sigma, T, drift })
+                  ? metricsForOption({
+                      type: "call",
+                      pos: "short",
+                      S0,
+                      K: r.strike,
+                      premium: callPrem,
+                      sigma,
+                      T,
+                      drift,
+                    })
                   : null;
               }
             }
 
-            /* ---------- analytic helpers for CI/mean lines ---------- */
+            // analytic helpers for lines & metrics display
             const mu = drift;
-            const v = Number.isFinite(sigma) && Number.isFinite(T) ? sigma * Math.sqrt(T) : null;
+            const v =
+              Number.isFinite(sigma) && Number.isFinite(T)
+                ? sigma * Math.sqrt(T)
+                : null;
             const mLN =
               Number.isFinite(S0) && Number.isFinite(mu) && Number.isFinite(v)
                 ? Math.log(S0) + (mu - 0.5 * sigma * sigma) * T
@@ -490,36 +572,87 @@ export default function ChainTable({
                 ? S0 * Math.exp(mu * T)
                 : null;
 
+            const beShort = shortM?.be ?? beForChart;
+            const beLong = longM?.be ?? beForChart;
+
             return (
               <div key={r.strike}>
                 <div
-                  className={`grid row ${spotStrike ? "is-spot" : ""} ${open ? "is-open" : ""} ${focus ? `focus-${focus}` : ""}`}
+                  className={`grid row ${spotStrike ? "is-spot" : ""} ${
+                    open ? "is-open" : ""
+                  } ${focus ? `focus-${focus}` : ""}`}
                   role="row"
                   aria-expanded={open ? "true" : "false"}
                 >
                   {/* Calls (left) */}
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.price)}</div>
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.ask)}</div>
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(r?.call?.bid)}</div>
-                  <div className="c cell val clickable" onClick={() => openDetails(r.strike, "call")}>{fmtMoney(callMid)}</div>
+                  <div
+                    className="c cell val clickable"
+                    onClick={() => openDetails(r.strike, "call")}
+                  >
+                    {fmtMoney(r?.call?.price)}
+                  </div>
+                  <div
+                    className="c cell val clickable"
+                    onClick={() => openDetails(r.strike, "call")}
+                  >
+                    {fmtMoney(r?.call?.ask)}
+                  </div>
+                  <div
+                    className="c cell val clickable"
+                    onClick={() => openDetails(r.strike, "call")}
+                  >
+                    {fmtMoney(r?.call?.bid)}
+                  </div>
+                  <div
+                    className="c cell val clickable"
+                    onClick={() => openDetails(r.strike, "call")}
+                  >
+                    {fmtMoney(callMid)}
+                  </div>
 
                   {/* Center */}
                   <div className="mid cell val strike-val">{fmt(r.strike)}</div>
                   <div className="mid cell val iv-val">{fmt(r.ivPct, 2)}</div>
 
                   {/* Puts (right) */}
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(putMid)}</div>
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.bid)}</div>
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.ask)}</div>
-                  <div className="p cell val clickable" onClick={() => openDetails(r.strike, "put")}>{fmtMoney(r?.put?.price)}</div>
+                  <div
+                    className="p cell val clickable"
+                    onClick={() => openDetails(r.strike, "put")}
+                  >
+                    {fmtMoney(putMid)}
+                  </div>
+                  <div
+                    className="p cell val clickable"
+                    onClick={() => openDetails(r.strike, "put")}
+                  >
+                    {fmtMoney(r?.put?.bid)}
+                  </div>
+                  <div
+                    className="p cell val clickable"
+                    onClick={() => openDetails(r.strike, "put")}
+                  >
+                    {fmtMoney(r?.put?.ask)}
+                  </div>
+                  <div
+                    className="p cell val clickable"
+                    onClick={() => openDetails(r.strike, "put")}
+                  >
+                    {fmtMoney(r?.put?.price)}
+                  </div>
                 </div>
 
                 {/* Expanded panel */}
-                <div className={`details ${open ? "open" : ""}`} role="region" aria-label={`Details for strike ${r.strike}`}>
+                <div
+                  className={`details ${open ? "open" : ""}`}
+                  role="region"
+                  aria-label={`Details for strike ${r.strike}`}
+                >
                   <div className="details-inner">
                     {/* SHORT */}
                     <div className="panel-col">
-                      <div className="panel-head">{focus === "put" ? "Short Put" : "Short Call"}</div>
+                      <div className="panel-head">
+                        {focus === "put" ? "Short Put" : "Short Call"}
+                      </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
@@ -528,7 +661,7 @@ export default function ChainTable({
                             premium={premForChart}
                             type={typeForChart}
                             pos="short"
-                            BE={beForChart}
+                            BE={beShort}
                             sigma={sigma}
                             T={T}
                             mu={mu}
@@ -536,17 +669,40 @@ export default function ChainTable({
                           />
                         </div>
                         <div className="opt-metrics">
-                          <Metric label="Break-even"   value={fmtMoney(shortM?.be)} />
-                          <Metric label="P(Profit)"    value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} />
-                          <Metric label="E[Profit]"    value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
-                          <Metric label="E[Return]"    value={fmtPct(shortM?.expR)}  num={shortM?.expR} />
-                          <Metric label="Sharpe"       value={fmt(shortM?.sharpe, 2)} num={shortM?.sharpe} />
-                          <Metric label="Spot Price"   value={fmtMoney(S0)} />
-                          <Metric label="MC(S)"        value={fmtMoney(meanMC)} />
-                          <Metric label="95% CI"       value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} wide />
+                          <Metric label="Break-even" value={fmtMoney(shortM?.be)} />
+                          <Metric
+                            label="P(Profit)"
+                            value={fmtPct(shortM?.pop)}
+                            num={(shortM?.pop ?? null) - 0.5}
+                          />
+                          <Metric
+                            label="E[Profit]"
+                            value={fmtMoney(shortM?.expP)}
+                            num={shortM?.expP}
+                          />
+                          <Metric
+                            label="E[Return]"
+                            value={fmtPct(shortM?.expR)}
+                            num={shortM?.expR}
+                          />
+                          <Metric
+                            label="Sharpe"
+                            value={fmt(shortM?.sharpe, 2)}
+                            num={shortM?.sharpe}
+                          />
+                          <Metric label="Spot Price" value={fmtMoney(S0)} />
+                          <Metric label="MC(S)" value={fmtMoney(meanMC)} />
+                          <Metric
+                            label="95% CI"
+                            value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`}
+                          />
                           {showGreeks && (
                             <div className="greeks">
-                              {focus === "put" ? <GreekList greeks={r?.put?.greeks} /> : <GreekList greeks={r?.call?.greeks} />}
+                              {focus === "put" ? (
+                                <GreekList greeks={r?.put?.greeks} />
+                              ) : (
+                                <GreekList greeks={r?.call?.greeks} />
+                              )}
                             </div>
                           )}
                         </div>
@@ -555,7 +711,9 @@ export default function ChainTable({
 
                     {/* LONG */}
                     <div className="panel-col">
-                      <div className="panel-head">{focus === "put" ? "Long Put" : "Long Call"}</div>
+                      <div className="panel-head">
+                        {focus === "put" ? "Long Put" : "Long Call"}
+                      </div>
                       <div className="panel-grid">
                         <div className="chart" aria-hidden="true">
                           <MiniPL
@@ -564,7 +722,7 @@ export default function ChainTable({
                             premium={premForChart}
                             type={typeForChart}
                             pos="long"
-                            BE={beForChart}
+                            BE={beLong}
                             sigma={sigma}
                             T={T}
                             mu={mu}
@@ -572,17 +730,40 @@ export default function ChainTable({
                           />
                         </div>
                         <div className="opt-metrics">
-                          <Metric label="Break-even"   value={fmtMoney(longM?.be)} />
-                          <Metric label="P(Profit)"    value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} />
-                          <Metric label="E[Profit]"    value={fmtMoney(longM?.expP)} num={longM?.expP} />
-                          <Metric label="E[Return]"    value={fmtPct(longM?.expR)}  num={longM?.expR} />
-                          <Metric label="Sharpe"       value={fmt(longM?.sharpe, 2)} num={longM?.sharpe} />
-                          <Metric label="Spot Price"   value={fmtMoney(S0)} />
-                          <Metric label="MC(S)"        value={fmtMoney(meanMC)} />
-                          <Metric label="95% CI"       value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} wide />
+                          <Metric label="Break-even" value={fmtMoney(longM?.be)} />
+                          <Metric
+                            label="P(Profit)"
+                            value={fmtPct(longM?.pop)}
+                            num={(longM?.pop ?? null) - 0.5}
+                          />
+                          <Metric
+                            label="E[Profit]"
+                            value={fmtMoney(longM?.expP)}
+                            num={longM?.expP}
+                          />
+                          <Metric
+                            label="E[Return]"
+                            value={fmtPct(longM?.expR)}
+                            num={longM?.expR}
+                          />
+                          <Metric
+                            label="Sharpe"
+                            value={fmt(longM?.sharpe, 2)}
+                            num={longM?.sharpe}
+                          />
+                          <Metric label="Spot Price" value={fmtMoney(S0)} />
+                          <Metric label="MC(S)" value={fmtMoney(meanMC)} />
+                          <Metric
+                            label="95% CI"
+                            value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`}
+                          />
                           {showGreeks && (
                             <div className="greeks">
-                              {focus === "put" ? <GreekList greeks={r?.put?.greeks} /> : <GreekList greeks={r?.call?.greeks} />}
+                              {focus === "put" ? (
+                                <GreekList greeks={r?.put?.greeks} />
+                              ) : (
+                                <GreekList greeks={r?.call?.greeks} />
+                              )}
                             </div>
                           )}
                         </div>
@@ -605,13 +786,25 @@ export default function ChainTable({
           margin-top: 14px;
         }
 
-        .heads { display:flex; align-items:center; justify-content:space-between; margin:12px 0 8px; }
-        .h-left,.h-right { font-weight:800; font-size:22px; letter-spacing:.2px; color:var(--text); opacity:.9; }
-        .h-mid { flex:1; }
+        .heads {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin: 12px 0 8px;
+        }
+        .h-left,
+        .h-right {
+          font-weight: 800;
+          font-size: 22px;
+          letter-spacing: 0.2px;
+          color: var(--text);
+          opacity: 0.9;
+        }
+        .h-mid { flex: 1; }
 
         /* grid: 10 columns */
         .grid {
-          display:grid;
+          display: grid;
           grid-template-columns: minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) 112px 86px minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr) minmax(84px,1fr);
           gap: 6px 14px;
           align-items: center;
@@ -621,147 +814,217 @@ export default function ChainTable({
           padding: 10px 0 12px;
           border-top: 1px solid var(--border);
           border-bottom: 1px solid var(--border);
-          font-weight:700;
-          font-size:13.5px;
+          font-weight: 700;
+          font-size: 13.5px;
           color: color-mix(in srgb, var(--text) 80%, transparent);
         }
-        .head-row .strike-hdr { color: var(--strikeCol); font-weight:800; letter-spacing:.01em; cursor:pointer; user-select:none; border-radius:8px; }
-        .head-row .strike-hdr:focus { outline:2px solid color-mix(in srgb, var(--strikeCol) 60%, transparent); outline-offset:2px; }
-        .head-row .iv-hdr { color: var(--ivCol); font-weight:800; letter-spacing:.01em; }
+        .head-row .strike-hdr {
+          color: var(--strikeCol);
+          font-weight: 800;
+          letter-spacing: 0.01em;
+          cursor: pointer;
+          user-select: none;
+          border-radius: 8px;
+        }
+        .head-row .strike-hdr:focus {
+          outline: 2px solid color-mix(in srgb, var(--strikeCol) 60%, transparent);
+          outline-offset: 2px;
+        }
+        .head-row .iv-hdr {
+          color: var(--ivCol);
+          font-weight: 800;
+          letter-spacing: 0.01em;
+        }
 
-        .cell { height:26px; display:flex; align-items:center; }
-        .c,.p,.mid { justify-content:center; text-align:center; }
-        .arrow { margin-right:6px; font-weight:900; }
+        .cell { height: 26px; display: flex; align-items: center; }
+        .c,.p,.mid { justify-content: center; text-align: center; }
+        .arrow { margin-right: 6px; font-weight: 900; }
 
         .card {
-          border:0;
-          border-radius:16px;
+          border: 0;
+          border-radius: 16px;
           background:
             radial-gradient(1200px 400px at 20% -20%, color-mix(in srgb, var(--text) 6%, transparent), transparent 40%),
             var(--card);
-          color:var(--text);
-          padding:22px;             /* give space to cards, not inside plots */
-          margin-top:16px;
-          box-shadow: 0 12px 24px rgba(0,0,0,.18), inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+          color: var(--text);
+          padding: 22px; /* space goes to cards, not inside plots */
+          margin-top: 16px;
+          box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18),
+            inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
         }
-        .title{ font-weight:800; font-size:16px; margin-bottom:4px; }
-        .sub{ opacity:.75; font-size:13px; }
+        .title { font-weight: 800; font-size: 16px; margin-bottom: 4px; }
+        .sub { opacity: 0.75; font-size: 13px; }
 
-        .body .row { padding:10px 0; border-bottom:1px solid var(--border); transition: background-color .18s ease, box-shadow .18s ease; }
-        .clickable{ cursor:pointer; }
-        .body .row:last-child{ border-bottom:0; }
-        .body .row:hover{ background-color: var(--rowHover); }
-        .body .row.is-spot{ background-color: color-mix(in srgb, var(--spotOrange) 16%, transparent); border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border)); }
+        .body .row {
+          padding: 10px 0;
+          border-bottom: 1px solid var(--border);
+          transition: background-color 0.18s ease, box-shadow 0.18s ease;
+        }
+        .clickable { cursor: pointer; }
+        .body .row:last-child { border-bottom: 0; }
+        .body .row:hover { background-color: var(--rowHover); }
+        .body .row.is-spot {
+          background-color: color-mix(in srgb, var(--spotOrange) 16%, transparent);
+          border-bottom-color: color-mix(in srgb, var(--spotOrange) 45%, var(--border));
+        }
 
-        .val { font-weight:700; font-size:13.5px; color:var(--text); }
-        .body .row .strike-val{ color:var(--strikeCol); }
-        .body .row .iv-val{ color:var(--ivCol); }
+        .val { font-weight: 700; font-size: 13.5px; color: var(--text); }
+        .body .row .strike-val { color: var(--strikeCol); }
+        .body .row .iv-val { color: var(--ivCol); }
 
         .body .row.is-open.focus-call .c.cell,
-        .body .row.is-open.focus-put .p.cell{
+        .body .row.is-open.focus-put .p.cell {
           background: color-mix(in srgb, var(--text) 4%, transparent);
           border-radius: 8px;
         }
 
         /* Expanded details */
-        .details{ overflow:hidden; max-height:0; opacity:0; transform:translateY(-4px); transition:max-height .28s ease, opacity .28s ease, transform .28s ease; border-bottom:1px solid transparent; }
-        .details.open{ max-height:760px; opacity:1; transform:translateY(0); border-bottom-color:var(--border); }
+        .details {
+          overflow: hidden;
+          max-height: 0;
+          opacity: 0;
+          transform: translateY(-4px);
+          transition: max-height 0.28s ease, opacity 0.28s ease, transform 0.28s ease;
+          border-bottom: 1px solid transparent;
+        }
+        .details.open {
+          max-height: 760px;
+          opacity: 1;
+          transform: translateY(0);
+          border-bottom-color: var(--border);
+        }
 
-        .details-inner{ display:grid; grid-template-columns:1fr 1fr; gap:18px; background:transparent !important; box-shadow:none !important; border:0 !important; border-radius:0; padding:0; }
+        /* layout wrapper */
+        .details-inner {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 18px;
+          background: transparent !important;
+          box-shadow: none !important;
+          border: 0 !important;
+          border-radius: 0;
+          padding: 0;
+        }
 
-        .panel-col{
-          display:flex; flex-direction:column; gap:12px;
-          padding:20px;                 /* 🔄 moved space to the card */
-          border:0; border-radius:14px;
+        .panel-col {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          padding: 20px;
+          border: 0;
+          border-radius: 14px;
           background:
             linear-gradient(180deg, color-mix(in srgb, var(--text) 2%, transparent), transparent),
             var(--card);
-          box-shadow: 0 10px 26px rgba(0,0,0,.18), inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+          box-shadow: 0 10px 26px rgba(0, 0, 0, 0.18),
+            inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
         }
-        .panel-head{ font-weight:800; font-size:18px; color:var(--text); }
+        .panel-head { font-weight: 800; font-size: 18px; color: var(--text); }
 
-        .panel-grid{ display:grid; grid-template-rows: 250px auto; gap:14px; }
+        .panel-grid { display: grid; grid-template-rows: 250px auto; gap: 14px; }
 
-        .chart{
-          position:relative; border-radius:12px;
+        .chart {
+          position: relative;
+          border-radius: 12px;
           background:
             radial-gradient(1400px 600px at -10% -30%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 40%),
             var(--surface);
-          /* removed inner inset line to eliminate "border" inside chart */
-          box-shadow: none;
-          overflow:hidden;
+          box-shadow: none; /* remove inner border space */
+          overflow: hidden;
         }
 
-        .legend{
-          display:flex; gap:12px; align-items:center; padding:8px 10px 10px;
+        .legend {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+          padding: 8px 10px 10px;
           color: color-mix(in srgb, var(--text) 80%, transparent);
-          font-size:12px; font-weight:700;
+          font-size: 12px;
+          font-weight: 700;
         }
-        .li{ display:flex; gap:8px; align-items:center; }
-        .dot{ width:9px; height:9px; border-radius:999px; display:inline-block; }
-        .dot.blue{ background:#60a5fa; }
-        .dot.pink{ background:#f472b6; }
-        .dot.be{ background:#10b981; }
-        .dash{ width:18px; height:0; border-top:2px dotted #f5a7cf; display:inline-block; }
-        .legend .legendBtn{
-          width:28px; height:28px; border-radius:999px; border:0; color:var(--text);
-          font-weight:800; font-size:16px; line-height:28px;
+        .li { display: flex; gap: 8px; align-items: center; }
+        .dot { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+        .dot.blue { background: #60a5fa; }
+        .dot.pink { background: #f472b6; }
+        .dot.be { background: #10b981; }
+        .dash { width: 18px; height: 0; border-top: 2px dotted #f5a7cf; display: inline-block; }
+        .legend .legendBtn {
+          width: 28px; height: 28px; border-radius: 999px; border: 0;
+          color: var(--text); font-weight: 800; font-size: 16px; line-height: 28px;
           background: var(--surface-soft);
           box-shadow: 0 2px 10px rgba(0,0,0,.2), inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
-          backdrop-filter: blur(6px); cursor:pointer;
+          backdrop-filter: blur(6px); cursor: pointer;
         }
 
         /* Metric layout — label | pill (pill never wraps) */
-        .opt-metrics{ display:grid; grid-template-columns: 1fr 1fr; gap:14px 22px; }
-        .opt-metric{
-          display:grid; grid-template-columns: 1fr auto; align-items:center; column-gap:12px;
-          min-width:0;
+        .opt-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 22px; }
+        .opt-metric { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 12px; min-width: 0; }
+        .opt-label {
+          color: color-mix(in srgb, var(--text) 88%, transparent);
+          opacity: 0.9;
+          font-size: 15px;
+          font-weight: 600;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
-        .opt-label{ color: color-mix(in srgb, var(--text) 88%, transparent); opacity:.9; font-size:15px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .opt-pill{
-          font-weight:800; font-variant-numeric: tabular-nums;
+        .opt-pill {
+          font-weight: 800;
+          font-variant-numeric: tabular-nums;
           background: var(--chip-bg);
           border: 1px solid var(--chip-border);
           padding: 6px 10px;
-          border-radius:999px;
-          font-size:13.5px; line-height:1;
-          color:var(--text);
+          border-radius: 999px;
+          font-size: 13.5px;
+          line-height: 1;
+          color: var(--text);
+          text-align: right;
+          white-space: nowrap; /* keep CI on one line */
           backdrop-filter: blur(4px);
-          white-space: nowrap;          /* ⬅️ keep 95% CI on one line */
-          text-align:right;
+          min-width: 84px;
         }
-        .opt-pill.pos{
+        .opt-pill.pos {
           color: var(--positive);
           background: color-mix(in srgb, var(--positive) 12%, var(--chip-bg));
           border-color: color-mix(in srgb, var(--positive) 32%, var(--chip-border));
         }
-        .opt-pill.neg{
+        .opt-pill.neg {
           color: var(--negative);
           background: color-mix(in srgb, var(--negative) 12%, var(--chip-bg));
           border-color: color-mix(in srgb, var(--negative) 28%, var(--chip-border));
         }
-        .opt-pill.neu{ color: color-mix(in srgb, var(--text) 90%, transparent); }
+        .opt-pill.neu { color: color-mix(in srgb, var(--text) 90%, transparent); }
 
-        .greeks{
-          grid-column:1 / -1; margin-top:4px;
-          display:grid; grid-template-columns: repeat(5, 1fr); gap:8px;
+        .greeks {
+          grid-column: 1 / -1;
+          margin-top: 4px;
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 8px;
         }
-        .greek{
-          font-size:12px; opacity:.95; display:flex; align-items:center; justify-content:center;
-          border:1px solid var(--chip-border); border-radius:10px; padding:6px 8px;
-          color:var(--text); background:var(--chip-bg);
+        .greek {
+          font-size: 12px;
+          opacity: 0.95;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid var(--chip-border);
+          border-radius: 10px;
+          padding: 6px 8px;
+          color: var(--text);
+          background: var(--chip-bg);
         }
 
         /* Loading shimmer */
-        .is-loading .row:hover{ background:transparent; }
-        .skl{ display:inline-block; height:14px; border-radius:8px; background: color-mix(in srgb, var(--text) 8%, transparent); position:relative; overflow:hidden; }
-        .skl::after{ content:""; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 35%, transparent), transparent); animation: shimmer 1.15s ease-in-out infinite; }
-        .w-45{ width:45%; } .w-50{ width:50%; } .w-60{ width:60%; } .w-70{ width:70%; }
-        @keyframes shimmer{ 100% { transform: translateX(100%); } }
+        .is-loading .row:hover { background: transparent; }
+        .skl { display: inline-block; height: 14px; border-radius: 8px; background: color-mix(in srgb, var(--text) 8%, transparent); position: relative; overflow: hidden; }
+        .skl::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 35%, transparent), transparent); animation: shimmer 1.15s ease-in-out infinite; }
+        .w-45 { width: 45%; } .w-50 { width: 50%; } .w-60 { width: 60%; } .w-70 { width: 70%; }
+        @keyframes shimmer { 100% { transform: translateX(100%); } }
 
-        @media (max-width: 980px){
-          .panel-grid{ grid-template-rows: 220px auto; }
-          .details-inner{ grid-template-columns:1fr; }
+        @media (max-width: 980px) {
+          .panel-grid { grid-template-rows: 220px auto; }
+          .details-inner { grid-template-columns: 1fr; }
         }
       `}</style>
     </div>
@@ -792,15 +1055,28 @@ function GreekList({ greeks }) {
     </>
   );
 }
-function fmtG(v) { return Number.isFinite(v) ? Number(v).toFixed(2) : "—"; }
+function fmtG(v) {
+  return Number.isFinite(v) ? Number(v).toFixed(2) : "—";
+}
 
 /* ---------- Mini payoff chart (tight padding; no inner border) ---------- */
 function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
-  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos || !(sigma > 0) || !(T > 0)) {
+  if (
+    !(S0 > 0) ||
+    !(K > 0) ||
+    !(premium >= 0) ||
+    !type ||
+    !pos ||
+    !(sigma > 0) ||
+    !(T > 0)
+  ) {
     return (
       <span
         className="chart-hint"
-        style={{ padding: 8, color: "color-mix(in srgb, var(--text) 70%, transparent)" }}
+        style={{
+          padding: 8,
+          color: "color-mix(in srgb, var(--text) 70%, transparent)",
+        }}
       >
         Chart
       </span>
@@ -832,12 +1108,17 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   xmax = Math.max(xmax, S0, meanPrice, ciU) * 1.005;
 
   // sizing (tight inner padding)
-  const W = 520, H = 250, pad = 6;
+  const W = 520,
+    H = 250,
+    pad = 6;
   const xmap = (s) => pad + ((s - xmin) / (xmax - xmin)) * (W - 2 * pad);
 
   // payoff samples
   const N = 160;
-  const xs = Array.from({ length: N + 1 }, (_, i) => xmin + (i / N) * (xmax - xmin));
+  const xs = Array.from(
+    { length: N + 1 },
+    (_, i) => xmin + (i / N) * (xmax - xmin)
+  );
   const pay = xs.map((s) => {
     if (type === "call") {
       const intr = Math.max(s - K, 0);
@@ -852,7 +1133,12 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
   const baselineY = ymap(0);
 
-  const lineD = xs.map((s, i) => `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`).join(" ");
+  const lineD = xs
+    .map(
+      (s, i) =>
+        `${i ? "L" : "M"} ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`
+    )
+    .join(" ");
   const areaD = [
     `M ${xmap(xs[0]).toFixed(2)} ${baselineY.toFixed(2)}`,
     ...xs.map((s, i) => `L ${xmap(s).toFixed(2)} ${ymap(pay[i]).toFixed(2)}`),
@@ -866,7 +1152,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const xL = xmap(ciL);
   const xU = xmap(ciU);
 
-  // ticks aligned to P&L baseline
+  // ticks aligned to the P&L baseline
   const tickFmt = (s) => Math.round(s).toString();
   const leftTick = tickFmt(xmin);
   const midTick = tickFmt(centerPx);
@@ -887,19 +1173,35 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
         shapeRendering="geometricPrecision"
       >
         <defs>
-          <clipPath id={aboveId}><rect x="0" y="0" width={W} height={baselineY} /></clipPath>
-          <clipPath id={belowId}><rect x="0" y={baselineY} width={W} height={H - baselineY} /></clipPath>
+          <clipPath id={aboveId}>
+            <rect x="0" y="0" width={W} height={baselineY} />
+          </clipPath>
+          <clipPath id={belowId}>
+            <rect x="0" y={baselineY} width={W} height={H - baselineY} />
+          </clipPath>
         </defs>
 
         {/* baseline */}
-        <line x1={pad} y1={baselineY} x2={W - pad} y2={baselineY} stroke="rgba(255,255,255,.18)" />
+        <line
+          x1={pad}
+          y1={baselineY}
+          x2={W - pad}
+          y2={baselineY}
+          stroke="rgba(255,255,255,.18)"
+        />
 
         {/* profit / loss areas */}
         <path d={areaD} fill="rgba(16,185,129,.12)" clipPath={`url(#${aboveId})`} />
         <path d={areaD} fill="rgba(239,68,68,.15)" clipPath={`url(#${belowId})`} />
 
         {/* payoff line */}
-        <path d={lineD} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+        <path
+          d={lineD}
+          fill="none"
+          stroke="rgba(255,255,255,.92)"
+          strokeWidth="1.6"
+          vectorEffect="non-scaling-stroke"
+        />
 
         {/* vertical guides */}
         <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.2" opacity=".95" />
@@ -924,7 +1226,7 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
       {showLegend && (
         <div className="legend">
           <div className="li"><span className="dot blue" /> Current</div>
-          <div className="li"><span className="dot pink" /> Mean (MC)</div>
+          <div className="li"><span className="dot pink" /> MC(S)</div>
           <div className="li"><span className="dash" /> 95% CI</div>
           <div className="li"><span className="dot be" /> Break-even</div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
