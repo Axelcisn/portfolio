@@ -922,3 +922,41 @@ html.dark {
   color:var(--text);
   background:var(--chip-bg);
 }
+
+/* ===============================
+   ChainTable theme tokens (shared)
+   =============================== */
+
+:root {
+  /* Aliases to existing app tokens */
+  --token-card: var(--card);
+  --token-text: var(--text);
+  --token-border: var(--border);
+  --token-accent: var(--accent);
+
+  /* Surfaces used by ChainTable cards/charts */
+  --surface: var(--token-card);
+  /* soft layered surface tinted from text color */
+  --surface-soft: color-mix(in oklab, var(--token-card) 88%, transparent);
+
+  /* Metric pill styling */
+  --chip-bg: color-mix(in oklab, var(--token-text) 9%, transparent);
+  --chip-border: color-mix(in oklab, var(--token-text) 22%, transparent);
+
+  /* Semantics */
+  --positive: #22c55e; /* green */
+  --negative: #ef4444; /* red */
+
+  /* keep accent available to the table */
+  --accent: var(--token-accent);
+}
+
+html.dark {
+  /* Slightly deepen surfaces for dark */
+  --surface: color-mix(in oklab, var(--token-card) 94%, black);
+  --surface-soft: color-mix(in oklab, var(--token-card) 86%, black);
+
+  /* Stronger pills in dark for readability */
+  --chip-bg: color-mix(in oklab, var(--token-text) 12%, transparent);
+  --chip-border: color-mix(in oklab, var(--token-text) 28%, transparent);
+}
