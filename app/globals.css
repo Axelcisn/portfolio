@@ -828,3 +828,73 @@ html:not(.dark) .ch-avatar{
 @media (max-width:1100px){
   .tv-layout{ grid-template-columns: 1fr; }
 }
+
+/* ===========================
+   THEME TOKENS FOR CHAIN TABLE
+   =========================== */
+
+/* ✅ Light theme (default) */
+:root {
+  /* ✅ canonical tokens */
+  --card:            #ffffff;           /* card surface */
+  --surface:         #f8fafc;           /* panel/chart surface */
+  --surface-soft:    rgba(15,23,42,.03);/* subtle layering */
+  --border:          #e5e7eb;
+  --text:            #0f172a;
+
+  /* ✅ pill tokens */
+  --chip-bg:         rgba(15,23,42,.04);
+  --chip-border:     rgba(15,23,42,.12);
+
+  /* ✅ status / accents */
+  --positive:        #16a34a;
+  --negative:        #ef4444;
+  --accent:          #60a5fa;           /* Current Price accent */
+
+  /* ✅ helpful extras for charts/lines */
+  --accent-pink:     #f472b6;           /* Mean (MC) */
+  --accent-ci:       #f5a7cf;           /* 95% CI lines */
+  --accent-be:       #10b981;           /* Break-even */
+
+  /* ✅ map legacy names used inside ChainTable.jsx */
+  --panelBg:         var(--card);
+  --panelEdge:       var(--border);
+  --chipBg:          var(--chip-bg);
+  --chipEdge:        var(--chip-border);
+
+  /* ✅ hint to the UA */
+  color-scheme: light;
+}
+
+/* ✅ Dark theme (NightShift) — works with either data-theme or a .dark class */
+html[data-theme="dark"],
+:root[data-theme="dark"],
+.dark :root,
+.dark {
+  --card:            #0b0f14;
+  --surface:         #0f141b;
+  --surface-soft:    rgba(255,255,255,.05);
+  --border:          rgba(255,255,255,.10);
+  --text:            #e6e8eb;
+
+  --chip-bg:         rgba(255,255,255,.06);
+  --chip-border:     rgba(255,255,255,.14);
+
+  --positive:        #22c55e;
+  --negative:        #ef4444;
+  --accent:          #60a5fa;
+
+  --accent-pink:     #f472b6;
+  --accent-ci:       #f5a7cf;
+  --accent-be:       #10b981;
+
+  --panelBg:         var(--card);
+  --panelEdge:       var(--border);
+  --chipBg:          var(--chip-bg);
+  --chipEdge:        var(--chip-border);
+
+  color-scheme: dark;
+}
+
+/* ✅ (Optional) ensure body picks up the text color by default */
+body { color: var(--text); background: var(--surface); }
