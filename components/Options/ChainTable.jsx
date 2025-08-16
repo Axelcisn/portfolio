@@ -594,12 +594,20 @@ export default function ChainTable({
                           />
                         </div>
                         <div className="opt-metrics">
-                          {/* Reordered: BE → P(Profit) → E[Profit] → E[Return] → Sharpe → (context) */}
+                          {/* Row 1 */}
                           <Metric label="Break-even" value={fmtMoney(shortM?.be)} />
                           <Metric label="P(Profit)" value={fmtPct(shortM?.pop)} num={(shortM?.pop ?? null) - 0.5} />
+                          {/* Row 2 — E[Profit] + E[Loss] side by side */}
                           <Metric label="E[Profit]" value={fmtMoney(shortM?.expP)} num={shortM?.expP} />
+                          <Metric
+                            label="E[Loss]"
+                            value={fmtMoney(shortM?.el)}
+                            num={Number.isFinite(shortM?.el) ? -shortM.el : null}  // force red tone
+                          />
+                          {/* Row 3 */}
                           <Metric label="E[Return]" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
                           <Metric label="Sharpe" value={fmt(shortM?.sharpe, 2)} num={shortM?.sharpe} />
+                          {/* Context */}
                           <Metric label="Spot Price" value={fmtMoney(S0)} />
                           <Metric label="MC(S)" value={fmtMoney(meanMC)} />
                           <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
@@ -615,7 +623,7 @@ export default function ChainTable({
                         </div>
                       </div>
                     </div>
-
+                
                     {/* LONG */}
                     <div className="panel-col">
                       <div className="panel-head">{focus === "put" ? "Long Put" : "Long Call"}</div>
@@ -635,11 +643,20 @@ export default function ChainTable({
                           />
                         </div>
                         <div className="opt-metrics">
+                          {/* Row 1 */}
                           <Metric label="Break-even" value={fmtMoney(longM?.be)} />
                           <Metric label="P(Profit)" value={fmtPct(longM?.pop)} num={(longM?.pop ?? null) - 0.5} />
+                          {/* Row 2 — E[Profit] + E[Loss] side by side */}
                           <Metric label="E[Profit]" value={fmtMoney(longM?.expP)} num={longM?.expP} />
+                          <Metric
+                            label="E[Loss]"
+                            value={fmtMoney(longM?.el)}
+                            num={Number.isFinite(longM?.el) ? -longM.el : null}   // force red tone
+                          />
+                          {/* Row 3 */}
                           <Metric label="E[Return]" value={fmtPct(longM?.expR)} num={longM?.expR} />
                           <Metric label="Sharpe" value={fmt(longM?.sharpe, 2)} num={longM?.sharpe} />
+                          {/* Context */}
                           <Metric label="Spot Price" value={fmtMoney(S0)} />
                           <Metric label="MC(S)" value={fmtMoney(meanMC)} />
                           <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
@@ -657,12 +674,8 @@ export default function ChainTable({
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
+                {/* /Expanded panel */}
+                
       <style jsx>{`
         .wrap {
           --strikeCol: #f2ae2e;
