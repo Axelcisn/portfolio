@@ -25,6 +25,30 @@ const pick = (x) => (isNum(x) ? x : null);
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
 
+/* Robust wrappers for hub helpers (support object/array/object-return) */
+function hubCI95({ S0, mu, sigma, T }) {
+  if (!(S0 > 0) || !(sigma > 0) || !(T > 0)) return [null, null];
+  try {
+    const out = gbmCI95?.({ S0, mu, sigma, T }) ?? gbmCI95?.(S0, mu, sigma, T);
+    if (Array.isArray(out) && out.length >= 2) return [out[0], out[1]];
+    if (out && isNum(out.low) && isNum(out.high)) return [out.low, out.high];
+  } catch {}
+  // analytic fallback (lognormal, 95% two-sided)
+  const vT = sigma * Math.sqrt(T);
+  const z = 1.959963984540054;
+  const mLN = Math.log(S0) + (mu - 0.5 * sigma * sigma) * T;
+  return [Math.exp(mLN - z * vT), Math.exp(mLN + z * vT)];
+}
+function hubMean({ S0, mu, T }) {
+  if (!(S0 > 0) || !(T > 0)) return null;
+  try {
+    const out = gbmMean?.({ S0, mu, T }) ?? gbmMean?.(S0, mu, T);
+    if (isNum(out)) return out;
+  } catch {}
+  // fallback: E[S_T] under drift mu
+  return S0 * Math.exp(mu * T);
+}
+
 /* ---------- main component ---------- */
 export default function ChainTable({
   symbol,
@@ -444,11 +468,11 @@ export default function ChainTable({
             const mu = drift;
             const [ciL, ciU] =
               isNum(S0) && isNum(mu) && isNum(sigma) && isNum(T)
-                ? gbmCI95(S0, mu, sigma, T)
+                ? hubCI95({ S0, mu, sigma, T })
                 : [null, null];
             const meanMC =
               isNum(S0) && isNum(mu) && isNum(T)
-                ? gbmMean(S0, mu, T)
+                ? hubMean({ S0, mu, T })
                 : null;
 
             return (
@@ -544,9 +568,9 @@ export default function ChainTable({
                               ? Math.abs((epPlus - eLoss) - eNet)
                               : null;
 
-                            // Risk-neutral price from hub
+                            // Risk-neutral price from hub (if available)
                             let rnDiff = null;
-                            if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
+                            if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart) && typeof bsCall === "function" && typeof bsPut === "function") {
                               const rRate = Number(ctx?.rf) || 0;
                               const qRate = Number(ctx?.q) || 0;
                               const priceRN = typeForChart === "call"
@@ -638,7 +662,7 @@ export default function ChainTable({
                               : null;
 
                             let rnDiff = null;
-                            if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
+                            if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart) && typeof bsCall === "function" && typeof bsPut === "function") {
                               const rRate = Number(ctx?.rf) || 0;
                               const qRate = Number(ctx?.q) || 0;
                               const priceRN = typeForChart === "call"
@@ -1072,8 +1096,8 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   let xmax = centerPx + span0;
 
   // analytic mean & 95% CI from hub
-  const [ciL, ciU] = gbmCI95(S0, mu, sigma, T);
-  const meanPrice = gbmMean(S0, mu, T);
+  const [ciL, ciU] = hubCI95({ S0, mu, sigma, T });
+  const meanPrice = hubMean({ S0, mu, T });
 
   // ensure lines stay inside final domain
   xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
