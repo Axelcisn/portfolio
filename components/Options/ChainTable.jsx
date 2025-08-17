@@ -1,11 +1,11 @@
 // components/Options/ChainTable.jsx
-// Centralized-math version: imports all option/GBM math from lib/quant
+// Theme-tokenized, boxed metric pills (green/red), centralized math via lib/quant
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
 
-// ---- import single source of truth (no local formulas) ----
+// ---- centralized quant math (single source of truth) ----
 import {
   breakEven,
   probOfProfit,
@@ -13,14 +13,13 @@ import {
   expectedGain,
   expectedLoss,
   stdevPayoff,
-  sharpe as sharpeRatio,
   gbmMean,
   gbmCI95,
   bsCall,
   bsPut,
-} from "../../lib/quant";
+} from "lib/quant";
 
-/* ---------- tiny utils (non-formula) ---------- */
+/* ---------- tiny utils ---------- */
 const isNum = (x) => Number.isFinite(x);
 const pick = (x) => (isNum(x) ? x : null);
 const moneySign = (ccy) =>
@@ -285,19 +284,25 @@ export default function ChainTable({
   const isOpen = (strike) => expanded && expanded.strike === strike;
   const focusSide = (strike) => (isOpen(strike) ? expanded.side : null);
 
-  /* ---------- hub-orchestrated metrics ---------- */
-  function optionMetricsHub({ type, pos, S0, K, premium, sigma, T, drift }) {
+  /* ---------- metrics via centralized hub ---------- */
+  function metricsForOption({ type, pos, S0, K, premium, sigma, T, drift }) {
+    // guards
     if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !(sigma > 0) || !(T > 0)) {
       return { be: null, pop: null, expP: null, expR: null, sharpe: null, ep: null, el: null, eX: null };
     }
+
+    // All heavy lifting in the hub:
     const be = breakEven({ type, K, premium });
     const pop = probOfProfit({ type, pos, S0, K, premium, sigma, T, drift });
+
     const expP = expectedProfit({ type, pos, S0, K, premium, sigma, T, drift });
     const ep   = expectedGain({ type, pos, S0, K, premium, sigma, T, drift });
     const el   = expectedLoss({ type, pos, S0, K, premium, sigma, T, drift });
-    const sd   = stdevPayoff({ type, S0, K, sigma, T, drift });
-    const expR = isNum(premium) && premium > 0 ? expP / premium : null;
-    const sharpe = isNum(sd) && sd > 0 ? sharpeRatio(expP, sd) : null;
+
+    const sd   = stdevPayoff({ type, S0, K, sigma, T, drift }); // payoff stdev (pos/short share the same)
+    const expR = isNum(expP) && premium > 0 ? expP / premium : null;
+    const sharpe = isNum(sd) && sd > 0 ? expP / sd : null;
+
     return { be, pop, expP, expR, sharpe, ep, el, eX: expP };
   }
 
@@ -409,38 +414,42 @@ export default function ChainTable({
             const callMid = r?.call?.mid ?? null;
             const putMid = r?.put?.mid ?? null;
             const callPrem = callMid ?? r?.call?.price ?? null;
-            const putPrem  = putMid  ?? r?.put?.price  ?? null;
+            const putPrem = putMid ?? r?.put?.price ?? null;
 
             let longM = null, shortM = null, typeForChart = null, premForChart = null;
 
-            if (open && isNum(S0) && isNum(T) && isNum(sigma) && Number.isFinite(r.strike)) {
+            if (open && S0 && T && sigma && Number.isFinite(r.strike)) {
               if (focus === "put") {
                 typeForChart = "put";
                 premForChart = putPrem;
                 longM = isNum(putPrem)
-                  ? optionMetricsHub({ type: "put", pos: "long",  S0, K: r.strike, premium: putPrem, sigma, T, drift })
+                  ? metricsForOption({ type: "put", pos: "long", S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
                 shortM = isNum(putPrem)
-                  ? optionMetricsHub({ type: "put", pos: "short", S0, K: r.strike, premium: putPrem, sigma, T, drift })
+                  ? metricsForOption({ type: "put", pos: "short", S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
               } else {
                 typeForChart = "call";
                 premForChart = callPrem;
                 longM = isNum(callPrem)
-                  ? optionMetricsHub({ type: "call", pos: "long",  S0, K: r.strike, premium: callPrem, sigma, T, drift })
+                  ? metricsForOption({ type: "call", pos: "long", S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
                 shortM = isNum(callPrem)
-                  ? optionMetricsHub({ type: "call", pos: "short", S0, K: r.strike, premium: callPrem, sigma, T, drift })
+                  ? metricsForOption({ type: "call", pos: "short", S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
               }
             }
 
-            // analytic guides for legend (independent of pos) — from hub
+            // analytic guides for legend (independent of pos)
             const mu = drift;
-            const meanMC = (isNum(S0) && isNum(mu) && isNum(T)) ? gbmMean(S0, mu, T) : null;
-            const ci = (isNum(S0) && isNum(mu) && isNum(sigma) && isNum(T)) ? gbmCI95(S0, mu, sigma, T) : null;
-            const ciL = Array.isArray(ci) ? ci[0] : null;
-            const ciU = Array.isArray(ci) ? ci[1] : null;
+            const [ciL, ciU] =
+              isNum(S0) && isNum(mu) && isNum(sigma) && isNum(T)
+                ? gbmCI95(S0, mu, sigma, T)
+                : [null, null];
+            const meanMC =
+              isNum(S0) && isNum(mu) && isNum(T)
+                ? gbmMean(S0, mu, T)
+                : null;
 
             return (
               <div key={r.strike}>
@@ -512,7 +521,7 @@ export default function ChainTable({
                           <Metric
                             label="E[Loss]"
                             value={fmtMoney(shortM?.el)}
-                            num={Number.isFinite(shortM?.el) ? -shortM.el : null}  // force red tone
+                            num={isNum(shortM?.el) ? -shortM.el : null}  // force red tone
                           />
                           {/* Row 3 */}
                           <Metric label="E[Return]" value={fmtPct(shortM?.expR)} num={shortM?.expR} />
@@ -522,26 +531,28 @@ export default function ChainTable({
                           <Metric label="MC(S)" value={fmtMoney(meanMC)} />
                           <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
 
-                          {/* Consistency note (short) — RN BSM vs mid & identity check */}
+                          {/* Consistency note (short) */}
                           {(() => {
                             const rnMode = ctx?.driftMode !== "CAPM";
-                            const tol = Math.max(0.01, Math.abs(premForChart ?? 0) * 0.02);
+                            const tol = Math.max(0.01, Math.abs(premForChart ?? 0) * 0.02); // ≥ 1c or ~2% of premium
 
                             const epPlus = shortM?.ep;                 // E[X⁺]
-                            const eLoss  = shortM?.el;                 // E[X⁻]
+                            const eLoss  = shortM?.el;                 // E[X⁻] (positive)
                             const eNet   = shortM?.eX ?? shortM?.expP; // E[X]
+
                             const idDiff = (isNum(epPlus) && isNum(eLoss) && isNum(eNet))
                               ? Math.abs((epPlus - eLoss) - eNet)
                               : null;
 
+                            // Risk-neutral price from hub
                             let rnDiff = null;
                             if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
                               const rRate = Number(ctx?.rf) || 0;
-                              const qRate = Number(ctx?.q)  || 0;
-                              const rnPrice = typeForChart === "call"
+                              const qRate = Number(ctx?.q) || 0;
+                              const priceRN = typeForChart === "call"
                                 ? bsCall(S0, r.strike, rRate, qRate, sigma, T)
-                                : bsPut (S0, r.strike, rRate, qRate, sigma, T);
-                              if (isNum(rnPrice)) rnDiff = Math.abs(rnPrice - premForChart);
+                                : bsPut(S0, r.strike, rRate, qRate, sigma, T);
+                              rnDiff = Math.abs(priceRN - premForChart);
                             }
 
                             const showNote =
@@ -603,7 +614,7 @@ export default function ChainTable({
                           <Metric
                             label="E[Loss]"
                             value={fmtMoney(longM?.el)}
-                            num={Number.isFinite(longM?.el) ? -longM.el : null}   // force red tone
+                            num={isNum(longM?.el) ? -longM.el : null}   // force red tone
                           />
                           {/* Row 3 */}
                           <Metric label="E[Return]" value={fmtPct(longM?.expR)} num={longM?.expR} />
@@ -621,6 +632,7 @@ export default function ChainTable({
                             const epPlus = longM?.ep;
                             const eLoss  = longM?.el;
                             const eNet   = longM?.eX ?? longM?.expP;
+
                             const idDiff = (isNum(epPlus) && isNum(eLoss) && isNum(eNet))
                               ? Math.abs((epPlus - eLoss) - eNet)
                               : null;
@@ -628,11 +640,11 @@ export default function ChainTable({
                             let rnDiff = null;
                             if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
                               const rRate = Number(ctx?.rf) || 0;
-                              const qRate = Number(ctx?.q)  || 0;
-                              const rnPrice = typeForChart === "call"
+                              const qRate = Number(ctx?.q) || 0;
+                              const priceRN = typeForChart === "call"
                                 ? bsCall(S0, r.strike, rRate, qRate, sigma, T)
-                                : bsPut (S0, r.strike, rRate, qRate, sigma, T);
-                              if (isNum(rnPrice)) rnDiff = Math.abs(rnPrice - premForChart);
+                                : bsPut(S0, r.strike, rRate, qRate, sigma, T);
+                              rnDiff = Math.abs(priceRN - premForChart);
                             }
 
                             const showNote =
@@ -848,7 +860,6 @@ export default function ChainTable({
               transparent 40%
             ),
             var(--surface);
-          /* Removed inner border line to eliminate “in-graph” spacing */
           box-shadow: none;
           overflow: hidden;
         }
@@ -896,14 +907,14 @@ export default function ChainTable({
           align-items: center;
           justify-content: space-between;
           gap: 16px;
-          min-width: 0; /* allow children to shrink */
+          min-width: 0;
         }
         .opt-label {
           color: color-mix(in srgb, var(--text) 88%, transparent);
           opacity: 0.9;
           font-size: 16px;
           font-weight: 600;
-          white-space: nowrap; /* keep label single-line */
+          white-space: nowrap;
         }
         .opt-pill {
           font-weight: 800;
@@ -919,7 +930,7 @@ export default function ChainTable({
           max-width: 100%;
           text-align: right;
           backdrop-filter: blur(4px);
-          white-space: nowrap; /* keep values on one line */
+          white-space: nowrap;
         }
         .opt-pill.compact {
           font-size: 13px;
@@ -1060,9 +1071,9 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   let xmin = Math.max(0.01, centerPx - span0);
   let xmax = centerPx + span0;
 
-  // analytic mean & 95% CI (from hub)
-  const meanPrice = gbmMean(S0, mu, T);
+  // analytic mean & 95% CI from hub
   const [ciL, ciU] = gbmCI95(S0, mu, sigma, T);
+  const meanPrice = gbmMean(S0, mu, T);
 
   // ensure lines stay inside final domain
   xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
