@@ -1,6 +1,6 @@
 // tests/math/lognormal.spec.js
-
-import { normCdf, normPdf, lognCdf } from "../../components/Strategy/math/lognormal";
+// Point tests at the centralized math hub.
+import { normCdf, normPdf, lognCdf } from "lib/quant";
 
 describe("Normal & Lognormal math", () => {
   test("normCdf basic values", () => {
