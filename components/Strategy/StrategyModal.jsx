@@ -8,6 +8,13 @@ import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeSeeded from "./defs/materializeSeeded";
 
+// --- centralized strategy aggregator (hub) ---
+// Allow two common export names to avoid churn while migrating.
+import {
+  strategyMetrics as qStrategyMetrics,
+  computeStrategyMetrics as qComputeStrategyMetrics,
+} from "lib/quant";
+
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {
   // Legacy shape expected upstream (options only)
@@ -55,6 +62,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
     riskFree = 0.02,
     sigma = 0.2,
     T = 30 / 365, // years from company card
+    dividendYield = 0,
+    contractSize = 100, // used for aggregator scaling; Chart keeps its own prop
   } = env || {};
 
   // derive an explicit strategy key for the BE API (id > key > name)
@@ -74,7 +83,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
       T,
       defaultDays,
       riskFree,
-      dividendYield: env?.dividendYield ?? 0,
+      dividendYield,
     })
   );
 
@@ -87,7 +96,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
         T,
         defaultDays,
         riskFree,
-        dividendYield: env?.dividendYield ?? 0,
+        dividendYield,
       })
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -123,10 +132,36 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
       T,
       defaultDays,
       riskFree,
-      dividendYield: env?.dividendYield ?? 0,
+      dividendYield,
     });
     setRows(fresh);
   };
+
+  // ---- NEW: centralized strategy metrics (scaled by qty × contractSize) ----
+  const summary = useMemo(() => {
+    const agg =
+      (typeof qStrategyMetrics === "function" && qStrategyMetrics) ||
+      (typeof qComputeStrategyMetrics === "function" && qComputeStrategyMetrics) ||
+      null;
+
+    if (!agg) return null; // hub not present yet → render safely
+
+    try {
+      return agg({
+        rows,              // builder rows (lc/sc/lp/sp and optional stock)
+        S0: spot,
+        sigma,
+        T,
+        drift: riskFree - dividendYield, // risk-neutral by default (r − q)
+        r: riskFree,
+        q: dividendYield,
+        contractSize,      // scaling
+        strategy: strategyKey,
+      });
+    } catch {
+      return null;
+    }
+  }, [rows, spot, sigma, T, riskFree, dividendYield, contractSize, strategyKey]);
 
   const GAP = 14;
 
@@ -179,8 +214,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
             T={T}
             greek={greek}
             onGreekChange={setGreek}
-            contractSize={1}
-            strategy={strategyKey}      // ✅ align KPI BE with panel via explicit strategy
+            contractSize={1}            // (kept as-is to preserve existing visuals)
+            strategy={strategyKey}      // explicit key for BE alignment
           />
         </div>
 
@@ -201,8 +236,8 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
           <PositionBuilder rows={rows} onChange={setRows} currency={currency} defaultDays={defaultDays} />
         </section>
 
-        {/* Summary */}
-        <SummaryTable rows={rows} currency={currency} title="Summary" />
+        {/* Summary (now accepts centralized metrics if present) */}
+        <SummaryTable rows={rows} currency={currency} title="Summary" summary={summary} />
       </div>
 
       <style jsx>{`
