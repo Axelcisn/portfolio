@@ -8,10 +8,9 @@ import { rowsToApiLegs } from "./utils";
 // centralized BS math (price + greeks) via shims
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
 
-// NEW: central GBM helpers (mean & 95% CI)
-import { gbmMean as qGbmMean, gbmCI95 as qGbmCI95 } from "lib/quant";
-// NEW: centralized payoff engine (per-share P/L at S)
-import { payoffAt as payoffAtHub } from "lib/strategy/payoff";
+// ✅ Hub imports made tolerant to both named and default exports
+import quantPkg, * as quantNS from "lib/quant";
+import payoffPkg, * as payoffNS from "lib/strategy/payoff";
 
 /* ---------- utils ---------- */
 function lin([d0, d1], [r0, r1]) {
@@ -47,6 +46,42 @@ const fmtCur = (x, ccy = "USD") => {
   } catch {
     return `${Number(x).toFixed(2)} ${ccy}`;
   }
+};
+
+/* ---------- safe hub accessors + fallback ---------- */
+const hasFn = (f) => typeof f === "function";
+
+const safeGbmMean = (args) => {
+  const fn = quantNS?.gbmMean ?? quantPkg?.gbmMean;
+  return hasFn(fn) ? fn(args) : null;
+};
+const safeGbmCI95 = (args) => {
+  const fn = quantNS?.gbmCI95 ?? quantPkg?.gbmCI95;
+  return hasFn(fn) ? fn(args) : null;
+};
+
+/** Local expiration payoff fallback if hub function is missing. */
+function localPayoffAt(S, bundle) {
+  let y = 0;
+  for (const l of bundle?.legs || []) {
+    const qty = Math.max(0, Number(l?.qty) || 0);
+    const prem = Number(l?.premium) || 0;
+    const K = Number(l?.strike) || 0;
+    if (l?.kind === "call") {
+      const intr = Math.max(S - K, 0);
+      y += qty * (l?.side === "long" ? intr - prem : prem - intr);
+    } else if (l?.kind === "put") {
+      const intr = Math.max(K - S, 0);
+      y += qty * (l?.side === "long" ? intr - prem : prem - intr);
+    } else if (l?.kind === "stock") {
+      y += qty * (l?.side === "long" ? S - prem : prem - S);
+    }
+  }
+  return y;
+}
+const safePayoffAt = (S, bundle) => {
+  const fn = payoffNS?.payoffAt ?? payoffPkg?.payoffAt;
+  return hasFn(fn) ? fn(S, bundle) : localPayoffAt(S, bundle);
 };
 
 /* ---------- position definitions ---------- */
@@ -139,7 +174,7 @@ function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
     const K = Number(r0.K || 0);
     const days = daysForRow(r0, fallbackDays);
     const T = days / 365;
-    const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
+    thetconst prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
 
     const px = bsValueByKey(r0.type, S, K, r, sigma, T, q); // long price
     y += info.sign * px * qty + -info.sign * prem * qty;
@@ -264,9 +299,9 @@ export default function Chart({
 
   const env = useMemo(() => ({ r: riskFree, sigma, q: dividend }), [riskFree, sigma, dividend]);
 
-  // --- CENTRALIZED EXPIRATION PAYOFF ---
+  // --- CENTRALIZED EXPIRATION PAYOFF (with safe hub access) ---
   const yExp = useMemo(
-    () => xs.map((S) => payoffAtHub(S, payoffBundle)),
+    () => xs.map((S) => safePayoffAt(S, payoffBundle)),
     [xs, payoffBundle]
   );
 
@@ -347,23 +382,19 @@ export default function Chart({
   const sVol = sigma;
 
   let meanPrice = Number.isFinite(S0) ? S0 * Math.exp(mu * Tyrs) : null;
-  try {
-    if (typeof qGbmMean === "function") {
-      const m = qGbmMean({ S0, mu, T: Tyrs });
-      if (Number.isFinite(m)) meanPrice = m;
-    }
-  } catch {}
+  {
+    const m = safeGbmMean({ S0, mu, T: Tyrs });
+    if (Number.isFinite(m)) meanPrice = m;
+  }
 
   let ciLow = null, ciHigh = null;
-  try {
-    if (typeof qGbmCI95 === "function") {
-      const res = qGbmCI95({ S0, sigma: sVol, T: Tyrs, mu });
-      if (Array.isArray(res) && res.length >= 2) [ciLow, ciHigh] = res;
-      else if (res && Number.isFinite(res.low) && Number.isFinite(res.high)) {
-        ciLow = res.low; ciHigh = res.high;
-      }
+  {
+    const res = safeGbmCI95({ S0, sigma: sVol, T: Tyrs, mu });
+    if (Array.isArray(res) && res.length >= 2) [ciLow, ciHigh] = res;
+    else if (res && Number.isFinite(res?.low) && Number.isFinite(res?.high)) {
+      ciLow = res.low; ciHigh = res.high;
     }
-  } catch {}
+  }
   if (!Number.isFinite(ciLow) || !Number.isFinite(ciHigh)) {
     const vT = sVol * Math.sqrt(Tyrs);
     const z = 1.959963984540054;
