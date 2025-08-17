@@ -1,7 +1,5 @@
 // tests/volatility.spec.js
-// Run with: node --test tests/volatility.spec.js
-import test from "node:test";
-import assert from "node:assert/strict";
+import { describe, test, expect } from "vitest";
 
 import { computeHistSigmaFromCloses } from "../lib/volatility.js";
 import {
@@ -22,8 +20,7 @@ function mulberry32(seed) {
 }
 function randn(prng) {
   // Box–Muller
-  let u = 0,
-    v = 0;
+  let u = 0, v = 0;
   while (u === 0) u = prng();
   while (v === 0) v = prng();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
@@ -48,42 +45,35 @@ function pctDiff(a, b) {
 }
 
 /* ---------- tests ---------- */
+describe("Volatility", () => {
+  test("computeHistSigmaFromCloses ~ recovers true annual sigma (±25%)", () => {
+    const TRUE_SIGMA = 0.20; // 20% annual
+    const closes = simulateGBM({ sigma: TRUE_SIGMA, days: 252 * 3, seed: 7 });
+    const out = computeHistSigmaFromCloses(closes, 90); // 90d window
+    expect(out && Number.isFinite(out.sigmaAnnual)).toBe(true);
+    const est = out.sigmaAnnual;
+    // Allow sampling noise
+    expect(pctDiff(est, TRUE_SIGMA)).toBeLessThanOrEqual(0.25);
+  });
 
-test("computeHistSigmaFromCloses ~ recovers true annual sigma (±25%)", () => {
-  const TRUE_SIGMA = 0.20; // 20% annual
-  const closes = simulateGBM({ sigma: TRUE_SIGMA, days: 252 * 3, seed: 7 });
-  const out = computeHistSigmaFromCloses(closes, 90); // 90d window
-  assert.ok(out && Number.isFinite(out.sigmaAnnual), "sigmaAnnual should be finite");
-  const est = out.sigmaAnnual;
-  // Allow some sampling noise: within 25% relative error is fine for unit test
-  assert.ok(
-    pctDiff(est, TRUE_SIGMA) <= 0.25,
-    `estimated σ=${(est * 100).toFixed(2)}% deviates too much from true ${(TRUE_SIGMA * 100).toFixed(2)}%`
-  );
-});
+  test("EWMA vs RiskMetrics annualized σ are in the same ballpark", () => {
+    const closes = simulateGBM({ sigma: 0.25, days: 252 * 2, seed: 1337 });
+    const rets = [];
+    for (let i = 1; i < closes.length; i++) rets.push(Math.log(closes[i] / closes[i - 1]));
+    const r = cleanSeries(rets);
 
-test("EWMA vs RiskMetrics annualized σ are in the same ballpark", () => {
-  const closes = simulateGBM({ sigma: 0.25, days: 252 * 2, seed: 1337 });
-  const rets = [];
-  for (let i = 1; i < closes.length; i++) rets.push(Math.log(closes[i] / closes[i - 1]));
-  const r = cleanSeries(rets);
+    const sEWMA = ewmaSigmaAnnual(r, 0.94, 252);
+    const sRM = riskmetricsSigmaAnnual(r, 0.94, 252);
 
-  const sEWMA = ewmaSigmaAnnual(r, 0.94, 252);
-  const sRM = riskmetricsSigmaAnnual(r, 0.94, 252);
+    expect(Number.isFinite(sEWMA)).toBe(true);
+    expect(Number.isFinite(sRM)).toBe(true);
+    expect(pctDiff(sEWMA, sRM)).toBeLessThan(0.35);
+  });
 
-  assert.ok(Number.isFinite(sEWMA), "EWMA sigma should be finite");
-  assert.ok(Number.isFinite(sRM), "RiskMetrics sigma should be finite");
-
-  // They don't have to match exactly; ensure not wildly different
-  assert.ok(
-    pctDiff(sEWMA, sRM) < 0.35,
-    `EWMA (${(sEWMA * 100).toFixed(2)}%) vs RiskMetrics (${(sRM * 100).toFixed(2)}%) too far apart`
-  );
-});
-
-test("Edge cases: empty / NaN series -> nulls", () => {
-  const a = computeHistSigmaFromCloses([], 30);
-  assert.equal(a.sigmaAnnual, null);
-  const b = computeHistSigmaFromCloses([null, undefined, NaN], 30);
-  assert.equal(b.sigmaAnnual, null);
+  test("Edge cases: empty / NaN series -> nulls", () => {
+    const a = computeHistSigmaFromCloses([], 30);
+    expect(a.sigmaAnnual).toBeNull();
+    const b = computeHistSigmaFromCloses([null, undefined, NaN], 30);
+    expect(b.sigmaAnnual).toBeNull();
+  });
 });

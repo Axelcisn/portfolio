@@ -9,7 +9,8 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:cov": "vitest run --coverage"
+    "test:cov": "vitest run --coverage",
+    "test:be": "vitest run tests/strategy/breakeven.engine.spec.js tests/api/breakeven.route.spec.js tests/api/breakeven.api.spec.js"
   },
   "dependencies": {
     "next": "14",

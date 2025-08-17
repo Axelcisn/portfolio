@@ -8,8 +8,7 @@ async function post(payload) {
     body: JSON.stringify(payload),
   });
   const res = await POST(req);
-  const json = await res.json();
-  return json;
+  return await res.json();
 }
 
 describe("BE API smoke", () => {
@@ -21,9 +20,11 @@ describe("BE API smoke", () => {
         { type: "call", side: "short", strike: 110, premium: 2, qty: 1 },
       ],
     });
+
     expect(j.ok).toBe(true);
     expect(j.strategy).toBe("bull_call_spread");
-    expect(j.be).toEqual([103]);
+    expect(Array.isArray(j.be) && j.be.length === 1).toBe(true);
+    expect(j.be[0]).toBeCloseTo(103, 6);
     expect(["explicit", "inferred", "inferred_fallback"]).toContain(j.meta.resolved_by);
   });
 
@@ -35,9 +36,13 @@ describe("BE API smoke", () => {
         { type: "put",  side: "short", strike: 100, premium: 3, qty: 1 },
       ],
     });
+
     expect(j.ok).toBe(true);
     expect(j.strategy).toBe("short_straddle");
-    expect(j.be).toEqual([93, 107]);
+    expect(Array.isArray(j.be) && j.be.length === 2).toBe(true);
+    // netCredit = 4 + 3 = 7 → 100 ± 7
+    expect(j.be[0]).toBeCloseTo(93, 6);
+    expect(j.be[1]).toBeCloseTo(107, 6);
   });
 
   test("short straddle — mismatched strikes → disambiguate to short_strangle", async () => {
@@ -48,10 +53,15 @@ describe("BE API smoke", () => {
         { type: "put",  side: "short", strike: 95,  premium: 2.5, qty: 1 },
       ],
     });
+
     expect(j.ok).toBe(true);
     expect(j.strategy).toBe("short_strangle"); // disambiguated
     expect(j.meta.disambiguated_from).toBe("short_straddle");
-    expect(j.be).toEqual([92.5, 107.5]);
+    expect(j.meta.resolved_by).toBe("explicit_disambiguated");
+    expect(Array.isArray(j.be) && j.be.length === 2).toBe(true);
+    // netCredit = 2.5 + 2.5 = 5 → [95 - 5, 105 + 5] = [90, 110]
+    expect(j.be[0]).toBeCloseTo(90, 6);
+    expect(j.be[1]).toBeCloseTo(110, 6);
   });
 
   test("unsupported explicit → inference fallback", async () => {
@@ -62,9 +72,12 @@ describe("BE API smoke", () => {
         { type: "call", side: "short", strike: 110, premium: 2, qty: 1 },
       ],
     });
+
     expect(j.ok).toBe(true);
-    expect(j.strategy).toBe("bull_call_spread");
+    expect(j.strategy).toBe("bull_call_spread"); // inferred from legs
     expect(j.meta.resolved_by).toBe("inferred_fallback");
+    expect(Array.isArray(j.be) && j.be.length === 1).toBe(true);
+    expect(j.be[0]).toBeCloseTo(103, 6);
   });
 
   test("iron butterfly — explicit", async () => {
@@ -77,8 +90,12 @@ describe("BE API smoke", () => {
         { type: "call", side: "long",  strike: 105, premium: 1.1, qty: 1 },
       ],
     });
+
     expect(j.ok).toBe(true);
     expect(j.strategy).toBe("iron_butterfly");
-    expect(j.be).toEqual([95.8, 104.2]);
+    expect(Array.isArray(j.be) && j.be.length === 2).toBe(true);
+    // netCredit = (3.2 + 3.3) - (1.2 + 1.1) = 4.2 → 100 ± 4.2
+    expect(j.be[0]).toBeCloseTo(95.8, 6);
+    expect(j.be[1]).toBeCloseTo(104.2, 6);
   });
 });
