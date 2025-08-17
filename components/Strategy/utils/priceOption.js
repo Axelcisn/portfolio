@@ -1,7 +1,7 @@
 // components/Strategy/utils/priceOption.js
 // Shim: delegate pricing to the centralized hub only (object-form calls).
 
-import { callPrice, putPrice } from "../../../lib/quant";
+import { callPrice, putPrice } from "../../../lib/quant/index.js";
 
 /**
  * Black–Scholes premium for European options with continuous dividend yield q.

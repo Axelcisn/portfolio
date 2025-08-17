@@ -1,36 +1,27 @@
 // components/Strategy/math/bsGreeks.js
-// Shim: delegate to centralized math in lib/quant, with safe fallbacks.
+// Shim: delegate to centralized math in lib/quant (ESM-safe import), with safe fallbacks.
 // Public API unchanged: bsValueByKey, greeksByKey, __internals.
 
-// NOTE: path assumes repo layout: <repo>/lib/quant/index.js
-import * as Quant from "../../../lib/quant";
+// NOTE: explicit file path for ESM
+import * as Quant from "../../../lib/quant/index.js";
 
-/* ---------- resolve hub primitives (with safe fallbacks) ---------- */
-// Minimal local fallbacks are here *only* to avoid runtime errors during migration.
-// They can be deleted once lib/quant exposes everything.
-
+/* ---------------- utilities ---------------- */
 const hasFn = (f) => typeof f === "function";
 
-// erf/Phi/phi
+/* ---------- erf/Phi/phi (prefer hub, else local) ---------- */
 function erfApprox(x) {
   const s = x < 0 ? -1 : 1;
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
   const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
   x = Math.abs(x);
   const t = 1 / (1 + p * x);
-  const y =
-    1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-x * x);
+  const y = 1 - (((((a5 * t + a4) * t + a3) * t + a2) * t) * t) * Math.exp(-x * x);
   return s * y;
 }
+const Phi = hasFn(Quant.Phi) ? Quant.Phi : (z) => 0.5 * (1 + erfApprox(z / Math.SQRT2));
+const phi = hasFn(Quant.phi) ? Quant.phi : (x) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 
-const Phi = hasFn(Quant.Phi)
-  ? Quant.Phi
-  : (z) => 0.5 * (1 + erfApprox(z / Math.SQRT2));
-const phi = hasFn(Quant.phi)
-  ? Quant.phi
-  : (x) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
-
-// d1/d2
+/* ---------- d1/d2 (prefer hub’s dual-signature) ---------- */
 const d1 = hasFn(Quant.d1)
   ? Quant.d1
   : function d1_fallback(S, K, r, q, sigma, T) {
@@ -49,30 +40,44 @@ const d2 = hasFn(Quant.d2)
       return d1(S, K, r, q, vol, tau) - vol * Math.sqrt(tau);
     };
 
-/* ---------- prices (prefer hub, else closed form via hub primitives) ---------- */
-const callPrice =
-  Quant.callPrice ??
-  Quant.bsCallPrice ??
-  function callPrice_fallback(S, K, r, q, sigma, T) {
-    if (!Number.isFinite(S) || !Number.isFinite(K)) return 0;
-    if (!(sigma > 0) || !(T > 0)) return Math.max(0, S - K);
-    const _d1 = d1(S, K, r, q, sigma, T);
-    const _d2 = _d1 - sigma * Math.sqrt(T);
-    return S * Math.exp(-q * T) * Phi(_d1) - K * Math.exp(-r * T) * Phi(_d2);
-  };
+/* ---------- Prices: wrap hub to accept positional args; else closed-form fallback ---------- */
+function callPrice(S, K, r, q, sigma, T) {
+  if (hasFn(Quant.callPrice)) {
+    return Quant.callPrice({ S0: S, K, T, sigma, r, q });
+  }
+  if (hasFn(Quant.bsCall)) {
+    return Quant.bsCall({ S0: S, K, T, sigma, r, q });
+  }
+  if (hasFn(Quant.bsCallPrice)) {
+    return Quant.bsCallPrice({ S0: S, K, T, sigma, r, q });
+  }
+  // fallback closed form
+  if (!Number.isFinite(S) || !Number.isFinite(K)) return 0;
+  if (!(sigma > 0) || !(T > 0)) return Math.max(0, S - K);
+  const _d1 = d1(S, K, r, q, sigma, T);
+  const _d2 = _d1 - sigma * Math.sqrt(T);
+  return S * Math.exp(-q * T) * Phi(_d1) - K * Math.exp(-r * T) * Phi(_d2);
+}
 
-const putPrice =
-  Quant.putPrice ??
-  Quant.bsPutPrice ??
-  function putPrice_fallback(S, K, r, q, sigma, T) {
-    if (!Number.isFinite(S) || !Number.isFinite(K)) return 0;
-    if (!(sigma > 0) || !(T > 0)) return Math.max(0, K - S);
-    const _d1 = d1(S, K, r, q, sigma, T);
-    const _d2 = _d1 - sigma * Math.sqrt(T);
-    return K * Math.exp(-r * T) * Phi(-_d2) - S * Math.exp(-q * T) * Phi(-_d1);
-  };
+function putPrice(S, K, r, q, sigma, T) {
+  if (hasFn(Quant.putPrice)) {
+    return Quant.putPrice({ S0: S, K, T, sigma, r, q });
+  }
+  if (hasFn(Quant.bsPut)) {
+    return Quant.bsPut({ S0: S, K, T, sigma, r, q });
+  }
+  if (hasFn(Quant.bsPutPrice)) {
+    return Quant.bsPutPrice({ S0: S, K, T, sigma, r, q });
+  }
+  // fallback closed form
+  if (!Number.isFinite(S) || !Number.isFinite(K)) return 0;
+  if (!(sigma > 0) || !(T > 0)) return Math.max(0, K - S);
+  const _d1 = d1(S, K, r, q, sigma, T);
+  const _d2 = _d1 - sigma * Math.sqrt(T);
+  return K * Math.exp(-r * T) * Phi(-_d2) - S * Math.exp(-q * T) * Phi(-_d1);
+}
 
-/* ---------- Greeks (prefer hub, else derive from primitives) ---------- */
+/* ---------- Greeks (prefer hub if exposed; otherwise derive locally) ---------- */
 const hubCallGreeks = Quant.callGreeks ?? Quant.greeksCall ?? null;
 const hubPutGreeks  = Quant.putGreeks  ?? Quant.greeksPut  ?? null;
 
@@ -120,10 +125,10 @@ function putGreeks(S, K, r, q, sigma, T) {
   const vega = vegaPer1 / 100;
   const thetaPerYear =
     (-S * discQ * nd1 * vol) / (2 * Math.sqrt(tau)) +
-    r * K * discR * (1 - Phi(_d2)) -
+    r * K * Math.exp(-r * tau) * (1 - Phi(_d2)) -
     q * S * discQ * (1 - Phi(_d1));
   const theta = thetaPerYear / 365;
-  const rho = -K * tau * discR * (1 - Phi(_d2));
+  const rho = -K * tau * Math.exp(-r * tau) * (1 - Phi(_d2));
 
   return { delta, gamma, vega, theta, rho };
 }
