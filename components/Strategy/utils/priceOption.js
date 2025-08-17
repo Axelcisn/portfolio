@@ -1,5 +1,5 @@
 // components/Strategy/utils/priceOption.js
-// Shim: delegate pricing to the centralized hub only.
+// Shim: delegate pricing to the centralized hub only (object-form calls).
 
 import { callPrice, putPrice } from "../../../lib/quant";
 
@@ -19,10 +19,10 @@ import { callPrice, putPrice } from "../../../lib/quant";
  */
 export function blackScholesPrice({ type, S, K, T, r = 0, q = 0, sigma }) {
   if (type === "call") {
-    return { price: callPrice(S, K, r, q, sigma, T) };
+    return { price: callPrice({ S0: S, K, T, sigma, r, q }) };
   }
   if (type === "put") {
-    return { price: putPrice(S, K, r, q, sigma, T) };
+    return { price: putPrice({ S0: S, K, T, sigma, r, q }) };
   }
   return { price: NaN };
 }
