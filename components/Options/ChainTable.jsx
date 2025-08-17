@@ -1,35 +1,30 @@
 // components/Options/ChainTable.jsx
-// Correct version: theme-tokenized, boxed metric pills (green/red), cleaned layout, compact CI pill, label updates
+// Centralized-math version: imports all option/GBM math from lib/quant
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
 
-/* ---------- tiny utils ---------- */
+// ---- import single source of truth (no local formulas) ----
+import {
+  breakEven,
+  probOfProfit,
+  expectedProfit,
+  expectedGain,
+  expectedLoss,
+  stdevPayoff,
+  sharpe as sharpeRatio,
+  gbmMean,
+  gbmCI95,
+  bsCall,
+  bsPut,
+} from "../../lib/quant";
+
+/* ---------- tiny utils (non-formula) ---------- */
 const isNum = (x) => Number.isFinite(x);
 const pick = (x) => (isNum(x) ? x : null);
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
-/* erf / Phi for PoP and PDF math */
-function erf(x) {
-  const sign = x < 0 ? -1 : 1;
-  const a1 = 0.254829592,
-    a2 = -0.284496736,
-    a3 = 1.421413741,
-    a4 = -1.453152027,
-    a5 = 1.061405429,
-    p = 0.3275911;
-  x = Math.abs(x);
-  const t = 1 / (1 + p * x);
-  const y =
-    1 -
-    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) *
-      t *
-      Math.exp(-x * x));
-  return sign * y;
-}
-const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
 
 /* ---------- main component ---------- */
 export default function ChainTable({
@@ -290,94 +285,20 @@ export default function ChainTable({
   const isOpen = (strike) => expanded && expanded.strike === strike;
   const focusSide = (strike) => (isOpen(strike) ? expanded.side : null);
 
-  /* ---------- metrics math (PoP, BE, E[Profit], E[Loss], Sharpe) ---------- */
-  function metricsForOption({ type, pos, S0, K, premium, sigma, T, drift }) {
-    // guards
+  /* ---------- hub-orchestrated metrics ---------- */
+  function optionMetricsHub({ type, pos, S0, K, premium, sigma, T, drift }) {
     if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !(sigma > 0) || !(T > 0)) {
-      return { be: null, pop: null, expP: null, expR: null, sharpe: null, ep: null, el: null };
+      return { be: null, pop: null, expP: null, expR: null, sharpe: null, ep: null, el: null, eX: null };
     }
-
-    const v = sigma * Math.sqrt(T);
-    const Sexp = S0 * Math.exp(drift * T);
-
-    // helpers at threshold a in price space
-    const d1 = (a) => (Math.log(S0 / a) + (drift + 0.5 * sigma * sigma) * T) / v;
-    const dbar = (a) => (Math.log(S0 / a) + (drift - 0.5 * sigma * sigma) * T) / v;
-
-    // Break-even spot
-    const BE = type === "call" ? (K + premium) : Math.max(1e-9, K - premium);
-
-    // P(Profit)
-    const z = (Math.log(BE / S0) - (drift - 0.5 * sigma * sigma) * T) / v;
-    const needsAbove = (type === "call" && pos === "long") || (type === "put" && pos === "short");
-    const PoP = needsAbove ? 1 - Phi(z) : Phi(z);
-
-    // Expected option payoff (not P&L)
-    let Epay;
-    if (type === "call") {
-      const d1K = d1(K), dbK = dbar(K);
-      Epay = Sexp * Phi(d1K) - K * Phi(dbK);
-    } else {
-      const d1K = d1(K), dbK = dbar(K);
-      Epay = K * Phi(-dbK) - Sexp * Phi(-d1K);
-    }
-
-    // Positive part of P&L for LONG (ep_long = E[X^+])
-    let ep_long;
-    if (type === "call") {
-      const a = K + premium;
-      const d1a = d1(a), dba = dbar(a);
-      ep_long = Sexp * Phi(d1a) - a * Phi(dba);
-    } else {
-      const a = K - premium;
-      if (a <= 1e-12) {
-        ep_long = 0;
-      } else {
-        const d1a = d1(a), dba = dbar(a);
-        ep_long = a * Phi(-dba) - Sexp * Phi(-d1a);
-      }
-    }
-
-    // Mean P&L for LONG
-    const expProfit_long = Epay - premium;
-    // Expected loss (positive number) for LONG
-    const el_long = ep_long - expProfit_long; // = E[X^+] - E[X]
-
-    // Map to LONG / SHORT outputs
-    let expProfit, ep, el;
-    if (pos === "long") {
-      expProfit = expProfit_long;
-      ep = ep_long;
-      el = el_long;
-    } else {
-      expProfit = -expProfit_long;
-      ep = el_long; // E[(−X)^+] = E[X^-]
-      el = ep_long; // E[(−X)^-] = E[X^+]
-    }
-
-    // Variance of payoff (keep as before)
-    const S2exp = S0 * S0 * Math.exp(2 * drift * T + sigma * sigma * T);
-    let E2pay;
-    if (type === "call") {
-      const d1K = d1(K), dbK = dbar(K);
-      const E1_above = Sexp * Phi(d1K);
-      const E2_above = S2exp * Phi(d1K + v);
-      const PgtK = Phi(dbK);
-      E2pay = E2_above - 2 * K * E1_above + K * K * PgtK;
-    } else {
-      const d1K = d1(K), dbK = dbar(K);
-      const E1_below = Sexp * Phi(-d1K);
-      const E2_below = S2exp * Phi(-(d1K + v));
-      const PltK = Phi(-dbK);
-      E2pay = K * K * PltK - 2 * K * E1_below + E2_below;
-    }
-    const varPay = Math.max(0, E2pay - Epay * Epay);
-    const sdPay = Math.sqrt(varPay);
-
-    const expReturn = expProfit / Math.max(1e-12, premium);
-    const sharpe = sdPay > 0 ? expProfit / sdPay : null;
-
-    return { be: BE, pop: PoP, expP: expProfit, expR: expReturn, sharpe, ep, el, eX: expProfit };
+    const be = breakEven({ type, K, premium });
+    const pop = probOfProfit({ type, pos, S0, K, premium, sigma, T, drift });
+    const expP = expectedProfit({ type, pos, S0, K, premium, sigma, T, drift });
+    const ep   = expectedGain({ type, pos, S0, K, premium, sigma, T, drift });
+    const el   = expectedLoss({ type, pos, S0, K, premium, sigma, T, drift });
+    const sd   = stdevPayoff({ type, S0, K, sigma, T, drift });
+    const expR = isNum(premium) && premium > 0 ? expP / premium : null;
+    const sharpe = isNum(sd) && sd > 0 ? sharpeRatio(expP, sd) : null;
+    return { be, pop, expP, expR, sharpe, ep, el, eX: expP };
   }
 
   function daysToExpiryISO(iso, tz = "Europe/Rome") {
@@ -488,49 +409,38 @@ export default function ChainTable({
             const callMid = r?.call?.mid ?? null;
             const putMid = r?.put?.mid ?? null;
             const callPrem = callMid ?? r?.call?.price ?? null;
-            const putPrem = putMid ?? r?.put?.price ?? null;
+            const putPrem  = putMid  ?? r?.put?.price  ?? null;
 
             let longM = null, shortM = null, typeForChart = null, premForChart = null;
 
-            if (open && S0 && T && sigma && Number.isFinite(r.strike)) {
+            if (open && isNum(S0) && isNum(T) && isNum(sigma) && Number.isFinite(r.strike)) {
               if (focus === "put") {
                 typeForChart = "put";
                 premForChart = putPrem;
-                longM = Number.isFinite(putPrem)
-                  ? metricsForOption({ type: "put", pos: "long", S0, K: r.strike, premium: putPrem, sigma, T, drift })
+                longM = isNum(putPrem)
+                  ? optionMetricsHub({ type: "put", pos: "long",  S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
-                shortM = Number.isFinite(putPrem)
-                  ? metricsForOption({ type: "put", pos: "short", S0, K: r.strike, premium: putPrem, sigma, T, drift })
+                shortM = isNum(putPrem)
+                  ? optionMetricsHub({ type: "put", pos: "short", S0, K: r.strike, premium: putPrem, sigma, T, drift })
                   : null;
               } else {
                 typeForChart = "call";
                 premForChart = callPrem;
-                longM = Number.isFinite(callPrem)
-                  ? metricsForOption({ type: "call", pos: "long", S0, K: r.strike, premium: callPrem, sigma, T, drift })
+                longM = isNum(callPrem)
+                  ? optionMetricsHub({ type: "call", pos: "long",  S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
-                shortM = Number.isFinite(callPrem)
-                  ? metricsForOption({ type: "call", pos: "short", S0, K: r.strike, premium: callPrem, sigma, T, drift })
+                shortM = isNum(callPrem)
+                  ? optionMetricsHub({ type: "call", pos: "short", S0, K: r.strike, premium: callPrem, sigma, T, drift })
                   : null;
               }
             }
 
-            // analytic guides for legend (independent of pos)
+            // analytic guides for legend (independent of pos) — from hub
             const mu = drift;
-            const v =
-              Number.isFinite(sigma) && Number.isFinite(T)
-                ? sigma * Math.sqrt(T)
-                : null;
-            const mLN =
-              Number.isFinite(S0) && Number.isFinite(mu) && Number.isFinite(v)
-                ? Math.log(S0) + (mu - 0.5 * sigma * sigma) * T
-                : null;
-            const z975 = 1.959963984540054;
-            const ciL = Number.isFinite(mLN) ? Math.exp(mLN - v * z975) : null;
-            const ciU = Number.isFinite(mLN) ? Math.exp(mLN + v * z975) : null;
-            const meanMC =
-              Number.isFinite(S0) && Number.isFinite(mu) && Number.isFinite(T)
-                ? S0 * Math.exp(mu * T)
-                : null;
+            const meanMC = (isNum(S0) && isNum(mu) && isNum(T)) ? gbmMean(S0, mu, T) : null;
+            const ci = (isNum(S0) && isNum(mu) && isNum(sigma) && isNum(T)) ? gbmCI95(S0, mu, sigma, T) : null;
+            const ciL = Array.isArray(ci) ? ci[0] : null;
+            const ciU = Array.isArray(ci) ? ci[1] : null;
 
             return (
               <div key={r.strike}>
@@ -612,32 +522,26 @@ export default function ChainTable({
                           <Metric label="MC(S)" value={fmtMoney(meanMC)} />
                           <Metric label="95% CI" value={`${fmtMoney(ciL)} — ${fmtMoney(ciU)}`} compact />
 
-                          {/* Consistency note (short) */}
+                          {/* Consistency note (short) — RN BSM vs mid & identity check */}
                           {(() => {
                             const rnMode = ctx?.driftMode !== "CAPM";
-                            const tol = Math.max(0.01, Math.abs(premForChart ?? 0) * 0.02); // ≥ 1c or ~2% of premium
+                            const tol = Math.max(0.01, Math.abs(premForChart ?? 0) * 0.02);
 
-                            const epPlus = shortM?.ep;                 // E[X⁺] if available
-                            const eLoss  = shortM?.el;                 // E[X⁻] (positive)
+                            const epPlus = shortM?.ep;                 // E[X⁺]
+                            const eLoss  = shortM?.el;                 // E[X⁻]
                             const eNet   = shortM?.eX ?? shortM?.expP; // E[X]
-
                             const idDiff = (isNum(epPlus) && isNum(eLoss) && isNum(eNet))
                               ? Math.abs((epPlus - eLoss) - eNet)
                               : null;
 
-                            // Risk-neutral expected price check (discount E[payoff] by e^{-rT})
                             let rnDiff = null;
                             if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
-                              const sigT = sigma * Math.sqrt(T);
-                              const d1 = (Math.log(S0 / r.strike) + (drift + 0.5 * sigma * sigma) * T) / sigT;
-                              const d2 = d1 - sigT;
-                              const expST = Math.exp(drift * T);
-                              const Epay = typeForChart === "call"
-                                ? S0 * expST * Phi(d1) - r.strike * Phi(d2)
-                                : r.strike * Phi(-d2) - S0 * expST * Phi(-d1);
                               const rRate = Number(ctx?.rf) || 0;
-                              const priceRN = Epay * Math.exp(-rRate * T);
-                              rnDiff = Math.abs(priceRN - premForChart);
+                              const qRate = Number(ctx?.q)  || 0;
+                              const rnPrice = typeForChart === "call"
+                                ? bsCall(S0, r.strike, rRate, qRate, sigma, T)
+                                : bsPut (S0, r.strike, rRate, qRate, sigma, T);
+                              if (isNum(rnPrice)) rnDiff = Math.abs(rnPrice - premForChart);
                             }
 
                             const showNote =
@@ -717,23 +621,18 @@ export default function ChainTable({
                             const epPlus = longM?.ep;
                             const eLoss  = longM?.el;
                             const eNet   = longM?.eX ?? longM?.expP;
-
                             const idDiff = (isNum(epPlus) && isNum(eLoss) && isNum(eNet))
                               ? Math.abs((epPlus - eLoss) - eNet)
                               : null;
 
                             let rnDiff = null;
                             if (rnMode && isNum(S0) && isNum(r.strike) && isNum(sigma) && isNum(T) && isNum(premForChart)) {
-                              const sigT = sigma * Math.sqrt(T);
-                              const d1 = (Math.log(S0 / r.strike) + (drift + 0.5 * sigma * sigma) * T) / sigT;
-                              const d2 = d1 - sigT;
-                              const expST = Math.exp(drift * T);
-                              const Epay = typeForChart === "call"
-                                ? S0 * expST * Phi(d1) - r.strike * Phi(d2)
-                                : r.strike * Phi(-d2) - S0 * expST * Phi(-d1);
                               const rRate = Number(ctx?.rf) || 0;
-                              const priceRN = Epay * Math.exp(-rRate * T);
-                              rnDiff = Math.abs(priceRN - premForChart);
+                              const qRate = Number(ctx?.q)  || 0;
+                              const rnPrice = typeForChart === "call"
+                                ? bsCall(S0, r.strike, rRate, qRate, sigma, T)
+                                : bsPut (S0, r.strike, rRate, qRate, sigma, T);
+                              if (isNum(rnPrice)) rnDiff = Math.abs(rnPrice - premForChart);
                             }
 
                             const showNote =
@@ -1161,13 +1060,9 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   let xmin = Math.max(0.01, centerPx - span0);
   let xmax = centerPx + span0;
 
-  // analytic mean & 95% CI
-  const v = sigma * Math.sqrt(T);
-  const mLN = Math.log(S0) + (mu - 0.5 * sigma * sigma) * T;
-  const z975 = 1.959963984540054;
-  const meanPrice = S0 * Math.exp(mu * T);
-  const ciL = Math.exp(mLN - v * z975);
-  const ciU = Math.exp(mLN + v * z975);
+  // analytic mean & 95% CI (from hub)
+  const meanPrice = gbmMean(S0, mu, T);
+  const [ciL, ciU] = gbmCI95(S0, mu, sigma, T);
 
   // ensure lines stay inside final domain
   xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
