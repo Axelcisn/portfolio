@@ -17,17 +17,7 @@
     "react-dom": "18"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^1.6.0",
-    "vitest": "^1.6.0"
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0"
   }
-}
-{
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "devDependencies": { "vitest": "^1.6.0" }
 }
