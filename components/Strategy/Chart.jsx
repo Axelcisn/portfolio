@@ -174,7 +174,7 @@ function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
     const K = Number(r0.K || 0);
     const days = daysForRow(r0, fallbackDays);
     const T = days / 365;
-    thetconst prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
+    const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
 
     const px = bsValueByKey(r0.type, S, K, r, sigma, T, q); // long price
     y += info.sign * px * qty + -info.sign * prem * qty;
