@@ -9,7 +9,7 @@ import {
   d2 as hubD2,
   lognCdf as hubLognCdf,
   lognPdf as hubLognPdf,
-} from "../../../lib/quant";
+} from "../../../lib/quant/index.js";
 
 // ---- Legacy names preserved ----
 export function normCdf(x) {

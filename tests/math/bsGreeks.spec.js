@@ -1,6 +1,6 @@
 // tests/math/bsGreeks.spec.js
 // Point tests at the centralized math hub.
-import { d1 as d1Hub, d2 as d2Hub, bsCall, bsPut, normCdf } from "lib/quant";
+import { d1 as d1Hub, d2 as d2Hub, bsCall, bsPut, normCdf } from "lib/quant/index.js";
 
 describe("Black–Scholes price & Greeks sanity", () => {
   // Classic textbook case

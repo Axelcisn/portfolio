@@ -9,7 +9,7 @@ import { rowsToApiLegs } from "./utils";
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
 
 // ✅ Hub imports made tolerant to both named and default exports
-import quantPkg, * as quantNS from "lib/quant";
+import quantPkg, * as quantNS from "lib/quant/index.js";
 import payoffPkg, * as payoffNS from "lib/strategy/payoff";
 
 /* ---------- utils ---------- */

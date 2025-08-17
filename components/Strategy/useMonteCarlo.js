@@ -4,7 +4,7 @@
 import { useCallback, useState } from "react";
 
 // Prefer hub RNG if available; fall back locally.
-import quantDefault, * as qhub from "lib/quant";
+import quantDefault, * as qhub from "lib/quant/index.js";
 
 /* ---------- tiny hub-pick shims ---------- */
 const pick = (name, fb) => {

@@ -1,7 +1,7 @@
 // components/Strategy/math/analyticPop.js
 // Shim: delegate Probability-of-Profit & lognormal CDF to the central hub.
 
-import { probOfProfit as hubProbOfProfit, lognCdf } from "../../../lib/quant";
+import { probOfProfit as hubProbOfProfit, lognCdf } from "../../../lib/quant/index.js";
 
 /**
  * Named export kept for backward-compat.

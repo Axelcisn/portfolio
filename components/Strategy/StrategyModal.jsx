@@ -13,7 +13,7 @@ import materializeSeeded from "./defs/materializeSeeded";
 import {
   strategyMetrics as qStrategyMetrics,
   computeStrategyMetrics as qComputeStrategyMetrics,
-} from "lib/quant";
+} from "lib/quant/index.js";
 
 /* ---------- helpers ---------- */
 function rowsToLegsObject(rows) {

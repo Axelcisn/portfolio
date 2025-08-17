@@ -3,7 +3,7 @@
 
 // Centralized Greeks: prefer the hub in lib/quant; fallback to local shim.
 // Conventions preserved: vega per 1% vol, theta per day.
-import * as q from "lib/quant";
+import * as q from "lib/quant/index.js";
 import { greeksByKey as shimGreeksByKey } from "./math/bsGreeks";
 
 // Pick hub if available, else shim.

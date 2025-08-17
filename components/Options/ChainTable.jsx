@@ -17,7 +17,7 @@ import {
   gbmCI95,
   bsCall,
   bsPut,
-} from "lib/quant";
+} from "lib/quant/index.js";
 
 /* ---------- tiny utils ---------- */
 const isNum = (x) => Number.isFinite(x);
