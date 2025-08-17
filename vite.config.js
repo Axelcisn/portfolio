@@ -1,7 +1,11 @@
 import { defineConfig } from 'vitest/config';
-import path from 'node:path';
+import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
-  resolve: { alias: { lib: path.resolve(__dirname, 'lib') } },
-  test: { environment: 'node', include: ['tests/**/*.spec.js'], globals: true }
+  test: { environment: 'node', include: ['tests/**/*.spec.js'] },
+  resolve: {
+    alias: {
+      lib: fileURLToPath(new URL('./lib', import.meta.url))
+    }
+  }
 });
