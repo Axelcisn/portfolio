@@ -5,8 +5,13 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
 import analyticPop from "./math/analyticPop";
 import { rowsToApiLegs } from "./utils";
-// centralized BS math (price + greeks)
+// centralized BS math (price + greeks) via shims
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
+
+// NEW: central GBM helpers (mean & 95% CI)
+import { gbmMean as qGbmMean, gbmCI95 as qGbmCI95 } from "lib/quant";
+// NEW: centralized payoff engine (per-share P/L at S)
+import { payoffAt as payoffAtHub } from "lib/strategy/payoff";
 
 /* ---------- utils ---------- */
 function lin([d0, d1], [r0, r1]) {
@@ -78,15 +83,12 @@ function rowsFromLegs(legs, days = 30) {
 
 /* ---------- expiry helpers ---------- */
 function daysForRow(row, fallbackDays) {
-  // explicit numeric days
   const d1 = Number(row?.days);
   if (Number.isFinite(d1) && d1 >= 1) return Math.round(d1);
 
-  // common alias
   const d2 = Number(row?.dte);
   if (Number.isFinite(d2) && d2 >= 1) return Math.round(d2);
 
-  // expiry timestamp/string
   const exp = row?.expiry ?? row?.expiration ?? row?.exp;
   if (exp != null) {
     const t = typeof exp === "number" ? exp : Date.parse(String(exp));
@@ -96,31 +98,31 @@ function daysForRow(row, fallbackDays) {
     }
   }
 
-  // final fallback
   const fb = Math.max(1, Number(fallbackDays) || 30);
   return fb;
 }
 
-/* --------- payoff / greek aggregation --------- */
-function payoffAtExpiration(S, rows, contractSize) {
-  let y = 0;
-  for (const r of rows) {
+/* ---------- centralized payoff wiring ---------- */
+/** Convert builder rows → normalized bundle for payoff engine. */
+function buildPayoffBundle(rows, contractSize) {
+  const legs = [];
+  for (const r of rows || []) {
     if (!r?.enabled) continue;
-    const info = TYPE_INFO[r.type];
-    if (!info) continue;
-    const q = Number(r.qty || 0) * contractSize;
-    if (info.stock) {
-      y += info.sign * (S - Number(r.K || 0)) * q;
-      continue;
-    }
-    const K = Number(r.K || 0);
-    const prem = Number.isFinite(r.premium) ? Number(r.premium) : 0;
-    const intr = info.opt === "call" ? Math.max(S - K, 0) : Math.max(K - S, 0);
-    y += info.sign * intr * q + -info.sign * prem * q;
+    const qty = (Number(r.qty || 0) || 0) * (contractSize || 1);
+    const K = Number(r.K || 0) || 0;
+    const premium = Number.isFinite(r.premium) ? Number(r.premium) : 0;
+
+    if (r.type === "lc") legs.push({ kind: "call", side: "long", strike: K, premium, qty });
+    else if (r.type === "sc") legs.push({ kind: "call", side: "short", strike: K, premium, qty });
+    else if (r.type === "lp") legs.push({ kind: "put",  side: "long", strike: K, premium, qty });
+    else if (r.type === "sp") legs.push({ kind: "put",  side: "short", strike: K, premium, qty });
+    else if (r.type === "ls") legs.push({ kind: "stock", side: "long",  premium: K, qty });
+    else if (r.type === "ss") legs.push({ kind: "stock", side: "short", premium: K, qty });
   }
-  return y;
+  return { legs };
 }
 
+/* --------- current P&L and Greeks (kept; BS via shims) --------- */
 function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
   let y = 0;
   for (const r0 of rows) {
@@ -136,7 +138,7 @@ function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
 
     const K = Number(r0.K || 0);
     const days = daysForRow(r0, fallbackDays);
-    const T = days / 365; // calendar basis for pricing
+    const T = days / 365;
     const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
 
     const px = bsValueByKey(r0.type, S, K, r, sigma, T, q); // long price
@@ -163,8 +165,7 @@ function greekTotal(which, S, rows, { r, sigma, q }, contractSize, fallbackDays)
     const days = daysForRow(r0, fallbackDays);
     const T = days / 365;
 
-    // long Greeks; vega per 1%, theta per day
-    const G = greeksByKey(r0.type, S, K, r, sigma, T, q);
+    const G = greeksByKey(r0.type, S, K, r, sigma, T, q); // long greeks; vega per 1%, theta per day
     const g1 = Number.isFinite(G[w]) ? G[w] : 0;
 
     g += (info.sign > 0 ? +1 : -1) * g1 * qty;
@@ -188,19 +189,18 @@ const CI_COLOR = "#a855f7";
 export default function Chart({
   spot = null,
   currency = "USD",
-  rows = null, // new builder rows
-  legs = null, // legacy
+  rows = null,
+  legs = null,
   riskFree = 0.02,
   sigma = 0.2,
-  T = 30 / 365, // legacy global T (years) for fallback only
-  dividend = 0, // NEW: q (annual dividend yield), defaults to 0
+  T = 30 / 365, // legacy fallback (years)
+  dividend = 0, // q
   greek: greekProp,
   onGreekChange,
   onLegsChange,
   contractSize = 1,
   showControls = true,
   frameless = false,
-  /** explicit strategy key is preferred for BE */
   strategy = null,
 }) {
   const rowsEff = useMemo(() => {
@@ -208,6 +208,9 @@ export default function Chart({
     const days = Math.max(1, Math.round((T || 30 / 365) * 365));
     return rowsFromLegs(legs, days);
   }, [rows, legs, T]);
+
+  // payoff bundle for centralized payoff engine
+  const payoffBundle = useMemo(() => buildPayoffBundle(rowsEff, contractSize), [rowsEff, contractSize]);
 
   // fallback days used when a row lacks days/dte/expiry
   const fallbackDays = useMemo(
@@ -260,10 +263,14 @@ export default function Chart({
   const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
   const env = useMemo(() => ({ r: riskFree, sigma, q: dividend }), [riskFree, sigma, dividend]);
+
+  // --- CENTRALIZED EXPIRATION PAYOFF ---
   const yExp = useMemo(
-    () => xs.map((S) => payoffAtExpiration(S, rowsEff, contractSize)),
-    [xs, rowsEff, contractSize]
+    () => xs.map((S) => payoffAtHub(S, payoffBundle)),
+    [xs, payoffBundle]
   );
+
+  // current mark-to-market (kept with BS)
   const yNow = useMemo(
     () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
     [xs, rowsEff, env, contractSize, fallbackDays]
@@ -326,7 +333,7 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // Time/vol inputs for mean & 95% CI (using effective days)
+  // --- Centralized GBM mean & 95% CI (fallback-safe) ---
   const avgDays = useMemo(() => {
     const opt = rowsEff.filter((r) => !TYPE_INFO[r.type]?.stock);
     if (!opt.length) return fallbackDays;
@@ -334,14 +341,36 @@ export default function Chart({
     return Math.max(1, Math.round(sum / opt.length));
   }, [rowsEff, fallbackDays]);
 
-  const mu = riskFree, sVol = sigma;
-  const Tyrs = avgDays / 365;
   const S0 = Number.isFinite(Number(spot)) ? Number(spot) : ks[0] ?? xDomain[0];
-  const drift = (mu - 0.5 * sVol * sVol) * Tyrs;
-  const volT = sVol * Math.sqrt(Tyrs);
-  const ciLow = S0 * Math.exp(drift - 1.959963984540054 * volT);
-  const ciHigh = S0 * Math.exp(drift + 1.959963984540054 * volT);
-  const meanPrice = S0 * Math.exp(mu * Tyrs);
+  const Tyrs = avgDays / 365;
+  const mu = riskFree; // preserve existing behavior (risk-neutral style by default)
+  const sVol = sigma;
+
+  let meanPrice = Number.isFinite(S0) ? S0 * Math.exp(mu * Tyrs) : null;
+  try {
+    if (typeof qGbmMean === "function") {
+      const m = qGbmMean({ S0, mu, T: Tyrs });
+      if (Number.isFinite(m)) meanPrice = m;
+    }
+  } catch {}
+
+  let ciLow = null, ciHigh = null;
+  try {
+    if (typeof qGbmCI95 === "function") {
+      const res = qGbmCI95({ S0, sigma: sVol, T: Tyrs, mu });
+      if (Array.isArray(res) && res.length >= 2) [ciLow, ciHigh] = res;
+      else if (res && Number.isFinite(res.low) && Number.isFinite(res.high)) {
+        ciLow = res.low; ciHigh = res.high;
+      }
+    }
+  } catch {}
+  if (!Number.isFinite(ciLow) || !Number.isFinite(ciHigh)) {
+    const vT = sVol * Math.sqrt(Tyrs);
+    const z = 1.959963984540054;
+    const mLN = Math.log(S0) + (mu - 0.5 * sVol * sVol) * Tyrs;
+    ciLow = Number.isFinite(S0) ? Math.exp(mLN - z * vT) : null;
+    ciHigh = Number.isFinite(S0) ? Math.exp(mLN + z * vT) : null;
+  }
 
   const lotSize = useMemo(
     () => rowsEff.reduce((s, r) => s + Math.abs(Number(r.qty || 0)), 0) || 1,
@@ -372,7 +401,7 @@ export default function Chart({
   const Wrapper = frameless ? "div" : "section";
   const wrapClass = frameless ? "chart-wrap" : "card chart-wrap";
 
-  // KPI scroll container (hide scrollbar; default scroll to rightmost)
+  // KPI scroll container
   const kpiRef = useRef(null);
   useEffect(() => {
     const el = kpiRef.current;
@@ -569,7 +598,7 @@ export default function Chart({
         <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")}
               fill="none" stroke={greekColor} strokeWidth="2" />
 
-        {/* overlays: spot / mean / CI (solid lines) */}
+        {/* overlays: spot / mean / CI */}
         {Number.isFinite(spot) && spot >= xDomain[0] && spot <= xDomain[1] && (
           <line x1={xScale(Number(spot))} x2={xScale(Number(spot))}
                 y1={pad.t} y2={pad.t + innerH} stroke={SPOT_COLOR} strokeWidth="2" />
@@ -607,7 +636,7 @@ export default function Chart({
         ))}
       </svg>
 
-      {/* floating tooltip — probability row removed for now */}
+      {/* floating tooltip */}
       {hover && (() => {
         const i = hover.i;
         return (
@@ -639,7 +668,7 @@ export default function Chart({
         );
       })()}
 
-      {/* KPI row (scrollable, hidden scrollbar) */}
+      {/* KPI row */}
       <div className="kpi-scroll" ref={kpiRef} aria-label="Strategy metrics">
         <div className="metrics">
           <div className="m">
@@ -659,7 +688,6 @@ export default function Chart({
             <div className="v">{winRate == null ? "—" : `${(winRate * 100).toFixed(2)}%`}</div>
           </div>
 
-          {/* Breakeven cell uses the shared API-based badge */}
           <div className="m">
             <div className="k">Breakeven</div>
             <BreakEvenBadge rows={rowsEff} currency={currency} strategy={strategy} />
