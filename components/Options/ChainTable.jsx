@@ -1072,7 +1072,10 @@ function fmtG(v) { return Number.isFinite(v) ? Number(v).toFixed(2) : "—"; }
 
 /* ---------- Mini payoff chart (legend outside, CI/mean/current lines) ---------- */
 function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
-  if (!(S0 > 0) || !(K > 0) || !(premium >= 0) || !type || !pos || !(sigma > 0) || !(T > 0)) {
+  // Payoff rendering does NOT require sigma/T; only CI/mean do.
+  const s0Ok = Number.isFinite(S0) && S0 > 0;
+  const kOk = Number.isFinite(K) && K > 0;
+  if (!s0Ok || !kOk || !type || !pos) {
     return (
       <span
         className="chart-hint"
@@ -1083,25 +1086,44 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
     );
   }
 
+  // Premium: allow 0 when missing, but keep as number
+  const premRaw = Number(premium);
+  const prem = Number.isFinite(premRaw) && premRaw >= 0 ? premRaw : 0;
+
   const uid = useId().replace(/:/g, "");
   const aboveId = `above-${uid}`;
   const belowId = `below-${uid}`;
 
   // base window centered at BE (or S0)
   const centerPx = Number.isFinite(BE) ? BE : S0;
-  const baseSpan = 0.4 * (S0 || K) + 0.2 * Math.abs((S0 || 0) - (K || 0));
+  const baseSpan = Math.max(
+    1e-6,
+    0.4 * (S0 || K) + 0.2 * Math.abs((S0 || 0) - (K || 0))
+  );
   const [zoom, setZoom] = React.useState(1);
-  const span0 = baseSpan / zoom;
+  const span0 = baseSpan / Math.max(1e-6, zoom);
   let xmin = Math.max(0.01, centerPx - span0);
   let xmax = centerPx + span0;
 
-  // analytic mean & 95% CI from hub
-  const [ciL, ciU] = hubCI95({ S0, mu, sigma, T });
-  const meanPrice = hubMean({ S0, mu, T });
+  // analytic mean & 95% CI (optional)
+  const haveSigma = Number.isFinite(sigma) && sigma > 0 && Number.isFinite(T) && T > 0;
+  const meanPrice = Number.isFinite(mu) && Number.isFinite(T) ? hubMean({ S0, mu, T }) : null;
+  let ciL = null, ciU = null;
+  if (haveSigma) {
+    const [l, u] = hubCI95({ S0, mu: Number(mu) || 0, sigma, T });
+    ciL = isNum(l) ? l : null;
+    ciU = isNum(u) ? u : null;
+  }
 
   // ensure lines stay inside final domain
-  xmin = Math.min(xmin, S0, meanPrice, ciL) * 0.995;
-  xmax = Math.max(xmax, S0, meanPrice, ciU) * 1.005;
+  const mins = [xmin, S0, meanPrice, ciL].filter((v) => Number.isFinite(v));
+  const maxs = [xmax, S0, meanPrice, ciU].filter((v) => Number.isFinite(v));
+  if (mins.length) xmin = Math.min(...mins) * 0.995;
+  if (maxs.length) xmax = Math.max(...maxs) * 1.005;
+  if (!(xmax > xmin)) {
+    xmin = Math.max(0.01, centerPx * 0.6);
+    xmax = Math.max(xmin + 1e-6, centerPx * 1.4);
+  }
 
   // sizing
   const W = 520, H = 250, pad = 12;
@@ -1111,16 +1133,18 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const N = 160;
   const xs = Array.from({ length: N + 1 }, (_, i) => xmin + (i / N) * (xmax - xmin));
   const pay = xs.map((s) => {
-    if (type === "call") {
-      const intr = Math.max(s - K, 0);
-      return pos === "long" ? intr - premium : premium - intr;
-    }
-    const intr = Math.max(K - s, 0);
-    return pos === "long" ? intr - premium : premium - intr;
+    const intr = type === "call" ? Math.max(s - K, 0) : Math.max(K - s, 0);
+    return pos === "long" ? intr - prem : prem - intr;
   });
 
-  const yMin = Math.min(...pay, -premium * 1.35);
-  const yMax = Math.max(...pay, premium * 1.35);
+  // Y-range with guards (avoid NaNs/flat span)
+  let yMin = Math.min(...pay, -prem * 1.35);
+  let yMax = Math.max(...pay,  prem * 1.35);
+  if (!(yMax > yMin) || !Number.isFinite(yMin) || !Number.isFinite(yMax)) {
+    const padY = Math.max(1, Math.abs(prem) || 1);
+    yMin = -padY;
+    yMax = +padY;
+  }
   const ymap = (p) => H - pad - ((p - yMin) / (yMax - yMin)) * (H - 2 * pad);
   const baselineY = ymap(0);
 
@@ -1136,10 +1160,10 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
 
   // guides
   const xSpot = xmap(S0);
-  const xMean = xmap(meanPrice);
+  const xMean = Number.isFinite(meanPrice) ? xmap(meanPrice) : null;
   const xBE = Number.isFinite(BE) ? xmap(BE) : null;
-  const xL = xmap(ciL);
-  const xU = xmap(ciU);
+  const xL = Number.isFinite(ciL) ? xmap(ciL) : null;
+  const xU = Number.isFinite(ciU) ? xmap(ciU) : null;
 
   // ticks aligned to the zero P&L axis
   const tickFmt = (s) => Math.round(s).toString();
@@ -1182,9 +1206,15 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
 
         {/* vertical guides */}
         <line x1={xSpot} y1={pad} x2={xSpot} y2={H - pad} stroke="#60a5fa" strokeWidth="1.2" opacity="0.95" />
-        <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.2" opacity="0.95" />
-        <line x1={xL} y1={pad} x2={xL} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
-        <line x1={xU} y1={pad} x2={xU} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
+        {Number.isFinite(xMean) && (
+          <line x1={xMean} y1={pad} x2={xMean} y2={H - pad} stroke="#f472b6" strokeWidth="1.2" opacity="0.95" />
+        )}
+        {Number.isFinite(xL) && (
+          <line x1={xL} y1={pad} x2={xL} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
+        )}
+        {Number.isFinite(xU) && (
+          <line x1={xU} y1={pad} x2={xU} y2={H - pad} stroke="#f5a7cf" strokeWidth="1.2" strokeDasharray="5 5" opacity="0.9" />
+        )}
         {Number.isFinite(xBE) && (
           <>
             <line x1={xBE} y1={pad} x2={xBE} y2={H - pad} stroke="#10b981" strokeWidth="1.25" opacity="0.95" />
