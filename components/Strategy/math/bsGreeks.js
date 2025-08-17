@@ -87,7 +87,6 @@ function callGreeks(S, K, r, q, sigma, T) {
   const tau = Math.max(Number(T) || 0, 1e-12);
   const vol = Math.max(Number(sigma) || 0, 1e-12);
   const discQ = Math.exp(-q * tau);
-  const discR = Math.exp(-r * tau);
 
   const _d1 = d1(S, K, r, q, vol, tau);
   const _d2 = _d1 - vol * Math.sqrt(tau);
@@ -100,7 +99,7 @@ function callGreeks(S, K, r, q, sigma, T) {
   const vegaPer1 = S * discQ * nd1 * Math.sqrt(tau);
   const vega = vegaPer1 / 100; // per 1% vol
   const thetaPerYear =
-    (-S * discQ * nd1 * vol) / (2 * Math.sqrt(tau)) - r * K * Math.exp(-r * tau) * Nd2 + q * S * discQ * Nd1;
+    (-S * discQ * nd1 * vol) / (2 * Math.sqrt(tau)) - (r * K * Math.exp(-r * tau)) * Nd2 + (q * S * discQ) * Nd1;
   const theta = thetaPerYear / 365; // per day
   const rho = K * tau * Math.exp(-r * tau) * Nd2;
 
@@ -113,7 +112,6 @@ function putGreeks(S, K, r, q, sigma, T) {
   const tau = Math.max(Number(T) || 0, 1e-12);
   const vol = Math.max(Number(sigma) || 0, 1e-12);
   const discQ = Math.exp(-q * tau);
-  const discR = Math.exp(-r * tau);
 
   const _d1 = d1(S, K, r, q, vol, tau);
   const _d2 = _d1 - vol * Math.sqrt(tau);
