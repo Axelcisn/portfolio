@@ -153,10 +153,10 @@ const capmMu = (rf, beta, erp, q = 0) =>
 /* ===== component ===== */
 export default function StatsRail({
   /* expiry control (CONTROLLED) */
-  expiries = [],                 // same array used by Options
-  selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
-  onExpiryChange,                // (iso) => void
-  onDaysChange,                  // (days) => void
+  expiries = [],
+  selectedExpiry = null,
+  onExpiryChange,
+  onDaysChange,
 
   /* optional strategy plumbing */
   rows = null, onRowsChange,
@@ -195,7 +195,7 @@ export default function StatsRail({
   // propagate days only (never touch parent's ISO here)
   useEffect(() => { if (days != null) onDaysChange?.(days); }, [days, onDaysChange]);
 
-  /* market/vol stuff (kept as-is) */
+  /* market/vol stuff */
   const [symbol, setSymbol] = useState(company?.symbol || "");
   const [currency, setCurrency] = useState(propCcy || company?.currency || "");
   const [spot, setSpot] = useState(propSpot ?? null);
@@ -208,7 +208,7 @@ export default function StatsRail({
     return Number.isFinite(n) ? n : 0;
   }, [divPct]);
 
-  // ⬇⬇⬇ Default is now "hist"
+  // ⬇ default volatility source
   const [volSrc, setVolSrc] = useState("hist"); // "iv" | "hist"
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
@@ -226,6 +226,24 @@ export default function StatsRail({
   });
   useEffect(() => { try { localStorage.setItem("stats.driftMode", driftMode); } catch {} }, [driftMode]);
 
+  /* ---------- NEW: sync local state with incoming props ---------- */
+  // keep symbol in sync with parent-provided company
+  useEffect(() => {
+    if (company?.symbol && company.symbol !== symbol) setSymbol(company.symbol);
+  }, [company?.symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // keep currency in sync when parent/company changes
+  useEffect(() => {
+    const next = propCcy || company?.currency;
+    if (next) setCurrency(next);
+  }, [propCcy, company?.currency]);
+
+  // keep spot synced from props when it becomes valid (>0)
+  useEffect(() => {
+    if (isPos(propSpot)) setSpot(propSpot);
+  }, [propSpot]);
+
+  /* ---------- events & fetchers ---------- */
   useEffect(() => {
     const onPick = (e) => {
       const it = e?.detail || {};
@@ -245,7 +263,7 @@ export default function StatsRail({
         const c = await fetchCompany(symbol);
         if (!mounted) return;
         if (c.currency) setCurrency(c.currency);
-        if (isPos(c.spot)) setSpot(c.spot);            // ✅ only accept > 0
+        if (isPos(c.spot)) setSpot(c.spot); // ✅ only accept > 0
 
         const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || "USD", lookback: "2y" });
         if (!mounted) return;
@@ -309,7 +327,7 @@ export default function StatsRail({
     let stop = false, id;
     const tick = async () => {
       const px = await fetchSpotFromChart(symbol);
-      if (!stop && isPos(px)) setSpot(px);            // ✅ guard against 0/negatives
+      if (!stop && isPos(px)) setSpot(px); // ✅ guard against 0/negatives
       id = setTimeout(tick, 15000);
     };
     tick();
