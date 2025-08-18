@@ -17,27 +17,15 @@ import { publishStatsCtx } from "./statsBus";
 /* ===== helpers ===== */
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
 const isNum = (x) => Number.isFinite(Number(x));
-const isPos = (x) => Number.isFinite(Number(x)) && Number(x) > 0; // NEW: only accept positive prices
-
+/** ✅ Only accept strictly positive, finite prices */
+const isPos = (x) => {
+  const n = Number(x);
+  return Number.isFinite(n) && n > 0;
+};
 const parsePctInput = (str) => {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
-};
-
-const fmtCur = (x, ccy = "USD") => {
-  if (!isPos(x)) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: ccy || "USD",
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    }).format(Number(x));
-  } catch {
-    return `${moneySign(ccy)}${Number(x).toFixed(2)}`;
-  }
 };
 
 function normalizeExpiries(expiries) {
@@ -92,7 +80,7 @@ async function fetchSpotFromChart(sym) {
       j?.meta?.regularMarketPrice ??
       j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
       j?.regularMarketPrice;
-    return Number.isFinite(metaPx) && metaPx > 0 ? metaPx : null; // ensure positive
+    return Number.isFinite(metaPx) && metaPx > 0 ? metaPx : null;
   } catch {
     return null;
   }
@@ -108,7 +96,7 @@ async function fetchCompany(sym) {
     symbol: j.symbol || sym,
     currency,
     beta: typeof j.beta === "number" ? j.beta : null,
-    spot: Number.isFinite(spot) && spot > 0 ? spot : null, // ensure positive
+    spot: Number.isFinite(spot) && spot > 0 ? spot : null,
   };
 }
 async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
@@ -165,10 +153,10 @@ const capmMu = (rf, beta, erp, q = 0) =>
 /* ===== component ===== */
 export default function StatsRail({
   /* expiry control (CONTROLLED) */
-  expiries = [],
-  selectedExpiry = null,
-  onExpiryChange,
-  onDaysChange,
+  expiries = [],                 // same array used by Options
+  selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
+  onExpiryChange,                // (iso) => void
+  onDaysChange,                  // (days) => void
 
   /* optional strategy plumbing */
   rows = null, onRowsChange,
@@ -210,7 +198,7 @@ export default function StatsRail({
   /* market/vol stuff (kept as-is) */
   const [symbol, setSymbol] = useState(company?.symbol || "");
   const [currency, setCurrency] = useState(propCcy || company?.currency || "");
-  const [spot, setSpot] = useState(isPos(propSpot) ? Number(propSpot) : null); // NEW: ignore 0/negatives
+  const [spot, setSpot] = useState(propSpot ?? null);
   const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
   const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
   const [beta, setBeta] = useState(Number.isFinite(company?.beta) ? company.beta : null);
@@ -257,7 +245,7 @@ export default function StatsRail({
         const c = await fetchCompany(symbol);
         if (!mounted) return;
         if (c.currency) setCurrency(c.currency);
-        if (isPos(c.spot)) setSpot(c.spot); // NEW: only positive spot
+        if (isPos(c.spot)) setSpot(c.spot);            // ✅ only accept > 0
 
         const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || "USD", lookback: "2y" });
         if (!mounted) return;
@@ -321,7 +309,7 @@ export default function StatsRail({
     let stop = false, id;
     const tick = async () => {
       const px = await fetchSpotFromChart(symbol);
-      if (!stop && isPos(px)) setSpot(px); // NEW: guard against 0/negative
+      if (!stop && isPos(px)) setSpot(px);            // ✅ guard against 0/negatives
       id = setTimeout(tick, 15000);
     };
     tick();
@@ -351,7 +339,7 @@ export default function StatsRail({
     if (legs && typeof onLegsChange === "function") {
       onLegsChange(stampDaysOnLegs(legs, days));
     }
-  }, [days, rows, legs, onLegsChange, onRowsChange, stampDaysOnRows, stampDaysOnLegs]);
+  }, [days, rows, legs, onRowsChange, onLegsChange, stampDaysOnRows, stampDaysOnLegs]);
 
   const showVolSkeleton = volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
 
@@ -382,7 +370,7 @@ export default function StatsRail({
       beta,
       muCapm,                 // rf + beta*erp - q
       q: qDec,                // dividend yield (decimal)
-      spot,
+      spot: isPos(spot) ? spot : null,   // ✅ never broadcast 0/negatives
       currency,
       driftMode,              // "CAPM" | "RF"
     });
@@ -418,7 +406,7 @@ export default function StatsRail({
       <div className="row">
         <div className="k">Current Price</div>
         <div className="v value">
-          {fmtCur(spot, currency)}
+          {isPos(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}
         </div>
       </div>
 
