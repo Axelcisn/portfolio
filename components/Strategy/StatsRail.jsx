@@ -190,7 +190,7 @@ export default function StatsRail({
   // propagate days only (never touch parent's ISO here)
   useEffect(() => { if (days != null) onDaysChange?.(days); }, [days, onDaysChange]);
 
-  /* market/vol stuff (kept as-is from your version) */
+  /* market/vol stuff (kept as-is) */
   const [symbol, setSymbol] = useState(company?.symbol || "");
   const [currency, setCurrency] = useState(propCcy || company?.currency || "");
   const [spot, setSpot] = useState(propSpot ?? null);
@@ -202,7 +202,9 @@ export default function StatsRail({
     const n = parsePctInput(divPct);
     return Number.isFinite(n) ? n : 0;
   }, [divPct]);
-  const [volSrc, setVolSrc] = useState("iv"); // iv | hist
+
+  // ⬇⬇⬇ Default is now "hist"
+  const [volSrc, setVolSrc] = useState("hist"); // "iv" | "hist"
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
   const [volLoading, setVolLoading] = useState(false);
