@@ -335,9 +335,9 @@ export default function StatsRail({
   }, [days, rows, legs, onRowsChange, onLegsChange, stampDaysOnRows, stampDaysOnLegs]);
 
   const showVolSkeleton = volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
-  const volKind = volMeta?.sourceUsed === "hist" ? "Hist" : "Imp";
-  const volHorizon = volMeta?.sourceUsed === "hist" ? (volMeta?.days ?? 30) : (volMeta?.cmDays ?? 30);
-  const volDiag = (volKind ? `${volKind} (${volHorizon}d)` : "") + (volMeta?.fallback ? " · fallback" : "");
+
+  // Remove the “Imp (30d)” / “Hist (Xd)” label; only show a fallback note if present.
+  const volDiag = volMeta?.fallback ? "fallback" : "";
 
   const fmtLong = (iso) => {
     const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -431,7 +431,7 @@ export default function StatsRail({
           <span className={`value volval ${showVolSkeleton ? "is-pending" : ""}`} aria-live="polite">
             {Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
           </span>
-          <span className="meta small">{volDiag}</span>
+          {volDiag && <span className="meta small">{volDiag}</span>}
           {showVolSkeleton && <span className="skl" aria-hidden="true" />}
         </div>
       </div>
