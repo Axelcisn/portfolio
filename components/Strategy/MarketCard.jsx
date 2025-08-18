@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtPct } from "../../utils/format";
 
-/* Expanded index list */
+/* Expanded index list (labels only) */
 const INDICES = [
   { key: "SPX",    label: "S&P 500 (SPX)" },
   { key: "NDX",    label: "NASDAQ 100 (NDX)" },
@@ -30,7 +30,52 @@ const toDec = (pctStr) => {
   return n == null || !isFinite(n) ? null : n / 100;
 };
 
-export default function MarketCard({ onRates, currency = "USD", onBenchmarkChange }) {
+/* --- Helpers to auto-align RF/MRP + Index by company origin --- */
+const CCY_MAP = {
+  USD: { index: "SPX",    currency: "USD" },
+  EUR: { index: "STOXX",  currency: "EUR" },
+  GBP: { index: "FTSE",   currency: "GBP" },
+  CHF: { index: "SSMI",   currency: "CHF" },
+  CAD: { index: "GSPTSE", currency: "CAD" },
+  JPY: { index: "N225",   currency: "JPY" },
+};
+/* loose exchange fallback if currency is missing */
+const EX_TO_CCY = {
+  NMS: "USD", NGM: "USD", NCM: "USD", NYQ: "USD", ASE: "USD", PCX: "USD",
+  LSE: "GBP",
+  SWX: "CHF", EBS: "CHF", VTX: "CHF",
+  TOR: "CAD", TSX: "CAD",
+  TYO: "JPY", JPX: "JPY",
+  MIL: "EUR", BIT: "EUR", XETRA: "EUR", FWB: "EUR", PA: "EUR", EPA: "EUR", AMS: "EUR", BRU: "EUR", LIS: "EUR", MAD: "EUR",
+};
+
+async function fetchCompanyLight(symbol) {
+  try {
+    const r = await fetch(`/api/company?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" });
+    const j = await r.json();
+    return {
+      currency: j?.currency || j?.ccy || j?.price?.currency || j?.quote?.currency || "",
+      exchange: (j?.exchange || j?.exchangeName || j?.ex || j?.exch || "").toUpperCase(),
+    };
+  } catch {
+    return { currency: "", exchange: "" };
+  }
+}
+
+function decideOrigin(meta) {
+  const ccy = (meta?.currency || "").toUpperCase();
+  if (CCY_MAP[ccy]) return CCY_MAP[ccy];
+  const exCcy = EX_TO_CCY[(meta?.exchange || "").toUpperCase()];
+  if (exCcy && CCY_MAP[exCcy]) return CCY_MAP[exCcy];
+  /* default: do not change selection */
+  return null;
+}
+
+export default function MarketCard({
+  onRates,
+  currency: propCcy = "USD",
+  onBenchmarkChange,
+}) {
   // UI stores percent strings; we emit decimals to parent
   const [riskFreePct, setRiskFreePct] = useState("");
   const [mrpPct, setMrpPct] = useState("");
@@ -39,6 +84,10 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
   const [indexKey, setIndexKey] = useState("STOXX");
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
+
+  // Track currency used for fetching market stats (starts from prop; auto-adjusts on ticker pick)
+  const [ccy, setCcy] = useState(propCcy);
+  useEffect(() => { setCcy(propCcy); }, [propCcy]);
 
   // Auto/Manual for RF/MRP
   const [autoRF, setAutoRF] = useState(true);
@@ -59,15 +108,16 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
       riskFree: riskFreeDec ?? 0,
       mrp:      mrpDec ?? 0,
       indexAnn,
+      indexKey,
       ...next,
     });
   }
 
-  async function fetchStats({ index = indexKey, lb = lookback, ccy = currency } = {}) {
+  async function fetchStats({ index = indexKey, lb = lookback, currency = ccy } = {}) {
     const qs = new URLSearchParams({
       index,
       lookback: lb,
-      currency: ccy,
+      currency,
       basis: "annual",
     }).toString();
 
@@ -130,13 +180,31 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
     debounceRef.current = setTimeout(() => fetchStats(), 250);
     return () => clearTimeout(debounceRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indexKey, lookback, currency, autoRF, autoMRP]);
+  }, [indexKey, lookback, ccy, autoRF, autoMRP]);
 
-  // For external consumers that still listen for a benchmark, emit the same index
+  // Mirror index changes to optional external listeners
   useEffect(() => {
     onBenchmarkChange?.(indexKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indexKey]);
+
+  // React to ticker picks -> auto align by company origin (via currency/exchange)
+  useEffect(() => {
+    const onPick = async (e) => {
+      const sym = (e?.detail?.symbol || "").toUpperCase();
+      if (!sym) return;
+      try {
+        const meta = await fetchCompanyLight(sym);
+        const pick = decideOrigin(meta);
+        if (pick) {
+          setCcy(pick.currency);
+          setIndexKey((cur) => (cur === pick.index ? cur : pick.index));
+        }
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("app:ticker-picked", onPick);
+    return () => window.removeEventListener("app:ticker-picked", onPick);
+  }, []);
 
   const commitRF  = () => emitRates();
   const commitMRP = () => emitRates();
@@ -339,7 +407,6 @@ export default function MarketCard({ onRates, currency = "USD", onBenchmarkChang
           }
         }
 
-        /* Layout helpers already in your global.css */
         .index-row{
           display:grid;
           grid-template-columns: minmax(0,1fr) auto;
