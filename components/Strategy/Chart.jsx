@@ -60,10 +60,8 @@ function quantile(arr, p) {
 /** Build a tight, zero-aware range for Greeks; trims outliers (2%-98%). */
 function greekNiceRange(values) {
   if (!values?.length) return [-1, 1];
-  // Trim extreme spikes (gamma near strike, etc.)
   let lo = quantile(values, 0.02);
   let hi = quantile(values, 0.98);
-  // Always include zero for orientation
   lo = Math.min(lo, 0);
   hi = Math.max(hi, 0);
   if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) {
@@ -71,14 +69,12 @@ function greekNiceRange(values) {
     lo = -m || -1;
     hi = m || 1;
   }
-  // Gentle padding
   const pad = Math.max(1e-12, (hi - lo) * 0.08);
   return [lo - pad, hi + pad];
 }
 
 /* ---------- safe hub accessors + fallback ---------- */
 const hasFn = (f) => typeof f === "function";
-
 const safeGbmMean = (args) => {
   const fn = quantNS?.gbmMean ?? quantPkg?.gbmMean;
   return hasFn(fn) ? fn(args) : null;
@@ -166,7 +162,6 @@ function daysForRow(row, fallbackDays) {
 }
 
 /* ---------- centralized payoff wiring ---------- */
-/** Convert builder rows → normalized bundle for payoff engine. */
 function buildPayoffBundle(rows, contractSize) {
   const legs = [];
   for (const r of rows || []) {
@@ -185,8 +180,8 @@ function buildPayoffBundle(rows, contractSize) {
   return { legs };
 }
 
-/* --------- current P&L and Greeks (kept; BS via shims) --------- */
-function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
+/* --------- current P&L and Greeks (BS via shims) --------- */
+function payoffCurrent(S, rows, { r, sigma, q, yearBasis }, contractSize, fallbackDays) {
   let y = 0;
   for (const r0 of rows) {
     if (!r0?.enabled) continue;
@@ -201,7 +196,7 @@ function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
 
     const K = Number(r0.K || 0);
     const days = daysForRow(r0, fallbackDays);
-    const T = days / 365;
+    const T = days / (yearBasis || 365);
     const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
 
     const px = bsValueByKey(r0.type, S, K, r, sigma, T, q); // long price
@@ -210,7 +205,7 @@ function payoffCurrent(S, rows, { r, sigma, q }, contractSize, fallbackDays) {
   return y;
 }
 
-function greekTotal(which, S, rows, { r, sigma, q }, contractSize, fallbackDays) {
+function greekTotal(which, S, rows, { r, sigma, q, yearBasis }, contractSize, fallbackDays) {
   let g = 0;
   const w = (which || "").toLowerCase();
   for (const r0 of rows) {
@@ -226,7 +221,7 @@ function greekTotal(which, S, rows, { r, sigma, q }, contractSize, fallbackDays)
 
     const K = Number(r0.K || 0);
     const days = daysForRow(r0, fallbackDays);
-    const T = days / 365;
+    const T = days / (yearBasis || 365);
 
     const G = greeksByKey(r0.type, S, K, r, sigma, T, q); // long greeks; vega per 1%, theta per day
     const g1 = Number.isFinite(G[w]) ? G[w] : 0;
@@ -249,6 +244,15 @@ const SPOT_COLOR = "#8ab4f8";
 const MEAN_COLOR = "#ff5ea8";
 const CI_COLOR = "#a855f7";
 
+/** Choose drift for GBM overlays */
+function deriveMu({ drift, capmMu, riskFree, customMu }) {
+  const d = (drift || "").toLowerCase();
+  if (d === "capm" && Number.isFinite(Number(capmMu))) return Number(capmMu);
+  if (d === "custom" && Number.isFinite(Number(customMu))) return Number(customMu);
+  // default to risk-free (risk-neutral)
+  return Number(riskFree) || 0;
+}
+
 export default function Chart({
   spot = null,
   currency = "USD",
@@ -256,8 +260,12 @@ export default function Chart({
   legs = null,
   riskFree = 0.02,
   sigma = 0.2,
-  T = 30 / 365, // legacy fallback (years)
-  dividend = 0, // q
+  T = 30 / 365,        // legacy fallback (years)
+  dividend = 0,        // q
+  yearBasis = 365,     // <- NEW: 252 or 365, from "Time" in Key stats
+  drift = "capm",      // <- NEW: "capm" | "riskfree" | "custom"
+  capmMu = null,       // <- NEW: CAPM μ shown in Key stats
+  customMu = null,     // <- NEW: optional manual μ
   greek: greekProp,
   onGreekChange,
   onLegsChange,
@@ -268,17 +276,17 @@ export default function Chart({
 }) {
   const rowsEff = useMemo(() => {
     if (rows && Array.isArray(rows)) return rows;
-    const days = Math.max(1, Math.round((T || 30 / 365) * 365));
+    const days = Math.max(1, Math.round((T || 30 / 365) * (yearBasis || 365)));
     return rowsFromLegs(legs, days);
-  }, [rows, legs, T]);
+  }, [rows, legs, T, yearBasis]);
 
   // payoff bundle for centralized payoff engine
   const payoffBundle = useMemo(() => buildPayoffBundle(rowsEff, contractSize), [rowsEff, contractSize]);
 
   // fallback days used when a row lacks days/dte/expiry
   const fallbackDays = useMemo(
-    () => Math.max(1, Math.round((Number.isFinite(Number(T)) ? Number(T) : 30 / 365) * 365)),
-    [T]
+    () => Math.max(1, Math.round((Number.isFinite(Number(T)) ? Number(T) : 30 / 365) * (yearBasis || 365))),
+    [T, yearBasis]
   );
 
   // strikes and base domain
@@ -325,7 +333,11 @@ export default function Chart({
   }, [xDomain]);
   const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
-  const env = useMemo(() => ({ r: riskFree, sigma, q: dividend }), [riskFree, sigma, dividend]);
+  // All Greeks/mark-to-market use Key Stats inputs
+  const env = useMemo(
+    () => ({ r: Number(riskFree) || 0, sigma: Number(sigma) || 0, q: Number(dividend) || 0, yearBasis: Number(yearBasis) || 365 }),
+    [riskFree, sigma, dividend, yearBasis]
+  );
 
   // --- CENTRALIZED EXPIRATION PAYOFF (with safe hub access) ---
   const yExp = useMemo(
@@ -333,7 +345,7 @@ export default function Chart({
     [xs, payoffBundle]
   );
 
-  // current mark-to-market (kept with BS)
+  // current mark-to-market (BS)
   const yNow = useMemo(
     () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
     [xs, rowsEff, env, contractSize, fallbackDays]
@@ -394,7 +406,7 @@ export default function Chart({
     [xs, yExp, xScale, yScale]
   );
 
-  // --- Centralized GBM mean & 95% CI (fallback-safe) ---
+  // --- GBM mean & 95% CI (uses drift selection) ---
   const avgDays = useMemo(() => {
     const opt = rowsEff.filter((r) => !TYPE_INFO[r.type]?.stock);
     if (!opt.length) return fallbackDays;
@@ -403,9 +415,9 @@ export default function Chart({
   }, [rowsEff, fallbackDays]);
 
   const S0 = Number.isFinite(Number(spot)) ? Number(spot) : ks[0] ?? xDomain[0];
-  const Tyrs = avgDays / 365;
-  const mu = riskFree; // preserve existing behavior (risk-neutral style by default)
-  const sVol = sigma;
+  const Tyrs = (avgDays || 0) / (Number(yearBasis) || 365);
+  const mu = deriveMu({ drift, capmMu, riskFree, customMu });
+  const sVol = Number(sigma) || 0;
 
   let meanPrice = Number.isFinite(S0) ? S0 * Math.exp(mu * Tyrs) : null;
   {
@@ -538,7 +550,7 @@ export default function Chart({
             Expiration P&amp;L
           </div>
           <div className="leg">
-            <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
+            <span className="dot" style={{ background: greekColor }} />
             {GREEK_LABEL[greekWhich] || "Greek"}
           </div>
           <div className="leg"><span className="dot" style={{ background: SPOT_COLOR }} />Spot</div>
@@ -614,13 +626,13 @@ export default function Chart({
 
         {/* RIGHT GREEK AXIS */}
         <line x1={pad.l + innerW} x2={pad.l + innerW} y1={pad.t} y2={pad.t + innerH}
-              stroke={GREEK_COLOR[greekWhich] || "#f59e0b"} strokeOpacity="0.25" />
+              stroke={greekColor} strokeOpacity="0.25" />
         {gTicks.map((t, i) => (
           <g key={`gr-${i}`}>
             <line x1={pad.l + innerW} x2={pad.l + innerW + 4} y1={gScale(t)} y2={gScale(t)}
-                  stroke={GREEK_COLOR[greekWhich] || "#f59e0b"} strokeOpacity="0.8" />
+                  stroke={greekColor} strokeOpacity="0.8" />
             <text x={pad.l + innerW + 6} y={gScale(t)} dy="0.32em" textAnchor="start"
-                  className="tick" style={{ fill: GREEK_COLOR[greekWhich] || "#f59e0b" }}>
+                  className="tick" style={{ fill: greekColor }}>
               {(() => {
                 const a = Math.abs(t);
                 if (greekWhich === "gamma") return a >= 1 ? t.toFixed(2) : a >= 0.1 ? t.toFixed(3) : t.toFixed(4);
@@ -634,7 +646,7 @@ export default function Chart({
           </g>
         ))}
         <text transform={`translate(${w - 14} ${pad.t + innerH / 2}) rotate(90)`}
-              textAnchor="middle" className="axis" style={{ fill: GREEK_COLOR[greekWhich] || "#f59e0b" }}>
+              textAnchor="middle" className="axis" style={{ fill: greekColor }}>
           {GREEK_LABEL[greekWhich] || "Greek"}
         </text>
 
@@ -644,7 +656,7 @@ export default function Chart({
         <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yExp[i])}`).join(" ")}
               fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
         <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")}
-              fill="none" stroke={GREEK_COLOR[greekWhich] || "#f59e0b"} strokeWidth="2" />
+              fill="none" stroke={greekColor} strokeWidth="2" />
 
         {/* overlays: spot / mean / CI */}
         {Number.isFinite(spot) && spot >= xDomain[0] && spot <= xDomain[1] && (
@@ -670,7 +682,7 @@ export default function Chart({
             <line x1={hover.sx} x2={hover.sx} y1={pad.t} y2={pad.t + innerH} stroke="rgba(255,255,255,.25)" />
             <circle cx={hover.sx} cy={hover.syNow} r="4" fill="var(--accent)" />
             <circle cx={hover.sx} cy={hover.syExp} r="4" fill="var(--text-muted,#8a8a8a)" />
-            <circle cx={hover.sx} cy={hover.gy} r="3.2" fill={GREEK_COLOR[greekWhich] || "#f59e0b"} />
+            <circle cx={hover.sx} cy={hover.gy} r="3.2" fill={greekColor} />
           </>
         )}
 
@@ -702,7 +714,7 @@ export default function Chart({
               <span className="val">{fmtCur(yExp[i], currency)}</span>
             </div>
             <div className="row">
-              <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
+              <span className="dot" style={{ background: greekColor }} />
               <span>{GREEK_LABEL[greekWhich]}</span>
               <span className="val">{fmtNum(gVals[i], 2)}</span>
             </div>
