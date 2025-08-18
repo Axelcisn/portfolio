@@ -1,4 +1,6 @@
-// Volatility API with IV/Hist switching, cmDays support, unified meta, and micro-cache.
+// app/api/volatility/route.js
+// Volatility API with IV/Hist switching, cmDays support, unified meta, micro-cache,
+// and explicit fallback flag.
 
 import { NextResponse } from "next/server";
 import { fetchHistSigma, fetchIvATM } from "../../../lib/volatility.js";
@@ -39,6 +41,17 @@ function unifyMeta(rawMeta = {}, extras = {}) {
   };
 }
 
+function buildUnifiedMeta(chosenMeta, want, used, days, cmDays) {
+  return unifyMeta(chosenMeta, {
+    sourceRequested: want,
+    sourceUsed: used,
+      fallback: used !== want,
+    fallback: want !== used,          // <-- explicit fallback flag
+    days: used === "hist" ? days : undefined,
+    cmDays: used === "iv" ? cmDays : undefined,
+  });
+}
+
 // --- GET: symbol-driven path (micro-cached) ------------------------------
 
 export async function GET(req) {
@@ -70,17 +83,13 @@ export async function GET(req) {
     async function tryIV() {
       try {
         const iv = await fetchIvATM(symbol, cmDays);
-        if (iv?.sigmaAnnual != null) {
-          chosen = iv; used = "iv";
-        }
+        if (iv?.sigmaAnnual != null) { chosen = iv; used = "iv"; }
       } catch {}
     }
     async function tryHIST() {
       try {
         const hv = await fetchHistSigma(symbol, days);
-        if (hv?.sigmaAnnual != null) {
-          chosen = hv; used = "hist";
-        }
+        if (hv?.sigmaAnnual != null) { chosen = hv; used = "hist"; }
       } catch {}
     }
 
@@ -96,17 +105,14 @@ export async function GET(req) {
       return err("VOL_UNAVAILABLE", "volatility unavailable");
     }
 
-    // Build unified meta (+ explicit fallback)
-    const meta = unifyMeta(chosen.meta, {
-      sourceRequested: want,
-      sourceUsed: used,
-      fallback: used !== want,
-      days: used === "hist" ? days : undefined,
-      cmDays: used === "iv" ? cmDays : undefined,
-    });
-
-    const data = { sigmaAnnual: chosen.sigmaAnnual, meta };
-    const payload = { ok: true, ...data, _ms: Date.now() - t0, cache: "miss" };
+    const meta = buildUnifiedMeta(chosen.meta, want, used, days, cmDays);
+    const payload = {
+      ok: true,
+      sigmaAnnual: chosen.sigmaAnnual,
+      meta,
+      _ms: Date.now() - t0,
+      cache: "miss",
+    };
 
     // Cache and return
     mset(key, payload, TTL_MS);
@@ -118,7 +124,10 @@ export async function GET(req) {
 
 // --- POST: direct-chain path (offline-friendly) ---------------------------
 // Accepts a JSON body like:
-// { "S0":100, "r":0, "q":0, "cmDays":30, "chain":{ "options":[ ... ] } }
+// {
+//   "S0": 100, "r": 0, "q": 0, "cmDays": 30,
+//   "chain": { "options": [ { "expirationDate": 1234567890, "calls":[...], "puts":[...] }, ... ] }
+// }
 export async function POST(req) {
   const t0 = Date.now();
   try {
@@ -139,7 +148,8 @@ export async function POST(req) {
       const unified = unifyMeta(meta, {
         sourceRequested: "iv",
         sourceUsed: "iv",
-        fallback: false,   // computed locally, no fallback
+      fallback: false,
+        fallback: false, // direct chain -> no fallback
         cmDays,
       });
 
@@ -169,13 +179,7 @@ export async function POST(req) {
       return err("VOL_UNAVAILABLE", "volatility unavailable");
     }
 
-    const meta = unifyMeta(chosen.meta, {
-      sourceRequested: want,
-      sourceUsed: used,
-      fallback: used !== want,
-      days: used === "hist" ? days : undefined,
-      cmDays: used === "iv" ? cmDays : undefined,
-    });
+    const meta = buildUnifiedMeta(chosen.meta, want, used, days, cmDays);
 
     return ok({ ok: true, sigmaAnnual: chosen.sigmaAnnual, meta, _ms: Date.now() - t0, cache: "bypass" });
   } catch (e) {
