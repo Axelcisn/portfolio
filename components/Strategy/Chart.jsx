@@ -47,6 +47,34 @@ const fmtCur = (x, ccy = "USD") => {
     return `${Number(x).toFixed(2)} ${ccy}`;
   }
 };
+/** Fast quantile on a numeric copy (no external libs). */
+function quantile(arr, p) {
+  if (!arr?.length) return NaN;
+  const a = [...arr].sort((x, y) => x - y);
+  const i = (a.length - 1) * Math.min(1, Math.max(0, p));
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  if (lo === hi) return a[lo];
+  const t = i - lo;
+  return a[lo] * (1 - t) + a[hi] * t;
+}
+/** Build a tight, zero-aware range for Greeks; trims outliers (2%-98%). */
+function greekNiceRange(values) {
+  if (!values?.length) return [-1, 1];
+  // Trim extreme spikes (gamma near strike, etc.)
+  let lo = quantile(values, 0.02);
+  let hi = quantile(values, 0.98);
+  // Always include zero for orientation
+  lo = Math.min(lo, 0);
+  hi = Math.max(hi, 0);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) {
+    const m = Number.isFinite(lo) ? Math.abs(lo) : 1;
+    lo = -m || -1;
+    hi = m || 1;
+  }
+  // Gentle padding
+  const pad = Math.max(1e-12, (hi - lo) * 0.08);
+  return [lo - pad, hi + pad];
+}
 
 /* ---------- safe hub accessors + fallback ---------- */
 const hasFn = (f) => typeof f === "function";
@@ -351,15 +379,13 @@ export default function Chart({
   const xScale = useMemo(() => lin(xDomain, [pad.l, pad.l + innerW]), [xDomain, innerW]);
   const yScale = useMemo(() => lin([yRange[0], yRange[1]], [pad.t + innerH, pad.t]), [yRange, innerH]);
 
-  const gMin = Math.min(...gVals), gMax = Math.max(...gVals), gPad = (gMax - gMin) * 0.1 || 1;
-  const gScale = useMemo(
-    () => lin([gMin - gPad, gMax + gPad], [pad.t + innerH, pad.t]),
-    [gMin, gMax, gPad, innerH]
-  );
+  // 🔧 RIGHT-AXIS (Greek) — trimmed, zero-aware, independent from P&L
+  const [gLo, gHi] = useMemo(() => greekNiceRange(gVals), [gVals]);
+  const gScale = useMemo(() => lin([gLo, gHi], [pad.t + innerH, pad.t]), [gLo, gHi, innerH]);
+  const gTicks = useMemo(() => ticks(gLo, gHi, 6), [gLo, gHi]);
 
   const xTicks = ticks(xDomain[0], xDomain[1], 7);
   const yTicks = ticks(yRange[0], yRange[1], 6);
-  const gTicks = ticks(gMin - gPad, gMax + gPad, 6);
   const centerStrike = ks.length ? (ks[0] + ks[ks.length - 1]) / 2 : Number(spot) || xDomain[0];
 
   // shaded PL areas
@@ -512,21 +538,12 @@ export default function Chart({
             Expiration P&amp;L
           </div>
           <div className="leg">
-            <span className="dot" style={{ background: greekColor }} />
+            <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
             {GREEK_LABEL[greekWhich] || "Greek"}
           </div>
-          <div className="leg">
-            <span className="dot" style={{ background: SPOT_COLOR }} />
-            Spot
-          </div>
-          <div className="leg">
-            <span className="dot" style={{ background: MEAN_COLOR }} />
-            Mean
-          </div>
-          <div className="leg">
-            <span className="dot" style={{ background: CI_COLOR }} />
-            95% CI
-          </div>
+          <div className="leg"><span className="dot" style={{ background: SPOT_COLOR }} />Spot</div>
+          <div className="leg"><span className="dot" style={{ background: MEAN_COLOR }} />Mean</div>
+          <div className="leg"><span className="dot" style={{ background: CI_COLOR }} />95% CI</div>
         </div>
         <div className="header-tools">
           <div className="greek-ctl">
@@ -597,13 +614,13 @@ export default function Chart({
 
         {/* RIGHT GREEK AXIS */}
         <line x1={pad.l + innerW} x2={pad.l + innerW} y1={pad.t} y2={pad.t + innerH}
-              stroke={greekColor} strokeOpacity="0.25" />
+              stroke={GREEK_COLOR[greekWhich] || "#f59e0b"} strokeOpacity="0.25" />
         {gTicks.map((t, i) => (
           <g key={`gr-${i}`}>
             <line x1={pad.l + innerW} x2={pad.l + innerW + 4} y1={gScale(t)} y2={gScale(t)}
-                  stroke={greekColor} strokeOpacity="0.8" />
+                  stroke={GREEK_COLOR[greekWhich] || "#f59e0b"} strokeOpacity="0.8" />
             <text x={pad.l + innerW + 6} y={gScale(t)} dy="0.32em" textAnchor="start"
-                  className="tick" style={{ fill: greekColor }}>
+                  className="tick" style={{ fill: GREEK_COLOR[greekWhich] || "#f59e0b" }}>
               {(() => {
                 const a = Math.abs(t);
                 if (greekWhich === "gamma") return a >= 1 ? t.toFixed(2) : a >= 0.1 ? t.toFixed(3) : t.toFixed(4);
@@ -617,7 +634,7 @@ export default function Chart({
           </g>
         ))}
         <text transform={`translate(${w - 14} ${pad.t + innerH / 2}) rotate(90)`}
-              textAnchor="middle" className="axis" style={{ fill: greekColor }}>
+              textAnchor="middle" className="axis" style={{ fill: GREEK_COLOR[greekWhich] || "#f59e0b" }}>
           {GREEK_LABEL[greekWhich] || "Greek"}
         </text>
 
@@ -627,7 +644,7 @@ export default function Chart({
         <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yExp[i])}`).join(" ")}
               fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
         <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")}
-              fill="none" stroke={greekColor} strokeWidth="2" />
+              fill="none" stroke={GREEK_COLOR[greekWhich] || "#f59e0b"} strokeWidth="2" />
 
         {/* overlays: spot / mean / CI */}
         {Number.isFinite(spot) && spot >= xDomain[0] && spot <= xDomain[1] && (
@@ -653,7 +670,7 @@ export default function Chart({
             <line x1={hover.sx} x2={hover.sx} y1={pad.t} y2={pad.t + innerH} stroke="rgba(255,255,255,.25)" />
             <circle cx={hover.sx} cy={hover.syNow} r="4" fill="var(--accent)" />
             <circle cx={hover.sx} cy={hover.syExp} r="4" fill="var(--text-muted,#8a8a8a)" />
-            <circle cx={hover.sx} cy={hover.gy} r="3.2" fill={greekColor} />
+            <circle cx={hover.sx} cy={hover.gy} r="3.2" fill={GREEK_COLOR[greekWhich] || "#f59e0b"} />
           </>
         )}
 
@@ -685,7 +702,7 @@ export default function Chart({
               <span className="val">{fmtCur(yExp[i], currency)}</span>
             </div>
             <div className="row">
-              <span className="dot" style={{ background: greekColor }} />
+              <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
               <span>{GREEK_LABEL[greekWhich]}</span>
               <span className="val">{fmtNum(gVals[i], 2)}</span>
             </div>
