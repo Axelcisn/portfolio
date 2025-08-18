@@ -4,42 +4,38 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const BASE = (process.env.IB_PROXY_URL || "http://localhost:4010").replace(/\/$/, "");
+const IB_PROXY_URL = process.env.IB_PROXY_URL || "http://localhost:4010";
 
-const ok = (data, status = 200) =>
-  NextResponse.json(data, {
+function ok(json, status = 200) {
+  return NextResponse.json(json, {
     status,
     headers: { "Cache-Control": "no-store" },
   });
+}
+function err(code, message, status = 200) {
+  // return 200 to keep frontend tolerant, include error payload
+  return ok({ ok: false, error: message, errorObj: { code, message } }, status);
+}
 
 export async function GET(req) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const symbol = (searchParams.get("symbol") || "").toUpperCase();
-    if (!symbol) return ok({ ok: false, error: "symbol required" }, 400);
+  const { searchParams } = new URL(req.url);
+  const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
+  if (!symbol) return err("SYMBOL_REQUIRED", "symbol required");
 
-    // Ask the IB proxy
-    const r = await fetch(`${BASE}/v1/company?symbol=${encodeURIComponent(symbol)}`, {
-      cache: "no-store",
-    });
+  const u = `${IB_PROXY_URL}/v1/company?symbol=${encodeURIComponent(symbol)}`;
+
+  try {
+    const r = await fetch(u, { cache: "no-store" });
     const j = await r.json().catch(() => ({}));
 
-    if (!r.ok || j?.ok === false) {
-      return ok({ ok: false, error: j?.error || "ib_unavailable" });
-    }
-
+    // Proxy through but always add a tiny bit of context for debugging
     return ok({
-      ok: true,
-      source: "ib",
-      symbol,
-      longName: j.longName ?? null,
-      currency: j.currency ?? null,
-      primaryExchange: j.primaryExchange ?? null,
-      exchangeName: j.primaryExchange ?? j.rawExchange ?? null,
-      conid: j.conid ?? null,
-      _meta: { via: BASE },
+      _via: "ib-proxy",
+      _target: IB_PROXY_URL,
+      ok: j?.ok !== false, // most proxy responses don't set ok=false on success
+      ...j,
     });
   } catch (e) {
-    return ok({ ok: false, error: String(e?.message ?? e) });
+    return err("PROXY_FETCH_FAILED", String(e?.message ?? e));
   }
 }
