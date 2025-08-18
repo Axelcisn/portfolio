@@ -261,77 +261,64 @@ export default function Strategy() {
     return name || company?.symbol || "";
   }, [company]);
 
-  /* ===== 06 — Vendor session warm-up & one-time enrichment retry ===== */
-  const [vendorReady, setVendorReady] = useState(false);
+  // If we only have a ticker (no good name), try IB first, then Yahoo.
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const s = await fetch("/api/yahoo/status", { cache: "no-store" }).then(r => r.json()).catch(() => null);
-        if (!s?.ok) await fetch("/api/yahoo/session", { cache: "no-store" }).catch(() => {});
-      } finally {
-        if (alive) setVendorReady(true);
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
-
-  // If we only have a ticker (no good name), retry enrichment once after session is ready
-  useEffect(() => {
-    if (!vendorReady || !company?.symbol) return;
-
-    const looksLikeTicker = (txt) => /^[A-Z0-9.\-]{1,6}$/.test(String(txt || ""));
-    const alreadyNamed =
-      company?.longName || company?.name || company?.shortName || company?.companyName;
-    if (alreadyNamed && !looksLikeTicker(alreadyNamed)) return;
+    if (!company?.symbol) return;
+    const needName = !(company?.longName || company?.name || company?.shortName || company?.companyName);
+    const needExch = !(company?.primaryExchange || company?.exchangeName || company?.exchange);
+    if (!needName && !needExch) return;
 
     let cancel = false;
     (async () => {
-      try {
-        const r = await fetch(`/api/company/autoFields?symbol=${encodeURIComponent(company.symbol)}`, { cache: "no-store" });
-        const j = await r.json();
-        if (cancel) return;
+      const sym = company.symbol;
 
-        const candName = j?.longName || j?.companyName || j?.shortName || j?.name || "";
-        const candEx = j?.fullExchangeName || j?.exchangeName || j?.primaryExchange || "";
+      const tryIB = async () => {
+        try {
+          const r = await fetch(`/api/provider/ib/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+          const j = await r.json();
+          if (r.ok && j?.ok !== false) return j;
+          return null;
+        } catch { return null; }
+      };
 
-        if (candName && !looksLikeTicker(candName)) {
-          setCompany(prev => ({
-            ...(prev || {}),
-            longName: candName,
-            name: candName,
-            exchangeName: prev?.exchangeName || candEx || prev?.exchange || prev?.exch,
-          }));
-          return;
-        }
-      } catch { /* ignore */ }
+      const tryYahoo = async () => {
+        try {
+          const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+          return await r.json();
+        } catch { return null; }
+      };
 
-      try {
-        const r = await fetch(`/api/company/search?q=${encodeURIComponent(company.symbol)}`, { cache: "no-store" });
-        const j = await r.json();
-        if (cancel) return;
+      const ib = await tryIB();
+      const ya = ib ? null : await tryYahoo();
+      if (cancel) return;
 
-        const hit = Array.isArray(j?.quotes)
-          ? j.quotes.find(q => String(q?.symbol || "").toUpperCase() === String(company.symbol).toUpperCase())
-          : null;
+      const name =
+        ib?.longName ||
+        ya?.longName || ya?.shortName || ya?.name || ya?.companyName ||
+        "";
 
-        const candName =
-          hit?.longname || hit?.longName || hit?.shortname || hit?.shortName || hit?.name || "";
-        const candEx = hit?.exchDisp || hit?.exchange || hit?.fullExchangeName || "";
+      const exchange =
+        ib?.primaryExchange ||
+        ya?.fullExchangeName || ya?.exchangeName || ya?.exchange || "";
 
-        if (candName && !/^[A-Z0-9.\-]{1,6}$/.test(candName)) {
-          setCompany(prev => ({
-            ...(prev || {}),
-            longName: candName,
-            name: candName,
-            exchangeName: prev?.exchangeName || candEx || prev?.exchange || prev?.exch,
-          }));
-        }
-      } catch { /* ignore */ }
+      const ccy = ib?.currency || ya?.currency || company?.currency;
+
+      if (name || exchange || ccy) {
+        setCompany(prev => {
+          if (!prev || prev.symbol !== sym) return prev;
+          return {
+            ...prev,
+            longName: name || prev.longName || prev.name,
+            exchangeName: exchange || prev.exchangeName || prev.exchange,
+            primaryExchange: ib?.primaryExchange || prev?.primaryExchange || null,
+            currency: ccy || prev.currency,
+          };
+        });
+      }
     })();
 
     return () => { cancel = true; };
-  }, [vendorReady, company?.symbol]);
+  }, [company?.symbol]);
 
   const handleApply = (legsObj, netPrem) => {
     setLegsUi(legsObj || {});
@@ -339,7 +326,7 @@ export default function Strategy() {
     if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
   };
 
-  /* ===== 07 — Tabs ===== */
+  /* ===== 06 — Tabs ===== */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -361,7 +348,7 @@ export default function Strategy() {
   useEffect(() => { if (memReady && company?.symbol) memSave({ tab }); }, [memReady, company?.symbol, tab, memSave]);
   useEffect(() => { if (memReady && company?.symbol) memSave({ expiry: selectedExpiry || null }); }, [memReady, company?.symbol, selectedExpiry, memSave]);
 
-  /* ===== 08 — Render ===== */
+  /* ===== 07 — Render ===== */
   return (
     <div className="container">
       {/* Hero */}
@@ -369,9 +356,7 @@ export default function Strategy() {
         <section className="hero">
           <div className="hero-id">
             <div className="hero-logo" aria-hidden="true">
-              {String(
-                (displayTitle || company?.symbol || "?").trim()
-              ).slice(0, 1)}
+              {String((displayTitle || company?.symbol || "?")).slice(0, 1)}
             </div>
             <div className="hero-texts">
               {/* Title: Company name only */}
