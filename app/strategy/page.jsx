@@ -13,14 +13,54 @@ import useExpiries from "../../components/Options/useExpiries";
 import useDebounce from "../../hooks/useDebounce";
 import useStrategyMemory from "../../components/state/useStrategyMemory";
 
-/* Exchange pretty labels used in the hero pill */
-const EX_NAMES = {
+/* ============================ Exchange helpers ============================ */
+/** Hard mappings for terse exchange codes */
+const EX_CODES = {
   NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
   NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
   MIL: "Milan", LSE: "London", EBS: "Swiss", SWX: "Swiss",
   TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
 };
-const prettyEx = (x) => (EX_NAMES[x] || x || "").toUpperCase();
+
+/** Normalize arbitrary vendor strings to a clean display label */
+function normalizeExchangeLabel(co) {
+  const cands = [
+    co?.primaryExchange,
+    co?.fullExchangeName,
+    co?.exchangeName,
+    co?.exchange,
+    co?.exch,
+    co?.ex,
+    co?.market,
+    co?.mic,
+  ].map(x => String(x || "").trim()).filter(Boolean);
+
+  if (!cands.length) return "";
+
+  // 1) Exact code map first (e.g., NMS → NASDAQ)
+  for (const raw of cands) {
+    const up = raw.toUpperCase();
+    if (EX_CODES[up]) return EX_CODES[up];
+  }
+
+  // 2) Heuristic text map (handles "NasdaqGS", "Nasdaq Stock Market", etc.)
+  const txt = cands.join(" ").toLowerCase();
+
+  if (/(nasdaq|nasdaqgs|nasdaqgm|nasdaqcm)/.test(txt)) return "NASDAQ";
+  if (/nyse\s*arca|arca|pcx/.test(txt)) return "NYSE Arca";
+  if (/nyse(?!\s*arca)/.test(txt)) return "NYSE";
+  if (/amex|nysemkt/.test(txt)) return "AMEX";
+  if (/london|lse/.test(txt)) return "London";
+  if (/milan|borsa italiana|mil/.test(txt)) return "Milan";
+  if (/six|swiss|ebs|swx/.test(txt)) return "Swiss";
+  if (/tsx|toronto/.test(txt)) return "Toronto";
+  if (/b3|sao\s*paulo|bovespa|sao/.test(txt)) return "São Paulo";
+  if (/buenos\s*aires|byma|bue/.test(txt)) return "Buenos Aires";
+
+  // 3) Fallback: use the first candidate as-is (title-cased-ish)
+  const first = cands[0];
+  return first.length > 3 ? first : first.toUpperCase();
+}
 
 const pickNearest = (list) => {
   if (!Array.isArray(list) || list.length === 0) return null;
@@ -209,23 +249,18 @@ export default function Strategy() {
   }, [company?.symbol, rawSpot]);
 
   /* ===== 05 — Hero helpers ===== */
-  const exLabel = useMemo(() => {
-    const raw =
-      company?.exchange ||
-      company?.exchangeName ||
-      company?.ex ||
-      company?.exch ||
-      "";
-    return prettyEx(raw);
-  }, [company]);
+  const exLabel = useMemo(() => (company ? normalizeExchangeLabel(company) : ""), [company]);
 
-  // TradingView-style: Big title is the Company Name only; ticker/exchange live in the pill
-  const companyName =
-    company?.longName ||
-    company?.name ||
-    company?.shortName ||
-    company?.symbol ||
-    "";
+  // Big title = Company Name only (no "(AAPL)").
+  const displayTitle = useMemo(() => {
+    const name =
+      company?.longName ??
+      company?.name ??
+      company?.shortName ??
+      company?.companyName ??
+      "";
+    return name || company?.symbol || "";
+  }, [company]);
 
   const handleApply = (legsObj, netPrem) => {
     setLegsUi(legsObj || {});
@@ -266,8 +301,8 @@ export default function Strategy() {
               {String(company?.symbol || "?").slice(0, 1)}
             </div>
             <div className="hero-texts">
-              {/* Big title: Company Name (no ticker here) */}
-              <h1 className="hero-name">{companyName}</h1>
+              {/* Title: Company name only */}
+              <h1 className="hero-name">{displayTitle}</h1>
               <div className="hero-pill" aria-label="Ticker and exchange">
                 <span className="tkr">{company.symbol}</span>
                 {exLabel && (
