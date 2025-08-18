@@ -2,17 +2,19 @@
 "use client";
 
 /**
- * Strategy tile — refined
+ * Strategy tile — refined + OA-style icon support
+ * - Accepts optional props: `iconName` and `renderIcon(name) => ReactNode`.
+ * - If `renderIcon` is provided (from StrategyGallery), render OA-style icon.
+ * - Otherwise fallback to local inline glyphs (no external imports).
  * - Small direction pill at top-right (Bullish/Bearish/Neutral).
  * - Metrics in two rows:
  *      Row 1: Sharpe | P[Win]
  *      Row 2: E[Prof] | E[Ret]
  * - Only the *values* are in pills. E[Prof] and E[Ret] pills turn green/red by sign.
  * - No footer tags.
- * - Inline glyph system; no external imports.
  */
 
-export default function StrategyTile({ item, onOpen }) {
+export default function StrategyTile({ item, onOpen, iconName, renderIcon }) {
   const {
     id,
     name,
@@ -33,6 +35,12 @@ export default function StrategyTile({ item, onOpen }) {
   const vProf = num(metrics.expectedProfit);
   const vRet = num(metrics.expectedReturn);
 
+  // Prefer gallery-provided OA icon; otherwise fallback to inline glyph.
+  const iconEl =
+    typeof renderIcon === "function"
+      ? renderIcon(iconName || id || name)
+      : null;
+
   return (
     <button
       type="button"
@@ -44,7 +52,13 @@ export default function StrategyTile({ item, onOpen }) {
       {/* header: icon + small direction pill */}
       <div className="s-head">
         <div className="s-ico">
-          <StrategyGlyphLocal id={id || name} manual={isManual} />
+          {iconEl ? (
+            // OA-style icon tile provided by gallery
+            iconEl
+          ) : (
+            // Fallback: local inline glyphs (keeps existing behavior)
+            <StrategyGlyphLocal id={iconName || id || name} manual={isManual} />
+          )}
         </div>
         <DirectionBadge dir={direction} />
       </div>
@@ -99,7 +113,7 @@ export default function StrategyTile({ item, onOpen }) {
         .s-tile.manual{ background:linear-gradient(0deg, rgba(0,122,255,.06), transparent), var(--card); }
 
         .s-head{ display:flex; align-items:center; justify-content:space-between; }
-        .s-ico{ width:44px; height:44px; }
+        .s-ico{ width:44px; height:44px; display:grid; place-items:center; }
         .s-name{ font-weight:700; font-size:16px; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
         .s-metrics{ display:grid; gap:8px; }
@@ -151,7 +165,7 @@ function fmt(n){ if(!Number.isFinite(n)) return "—"; const s=Math.abs(n)>=10?n
 function fmtPct(n){ if(!Number.isFinite(n)) return "—"; return `${(n).toFixed(0)}%`; }
 function fmtMoney(n){ if(!Number.isFinite(n)) return "—"; return (Math.abs(n)>=1000? n.toFixed(0) : n.toFixed(0)); }
 
-/* ---------- Inline glyph system (no external imports) ---------- */
+/* ---------- Inline glyph system (fallback only; no external imports) ---------- */
 function StrategyGlyphLocal({ id, manual=false }){
   const key = manual ? "manual" : iconKeyFromId(id || "");
   const C = ICONS[key] || ICONS.up;
