@@ -219,6 +219,15 @@ export default function Strategy() {
     return prettyEx(raw);
   }, [company]);
 
+  // Compose a TradingView-style title: "Company Name (TICKER)"
+  const companyName =
+    company?.name ||
+    company?.longName ||
+    company?.shortName ||
+    company?.symbol ||
+    "";
+  const displayTitle = company?.symbol ? `${companyName} (${company.symbol})` : companyName;
+
   const heroName = company?.name || company?.longName || company?.symbol || "";
 
   const handleApply = (legsObj, netPrem) => {
@@ -260,7 +269,8 @@ export default function Strategy() {
               {String(company?.symbol || "?").slice(0, 1)}
             </div>
             <div className="hero-texts">
-              <h1 className="hero-name">{heroName}</h1>
+              {/* TradingView-style: Company Name (TICKER) */}
+              <h1 className="hero-name">{displayTitle}</h1>
               <div className="hero-pill" aria-label="Ticker and exchange">
                 <span className="tkr">{company.symbol}</span>
                 {exLabel && (
@@ -295,7 +305,8 @@ export default function Strategy() {
           <div className="titles">
             <div className="eyebrow">Portfolio</div>
             <h1 className="page-title">Strategy</h1>
-            <p className="subtitle">Build, compare, and validate your options strategy.</p>
+            {/* UPDATED COPY */}
+            <p className="subtitle">Build, compare, and validate option strategies.</p>
           </div>
         </header>
       )}
@@ -479,3 +490,4 @@ export default function Strategy() {
     </div>
   );
 }
+
