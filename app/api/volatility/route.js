@@ -3,6 +3,7 @@
 
 import { NextResponse } from "next/server";
 import { fetchHistSigma, fetchIvATM } from "../../../lib/volatility.js";
+import { constantMaturityATM } from "../../../lib/volatility/options.js";
 import { mget, mset, mkey } from "../../../lib/server/mcache.js";
 
 export const runtime = "nodejs";
@@ -30,18 +31,16 @@ function normSource(s) {
 }
 
 function unifyMeta(rawMeta = {}, extras = {}) {
-  // Normalize common diagnostics; keep anything vendor provided.
   const asOf = rawMeta.asOf || new Date().toISOString();
-  const base = {
+  return {
     asOf,
     basis: 252,
     ...rawMeta,
     ...extras,
   };
-  return base;
 }
 
-// --- route ---------------------------------------------------------------
+// --- GET: symbol-driven path (micro-cached) ------------------------------
 
 export async function GET(req) {
   const t0 = Date.now();
@@ -55,7 +54,7 @@ export async function GET(req) {
     const want = normSource(sourceParam);
 
     // Horizons
-    const days = clamp(searchParams.get("days") ?? 30, 1, 365);       // historical lookback
+    const days = clamp(searchParams.get("days") ?? 30, 1, 365);            // historical lookback
     const cmDays = clamp(searchParams.get("cmDays") ?? days ?? 30, 1, 365); // target days for IV
 
     // Micro-cache key: symbol + normalized source request + horizons
@@ -71,7 +70,7 @@ export async function GET(req) {
     // Try requested source first, then fallback to the other
     async function tryIV() {
       try {
-        // fetchIvATM already takes a target horizon; we pass cmDays for constant-maturity intent.
+        // fetchIvATM takes a target horizon; we pass cmDays for constant-maturity intent.
         const iv = await fetchIvATM(symbol, cmDays);
         if (iv?.sigmaAnnual != null) {
           chosen = iv;
@@ -115,6 +114,75 @@ export async function GET(req) {
     // Cache and return
     mset(key, payload, TTL_MS);
     return ok(payload);
+  } catch (e) {
+    return err("INTERNAL_ERROR", String(e?.message ?? e));
+  }
+}
+
+// --- POST: direct-chain path (offline-friendly) ---------------------------
+// Accepts a JSON body like:
+// {
+//   "S0": 100, "r": 0, "q": 0, "cmDays": 30,
+//   "chain": { "options": [ { "expirationDate": 1234567890, "calls":[...], "puts":[...] }, ... ] }
+// }
+export async function POST(req) {
+  const t0 = Date.now();
+  try {
+    const body = await req.json().catch(() => ({}));
+
+    // If a raw options chain is provided, compute IV locally (no external fetch).
+    if (body?.chain) {
+      const S0 = Number(body.S0 ?? body.spot ?? body.price);
+      const r = Number(body.r ?? 0) || 0;
+      const q = Number(body.q ?? 0) || 0;
+      const cmDays = clamp(body.cmDays ?? 30, 1, 365);
+
+      if (!(S0 > 0)) return err("S0_REQUIRED", "S0 (spot) must be > 0");
+
+      const { iv, meta } = constantMaturityATM(body.chain, { S0, r, q, cmDays, nowMs: Date.now() });
+
+      if (!(iv > 0)) return err("IV_UNAVAILABLE", "could not derive IV from provided chain");
+
+      const unified = unifyMeta(meta, {
+        sourceRequested: "iv",
+        sourceUsed: "iv",
+        cmDays,
+      });
+
+      return ok({ ok: true, sigmaAnnual: iv, meta: unified, _ms: Date.now() - t0, cache: "bypass" });
+    }
+
+    // Otherwise allow POST with { symbol, source?, days?, cmDays? } as a convenience.
+    const symbol = (body?.symbol || "").trim().toUpperCase();
+    if (!symbol) return err("SYMBOL_OR_CHAIN_REQUIRED", "provide either a symbol or an options chain");
+
+    const want = normSource(body?.source ?? body?.volSource ?? "iv");
+    const days = clamp(body?.days ?? 30, 1, 365);
+    const cmDays = clamp(body?.cmDays ?? days ?? 30, 1, 365);
+
+    let chosen = null;
+    let used = null;
+
+    if (want === "iv") {
+      try { const iv = await fetchIvATM(symbol, cmDays); if (iv?.sigmaAnnual != null) { chosen = iv; used = "iv"; } } catch {}
+      if (!chosen) { try { const hv = await fetchHistSigma(symbol, days); if (hv?.sigmaAnnual != null) { chosen = hv; used = "hist"; } } catch {} }
+    } else {
+      try { const hv = await fetchHistSigma(symbol, days); if (hv?.sigmaAnnual != null) { chosen = hv; used = "hist"; } } catch {}
+      if (!chosen) { try { const iv = await fetchIvATM(symbol, cmDays); if (iv?.sigmaAnnual != null) { chosen = iv; used = "iv"; } } catch {} }
+    }
+
+    if (!chosen || chosen.sigmaAnnual == null) {
+      return err("VOL_UNAVAILABLE", "volatility unavailable");
+    }
+
+    const meta = unifyMeta(chosen.meta, {
+      sourceRequested: want,
+      sourceUsed: used,
+      days: used === "hist" ? days : undefined,
+      cmDays: used === "iv" ? cmDays : undefined,
+    });
+
+    return ok({ ok: true, sigmaAnnual: chosen.sigmaAnnual, meta, _ms: Date.now() - t0, cache: "bypass" });
   } catch (e) {
     return err("INTERNAL_ERROR", String(e?.message ?? e));
   }

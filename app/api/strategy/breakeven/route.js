@@ -1,6 +1,5 @@
 // app/api/strategy/breakeven/route.js
 // Next.js (App Router) API — Break-even calculator for option strategies.
-// Always returns 200 with { ok:false, error } on failures (legacy UI parity).
 
 import { NextResponse } from "next/server";
 import { computeBreakEvens } from "lib/strategy/breakeven.js";
@@ -70,21 +69,26 @@ async function parseInput(req) {
 
 /* --------------------- light normalization --------------------- */
 function normalizeLegs(legs = []) {
-  return (legs || []).map((l) => ({
-    type: normType(l?.type),     // 'call'|'put'|'stock'
-    side: normSide(l?.side),     // 'long'|'short'
-    strike: toN(l?.strike),
-    premium: toN(l?.premium),
-    qty: isNum(l?.qty) ? Math.max(0, Number(l.qty)) : 1,
-    price: toN(l?.price),        // for stock basis (optional)
-  }));
+  return (legs || []).map((l) => {
+    const kind = normType(l?.kind ?? l?.type);       // feed engine with 'kind'
+    const side = normSide(l?.side);
+    return {
+      kind,                                          // <- engine expects this
+      type: kind,                                    // <- alias for any UI that reads 'type'
+      side,                                          // 'long' | 'short'
+      strike: toN(l?.strike),
+      premium: toN(l?.premium),
+      qty: isNum(l?.qty) ? Math.max(0, Number(l.qty)) : 1,
+      price: toN(l?.price),                          // for stock basis (optional)
+    };
+  });
 }
 
 /* --------------------- premiums & strikes (meta) --------------------- */
 function sumPremium(legs = []) {
   let paid = 0, received = 0;
   for (const l of legs) {
-    if (l.type !== "call" && l.type !== "put") continue;
+    if (l.kind !== "call" && l.kind !== "put") continue;
     const q = isNum(l.qty) ? Math.max(0, Number(l.qty)) : 1;
     const p = isNum(l.premium) ? Number(l.premium) : 0;
     if (l.side === "long") paid += p * q;
@@ -97,16 +101,16 @@ function sumPremium(legs = []) {
     paid, received,
   };
 }
-function strikesAt(legs, type) {
+function strikesAt(legs, kindName) {
   return legs
-    .filter((l) => l.type === type && isNum(l.strike))
+    .filter((l) => l.kind === kindName && isNum(l.strike))
     .map((l) => Number(l.strike))
     .sort((a, b) => a - b);
 }
 function shortOptionCreditTotal(legs = []) {
   let total = 0;
   for (const l of legs) {
-    if ((l.type === "call" || l.type === "put") && l.side === "short") {
+    if ((l.kind === "call" || l.kind === "put") && l.side === "short") {
       const q = isNum(l.qty) ? Math.max(0, Number(l.qty)) : 1;
       const p = isNum(l.premium) ? Number(l.premium) : 0;
       total += q * p;
@@ -117,8 +121,8 @@ function shortOptionCreditTotal(legs = []) {
 
 /* ---------- tiny inference (only for labeling & test parity) ---------- */
 function inferStrategyKeyFromLegs(legs) {
-  const calls = legs.filter(l => l.type === "call");
-  const puts  = legs.filter(l => l.type === "put");
+  const calls = legs.filter(l => l.kind === "call");
+  const puts  = legs.filter(l => l.kind === "put");
   const longCalls  = calls.filter(l => l.side === "long");
   const shortCalls = calls.filter(l => l.side === "short");
   const longPuts   = puts.filter(l => l.side === "long");
@@ -160,8 +164,8 @@ function disambiguateStraddle(explicitKey, legs) {
   const key = slug(explicitKey);
   if (key !== "short_straddle" && key !== "long_straddle") return null;
   const side = key.startsWith("short") ? "short" : "long";
-  const calls = strikesAt(legs.filter((l) => l.type === "call" && l.side === side), "call");
-  const puts  = strikesAt(legs.filter((l) => l.type === "put"  && l.side === side), "put");
+  const calls = strikesAt(legs.filter((l) => l.kind === "call" && l.side === side), "call");
+  const puts  = strikesAt(legs.filter((l) => l.kind === "put"  && l.side === side), "put");
   const Kc = calls[0] ?? null, Kp = puts[0] ?? null;
   if (isNum(Kc) && isNum(Kp) && Math.abs(Kc - Kp) > 1e-6) {
     return side === "short" ? "short_strangle" : "long_strangle";
@@ -172,8 +176,8 @@ function disambiguateStraddle(explicitKey, legs) {
 /* ------------------ local closed-form fallbacks / overrides ------------------ */
 // Short straddle: BE = K ± (total net credit)
 function localShortStraddleBE(legs) {
-  const calls = strikesAt(legs.filter(l => l.type === "call" && l.side === "short"), "call");
-  const puts  = strikesAt(legs.filter(l => l.type === "put"  && l.side === "short"), "put");
+  const calls = strikesAt(legs.filter(l => l.kind === "call" && l.side === "short"), "call");
+  const puts  = strikesAt(legs.filter(l => l.kind === "put"  && l.side === "short"), "put");
   const K = (calls[0] ?? puts[0] ?? null);
   const C = shortOptionCreditTotal(legs);
   if (!isNum(K) || !isNum(C)) return null;
@@ -182,8 +186,8 @@ function localShortStraddleBE(legs) {
 
 // Short strangle: BE = [Kput - (total credit), Kcall + (total credit)]
 function localShortStrangleBE(legs) {
-  const Kput  = strikesAt(legs.filter(l => l.type === "put"  && l.side === "short"), "put")[0] ?? null;
-  const Kcall = strikesAt(legs.filter(l => l.type === "call" && l.side === "short"), "call").slice(-1)[0] ?? null;
+  const Kput  = strikesAt(legs.filter(l => l.kind === "put"  && l.side === "short"), "put")[0] ?? null;
+  const Kcall = strikesAt(legs.filter(l => l.kind === "call" && l.side === "short"), "call").slice(-1)[0] ?? null;
   const C = shortOptionCreditTotal(legs); // TOTAL credit across both short legs
   if (!isNum(Kput) || !isNum(Kcall) || !isNum(C)) return null;
   return [Kput - C, Kcall + C];
@@ -191,7 +195,7 @@ function localShortStrangleBE(legs) {
 
 // Debit call vertical (bull call): BE = K_long + netDebit
 function localBullCallSpreadBE(legs, premiums) {
-  const Klong = strikesAt(legs.filter(l => l.type === "call" && l.side === "long"), "call")[0] ?? null;
+  const Klong = strikesAt(legs.filter(l => l.kind === "call" && l.side === "long"), "call")[0] ?? null;
   if (!isNum(Klong)) return null;
   const D = premiums?.netDebit ?? sumPremium(legs).netDebit;
   if (!isNum(D)) return null;
@@ -200,7 +204,7 @@ function localBullCallSpreadBE(legs, premiums) {
 
 // Debit put vertical (bear put): BE = K_long - netDebit
 function localBearPutSpreadBE(legs, premiums) {
-  const longPuts = strikesAt(legs.filter(l => l.type === "put" && l.side === "long"), "put");
+  const longPuts = strikesAt(legs.filter(l => l.kind === "put" && l.side === "long"), "put");
   const Klong = longPuts.length ? longPuts.slice(-1)[0] : null; // highest strike
   if (!isNum(Klong)) return null;
   const D = premiums?.netDebit ?? sumPremium(legs).netDebit;
@@ -210,7 +214,7 @@ function localBearPutSpreadBE(legs, premiums) {
 
 // Credit call vertical (bear call): BE = K_short + netCredit
 function localBearCallSpreadBE(legs, premiums) {
-  const Kshort = strikesAt(legs.filter(l => l.type === "call" && l.side === "short"), "call")[0] ?? null; // lower strike
+  const Kshort = strikesAt(legs.filter(l => l.kind === "call" && l.side === "short"), "call")[0] ?? null; // lower strike
   if (!isNum(Kshort)) return null;
   const C = premiums?.netCredit ?? sumPremium(legs).netCredit;
   if (!isNum(C)) return null;
@@ -219,7 +223,7 @@ function localBearCallSpreadBE(legs, premiums) {
 
 // Credit put vertical (bull put): BE = K_short - netCredit
 function localBullPutSpreadBE(legs, premiums) {
-  const shortPuts = strikesAt(legs.filter(l => l.type === "put" && l.side === "short"), "put");
+  const shortPuts = strikesAt(legs.filter(l => l.kind === "put" && l.side === "short"), "put");
   const Kshort = shortPuts.length ? shortPuts.slice(-1)[0] : null; // higher strike
   if (!isNum(Kshort)) return null;
   const C = premiums?.netCredit ?? sumPremium(legs).netCredit;
@@ -229,8 +233,8 @@ function localBullPutSpreadBE(legs, premiums) {
 
 // Iron butterfly: BE = Kshort ± netCredit
 function localIronButterflyBE(legs, premiums) {
-  const KcShort = strikesAt(legs.filter(l => l.type === "call" && l.side === "short"), "call")[0] ?? null;
-  const KpShort = strikesAt(legs.filter(l => l.type === "put"  && l.side === "short"), "put")[0] ?? null;
+  const KcShort = strikesAt(legs.filter(l => l.kind === "call" && l.side === "short"), "call")[0] ?? null;
+  const KpShort = strikesAt(legs.filter(l => l.kind === "put"  && l.side === "short"), "put")[0] ?? null;
   const Kshort = isNum(KcShort) ? KcShort : KpShort;
   const C = (premiums?.netCredit ?? sumPremium(legs).netCredit);
   if (!isNum(Kshort) || !isNum(C)) return null;
@@ -327,7 +331,6 @@ async function handle(req) {
           break;
         }
         default:
-          // leave as is; unknown/unhandled shapes will just echo engine/meta info
           break;
       }
     }
