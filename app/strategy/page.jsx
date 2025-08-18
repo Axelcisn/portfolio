@@ -45,7 +45,6 @@ function normalizeExchangeLabel(co) {
 
   // 2) Heuristic text map (handles "NasdaqGS", "Nasdaq Stock Market", etc.)
   const txt = cands.join(" ").toLowerCase();
-
   if (/(nasdaq|nasdaqgs|nasdaqgm|nasdaqcm)/.test(txt)) return "NASDAQ";
   if (/nyse\s*arca|arca|pcx/.test(txt)) return "NYSE Arca";
   if (/nyse(?!\s*arca)/.test(txt)) return "NYSE";
@@ -57,7 +56,7 @@ function normalizeExchangeLabel(co) {
   if (/b3|sao\s*paulo|bovespa|sao/.test(txt)) return "São Paulo";
   if (/buenos\s*aires|byma|bue/.test(txt)) return "Buenos Aires";
 
-  // 3) Fallback: use the first candidate as-is (title-cased-ish)
+  // 3) Fallback: use the first candidate as-is
   const first = cands[0];
   return first.length > 3 ? first : first.toUpperCase();
 }
@@ -144,7 +143,7 @@ export default function Strategy() {
 
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
-    const sc = toLegAPI(legsUi?.sc || {});
+    the sc = toLegAPI(legsUi?.sc || {});
     const lp = toLegAPI(legsUi?.lp || {});
     const sp = toLegAPI(legsUi?.sp || {});
     return { lc, sc, lp, sp };
@@ -262,13 +261,85 @@ export default function Strategy() {
     return name || company?.symbol || "";
   }, [company]);
 
+  /* ===== 06 — Vendor session warm-up & one-time enrichment retry ===== */
+  const [vendorReady, setVendorReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await fetch("/api/yahoo/status", { cache: "no-store" }).then(r => r.json()).catch(() => null);
+        if (!s?.ok) await fetch("/api/yahoo/session", { cache: "no-store" }).catch(() => {});
+      } finally {
+        if (alive) setVendorReady(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // If we only have a ticker (no good name), retry enrichment once after session is ready
+  useEffect(() => {
+    if (!vendorReady || !company?.symbol) return;
+
+    const looksLikeTicker = (txt) => /^[A-Z0-9.\-]{1,6}$/.test(String(txt || ""));
+    const alreadyNamed =
+      company?.longName || company?.name || company?.shortName || company?.companyName;
+    if (alreadyNamed && !looksLikeTicker(alreadyNamed)) return;
+
+    let cancel = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/company/autoFields?symbol=${encodeURIComponent(company.symbol)}`, { cache: "no-store" });
+        const j = await r.json();
+        if (cancel) return;
+
+        const candName = j?.longName || j?.companyName || j?.shortName || j?.name || "";
+        const candEx = j?.fullExchangeName || j?.exchangeName || j?.primaryExchange || "";
+
+        if (candName && !looksLikeTicker(candName)) {
+          setCompany(prev => ({
+            ...(prev || {}),
+            longName: candName,
+            name: candName,
+            exchangeName: prev?.exchangeName || candEx || prev?.exchange || prev?.exch,
+          }));
+          return;
+        }
+      } catch { /* ignore */ }
+
+      try {
+        const r = await fetch(`/api/company/search?q=${encodeURIComponent(company.symbol)}`, { cache: "no-store" });
+        const j = await r.json();
+        if (cancel) return;
+
+        const hit = Array.isArray(j?.quotes)
+          ? j.quotes.find(q => String(q?.symbol || "").toUpperCase() === String(company.symbol).toUpperCase())
+          : null;
+
+        const candName =
+          hit?.longname || hit?.longName || hit?.shortname || hit?.shortName || hit?.name || "";
+        const candEx = hit?.exchDisp || hit?.exchange || hit?.fullExchangeName || "";
+
+        if (candName && !/^[A-Z0-9.\-]{1,6}$/.test(candName)) {
+          setCompany(prev => ({
+            ...(prev || {}),
+            longName: candName,
+            name: candName,
+            exchangeName: prev?.exchangeName || candEx || prev?.exchange || prev?.exch,
+          }));
+        }
+      } catch { /* ignore */ }
+    })();
+
+    return () => { cancel = true; };
+  }, [vendorReady, company?.symbol]);
+
   const handleApply = (legsObj, netPrem) => {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
     if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
   };
 
-  /* ===== 06 — Tabs ===== */
+  /* ===== 07 — Tabs ===== */
   const [tab, setTab] = useState("overview");
   const TABS = [
     { key: "overview",   label: "Overview" },
@@ -290,7 +361,7 @@ export default function Strategy() {
   useEffect(() => { if (memReady && company?.symbol) memSave({ tab }); }, [memReady, company?.symbol, tab, memSave]);
   useEffect(() => { if (memReady && company?.symbol) memSave({ expiry: selectedExpiry || null }); }, [memReady, company?.symbol, selectedExpiry, memSave]);
 
-  /* ===== 07 — Render ===== */
+  /* ===== 08 — Render ===== */
   return (
     <div className="container">
       {/* Hero */}
@@ -298,7 +369,9 @@ export default function Strategy() {
         <section className="hero">
           <div className="hero-id">
             <div className="hero-logo" aria-hidden="true">
-              {String(company?.symbol || "?").slice(0, 1)}
+              {String(
+                (displayTitle || company?.symbol || "?").trim()
+              ).slice(0, 1)}
             </div>
             <div className="hero-texts">
               {/* Title: Company name only */}

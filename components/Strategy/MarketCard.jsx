@@ -61,14 +61,12 @@ async function fetchCompanyLight(symbol) {
     return { currency: "", exchange: "" };
   }
 }
-
 function decideOrigin(meta) {
   const ccy = (meta?.currency || "").toUpperCase();
   if (CCY_MAP[ccy]) return CCY_MAP[ccy];
   const exCcy = EX_TO_CCY[(meta?.exchange || "").toUpperCase()];
   if (exCcy && CCY_MAP[exCcy]) return CCY_MAP[exCcy];
-  /* default: do not change selection */
-  return null;
+  return null; // keep current selection
 }
 
 export default function MarketCard({
@@ -80,8 +78,14 @@ export default function MarketCard({
   const [riskFreePct, setRiskFreePct] = useState("");
   const [mrpPct, setMrpPct] = useState("");
 
+  // Choose initial index from incoming currency prop
+  const initialIndex = useMemo(
+    () => CCY_MAP[(propCcy || "").toUpperCase()]?.index || "STOXX",
+    [propCcy]
+  );
+
   // Index avg return controls
-  const [indexKey, setIndexKey] = useState("STOXX");
+  const [indexKey, setIndexKey] = useState(initialIndex);
   const [lookback, setLookback] = useState("2y");
   const [indexAnn, setIndexAnn] = useState(null);
 
@@ -174,7 +178,7 @@ export default function MarketCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch when index/lookback/auto flags/currency change (debounced)
+  // Re-fetch when index/lookback/currency or Auto flags change (debounced)
   useEffect(() => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => fetchStats(), 250);
