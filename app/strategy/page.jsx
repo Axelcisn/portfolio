@@ -143,7 +143,7 @@ export default function Strategy() {
 
   const legs = useMemo(() => {
     const lc = toLegAPI(legsUi?.lc || {});
-    the sc = toLegAPI(legsUi?.sc || {});
+    const sc = toLegAPI(legsUi?.sc || {});
     const lp = toLegAPI(legsUi?.lp || {});
     const sp = toLegAPI(legsUi?.sp || {});
     return { lc, sc, lp, sp };
