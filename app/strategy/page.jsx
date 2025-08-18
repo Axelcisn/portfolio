@@ -219,16 +219,13 @@ export default function Strategy() {
     return prettyEx(raw);
   }, [company]);
 
-  // Compose a TradingView-style title: "Company Name (TICKER)"
+  // TradingView-style: Big title is the Company Name only; ticker/exchange live in the pill
   const companyName =
-    company?.name ||
     company?.longName ||
+    company?.name ||
     company?.shortName ||
     company?.symbol ||
     "";
-  const displayTitle = company?.symbol ? `${companyName} (${company.symbol})` : companyName;
-
-  const heroName = company?.name || company?.longName || company?.symbol || "";
 
   const handleApply = (legsObj, netPrem) => {
     setLegsUi(legsObj || {});
@@ -269,8 +266,8 @@ export default function Strategy() {
               {String(company?.symbol || "?").slice(0, 1)}
             </div>
             <div className="hero-texts">
-              {/* TradingView-style: Company Name (TICKER) */}
-              <h1 className="hero-name">{displayTitle}</h1>
+              {/* Big title: Company Name (no ticker here) */}
+              <h1 className="hero-name">{companyName}</h1>
               <div className="hero-pill" aria-label="Ticker and exchange">
                 <span className="tkr">{company.symbol}</span>
                 {exLabel && (
@@ -490,4 +487,3 @@ export default function Strategy() {
     </div>
   );
 }
-
