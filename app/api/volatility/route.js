@@ -1,6 +1,5 @@
 // app/api/volatility/route.js
-// Volatility API with IV/Hist switching, cmDays support, unified meta, micro-cache,
-// and explicit fallback flag.
+// Volatility API with IV/Hist switching, cmDays support, unified meta, and micro-cache.
 
 import { NextResponse } from "next/server";
 import { fetchHistSigma, fetchIvATM } from "../../../lib/volatility.js";
@@ -41,16 +40,6 @@ function unifyMeta(rawMeta = {}, extras = {}) {
   };
 }
 
-function buildUnifiedMeta(chosenMeta, want, used, days, cmDays) {
-  return unifyMeta(chosenMeta, {
-    sourceRequested: want,
-    sourceUsed: used,
-    fallback: want !== used,          // <-- explicit fallback flag
-    days: used === "hist" ? days : undefined,
-    cmDays: used === "iv" ? cmDays : undefined,
-  });
-}
-
 // --- GET: symbol-driven path (micro-cached) ------------------------------
 
 export async function GET(req) {
@@ -65,7 +54,7 @@ export async function GET(req) {
     const want = normSource(sourceParam);
 
     // Horizons
-    const days = clamp(searchParams.get("days") ?? 30, 1, 365);             // historical lookback
+    const days = clamp(searchParams.get("days") ?? 30, 1, 365);            // historical lookback
     const cmDays = clamp(searchParams.get("cmDays") ?? days ?? 30, 1, 365); // target days for IV
 
     // Micro-cache key: symbol + normalized source request + horizons
@@ -81,14 +70,21 @@ export async function GET(req) {
     // Try requested source first, then fallback to the other
     async function tryIV() {
       try {
+        // fetchIvATM takes a target horizon; we pass cmDays for constant-maturity intent.
         const iv = await fetchIvATM(symbol, cmDays);
-        if (iv?.sigmaAnnual != null) { chosen = iv; used = "iv"; }
+        if (iv?.sigmaAnnual != null) {
+          chosen = iv;
+          used = "iv";
+        }
       } catch {}
     }
     async function tryHIST() {
       try {
         const hv = await fetchHistSigma(symbol, days);
-        if (hv?.sigmaAnnual != null) { chosen = hv; used = "hist"; }
+        if (hv?.sigmaAnnual != null) {
+          chosen = hv;
+          used = "hist";
+        }
       } catch {}
     }
 
@@ -104,14 +100,17 @@ export async function GET(req) {
       return err("VOL_UNAVAILABLE", "volatility unavailable");
     }
 
-    const meta = buildUnifiedMeta(chosen.meta, want, used, days, cmDays);
-    const payload = {
-      ok: true,
-      sigmaAnnual: chosen.sigmaAnnual,
-      meta,
-      _ms: Date.now() - t0,
-      cache: "miss",
-    };
+    // Build unified meta
+    const meta = unifyMeta(chosen.meta, {
+      sourceRequested: want,
+      sourceUsed: used,
+      fallback: used !== want,                 // <-- add reliable fallback flag
+      days: used === "hist" ? days : undefined,
+      cmDays: used === "iv" ? cmDays : undefined,
+    });
+
+    const data = { sigmaAnnual: chosen.sigmaAnnual, meta };
+    const payload = { ok: true, ...data, _ms: Date.now() - t0, cache: "miss" };
 
     // Cache and return
     mset(key, payload, TTL_MS);
@@ -142,12 +141,13 @@ export async function POST(req) {
       if (!(S0 > 0)) return err("S0_REQUIRED", "S0 (spot) must be > 0");
 
       const { iv, meta } = constantMaturityATM(body.chain, { S0, r, q, cmDays, nowMs: Date.now() });
+
       if (!(iv > 0)) return err("IV_UNAVAILABLE", "could not derive IV from provided chain");
 
       const unified = unifyMeta(meta, {
         sourceRequested: "iv",
         sourceUsed: "iv",
-        fallback: false, // direct chain -> no fallback
+        fallback: false,                       // computed from chain → never a fallback
         cmDays,
       });
 
@@ -177,7 +177,13 @@ export async function POST(req) {
       return err("VOL_UNAVAILABLE", "volatility unavailable");
     }
 
-    const meta = buildUnifiedMeta(chosen.meta, want, used, days, cmDays);
+    const meta = unifyMeta(chosen.meta, {
+      sourceRequested: want,
+      sourceUsed: used,
+      fallback: used !== want,                 // <-- add reliable fallback flag
+      days: used === "hist" ? days : undefined,
+      cmDays: used === "iv" ? cmDays : undefined,
+    });
 
     return ok({ ok: true, sigmaAnnual: chosen.sigmaAnnual, meta, _ms: Date.now() - t0, cache: "bypass" });
   } catch (e) {
