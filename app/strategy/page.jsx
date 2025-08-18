@@ -1,582 +1,588 @@
-// app/strategy/page.jsx
+// components/Strategy/StatsRail.jsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+/**
+ * Key Stats + Expiry control (CONTROLLED).
+ * - `selectedExpiry` is controlled by the parent (page).
+ * - We NEVER overwrite parent selection on mount or list refresh.
+ * - We only call `onExpiryChange(iso)` when the USER changes it.
+ * - `onDaysChange(days)` fires whenever selected expiry → days changes.
+ * - Expiry list MUST be the same list the Options tab uses.
+ */
 
-import CompanyCard from "../../components/Strategy/CompanyCard";
-import MarketCard from "../../components/Strategy/MarketCard";
-import StrategyGallery from "../../components/Strategy/StrategyGallery";
-import StatsRail from "../../components/Strategy/StatsRail";
-import OptionsTab from "../../components/Options/OptionsTab";
-import useExpiries from "../../components/Options/useExpiries";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTimeBasis } from "../ui/TimeBasisContext";
+import { publishStatsCtx } from "./statsBus";
 
-import useDebounce from "../../hooks/useDebounce";
-import useStrategyMemory from "../../components/state/useStrategyMemory";
-
-/* ============================ Exchange helpers ============================ */
-/** Hard mappings for terse exchange codes */
-const EX_CODES = {
-  NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
-  NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
-  MIL: "Milan", LSE: "London", EBS: "Swiss", SWX: "Swiss",
-  TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
+/* ===== helpers ===== */
+const moneySign = (ccy) =>
+  ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
+const isNum = (x) => Number.isFinite(Number(x));
+/** ✅ Only accept strictly positive, finite prices */
+const isPos = (x) => {
+  const n = Number(x);
+  return Number.isFinite(n) && n > 0;
+};
+const parsePctInput = (str) => {
+  const v = Number(String(str).replace("%", "").trim());
+  return Number.isFinite(v) ? v / 100 : NaN;
 };
 
-/** Normalize arbitrary vendor strings to a clean display label */
-function normalizeExchangeLabel(co) {
-  const cands = [
-    co?.primaryExchange,
-    co?.fullExchangeName,
-    co?.exchangeName,
-    co?.exchange,
-    co?.exch,
-    co?.ex,
-    co?.market,
-    co?.mic,
-  ].map(x => String(x || "").trim()).filter(Boolean);
-
-  if (!cands.length) return "";
-
-  // 1) Exact code map first (e.g., NMS → NASDAQ)
-  for (const raw of cands) {
-    const up = raw.toUpperCase();
-    if (EX_CODES[up]) return EX_CODES[up];
-  }
-
-  // 2) Heuristic text map (handles "NasdaqGS", "Nasdaq Stock Market", etc.)
-  const txt = cands.join(" ").toLowerCase();
-  if (/(nasdaq|nasdaqgs|nasdaqgm|nasdaqcm)/.test(txt)) return "NASDAQ";
-  if (/nyse\s*arca|arca|pcx/.test(txt)) return "NYSE Arca";
-  if (/nyse(?!\s*arca)/.test(txt)) return "NYSE";
-  if (/amex|nysemkt/.test(txt)) return "AMEX";
-  if (/london|lse/.test(txt)) return "London";
-  if (/milan|borsa italiana|mil/.test(txt)) return "Milan";
-  if (/six|swiss|ebs|swx/.test(txt)) return "Swiss";
-  if (/tsx|toronto/.test(txt)) return "Toronto";
-  if (/b3|sao\s*paulo|bovespa|sao/.test(txt)) return "São Paulo";
-  if (/buenos\s*aires|byma|bue/.test(txt)) return "Buenos Aires";
-
-  // 3) Fallback: use the first candidate as-is
-  const first = cands[0];
-  return first.length > 3 ? first : first.toUpperCase();
+function normalizeExpiries(expiries) {
+  if (!Array.isArray(expiries)) return [];
+  const iso = expiries
+    .map((v) => {
+      if (v instanceof Date) {
+        const y = v.getFullYear();
+        const m = String(v.getMonth() + 1).padStart(2, "0");
+        const d = String(v.getDate()).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+      const s = String(v || "").slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    })
+    .filter(Boolean);
+  return Array.from(new Set(iso)).sort();
 }
 
-const pickNearest = (list) => {
-  if (!Array.isArray(list) || list.length === 0) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  for (const e of list) if (e >= today) return e;
-  return list[list.length - 1];
-};
+/** Compute Days-To-Expiry (calendar days) to end-of-day in Europe/Rome. */
+function daysToExpiry(expiryISO, tz = "Europe/Rome") {
+  if (!expiryISO) return null;
+  try {
+    const endLocalString = new Date(`${expiryISO}T23:59:59`).toLocaleString("en-US", { timeZone: tz });
+    const end = new Date(endLocalString);
+    const now = new Date();
+    const d = Math.ceil((end.getTime() - now.getTime()) / 86400000);
+    return Math.max(1, d);
+  } catch {
+    return null;
+  }
+}
 
-export default function Strategy() {
-  /* ===== 00 — Local state ===== */
-  const [company, setCompany] = useState(null);
-  const [currency, setCurrency] = useState("EUR");
-  const [horizon, setHorizon] = useState(30);
-
-  const [ivSource, setIvSource] = useState("live");
-  const [ivValue, setIvValue] = useState(null);
-
-  const [market, setMarket] = useState({ riskFree: null, mrp: null, indexAnn: null });
-
-  const [netPremium, setNetPremium] = useState(0);
-  const [legsUi, setLegsUi] = useState(null);
-
-  const [mcStats, setMcStats] = useState(null);
-  const [probProfit, setProbProfit] = useState(null);
-  const [expectancy, setExpectancy] = useState(null);
-  const [expReturn, setExpReturn] = useState(null);
-
-  // Fallback price (when /api/company returns spot = 0)
-  const [fallbackSpot, setFallbackSpot] = useState(null);
-
-  // Expiries shared across tabs
-  const { list: expiries = [] } = useExpiries(company?.symbol);
-
-  // Controlled expiry selection (shared with OptionsTab + StatsRail)
-  const [selectedExpiry, setSelectedExpiry] = useState(null);
-
-  /* ===== Memory (persists by symbol) ===== */
-  const { data: mem, loaded: memReady, save: memSave } = useStrategyMemory(company?.symbol);
-
-  // hydrate from memory when available
-  useEffect(() => {
-    if (!memReady) return;
-    if (mem.horizon != null) setHorizon(mem.horizon);
-    if (mem.ivSource) setIvSource(mem.ivSource);
-    if (mem.ivValue != null) setIvValue(mem.ivValue);
-    if (mem.legsUi) setLegsUi(mem.legsUi);
-    if (mem.netPremium != null) setNetPremium(mem.netPremium);
-    if (mem.tab) setTab(mem.tab);
-    if (mem.expiry) setSelectedExpiry(mem.expiry);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [memReady]);
-
-  // keep selectedExpiry valid against current list (don’t override if still valid)
-  useEffect(() => {
-    if (!expiries.length) return;
-    if (selectedExpiry && expiries.includes(selectedExpiry)) return;
-    setSelectedExpiry(pickNearest(expiries));
-  }, [expiries, selectedExpiry]);
-
-  /* ===== 01 — Derived inputs ===== */
-  const rawSpot = Number(company?.spot);
-  const sigma = ivValue ?? null;
-  const T = horizon > 0 ? horizon / 365 : null;
-
-  // Choose effective spot (company spot if valid, else fallback)
-  const spotEff = useMemo(
-    () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
-    [rawSpot, fallbackSpot]
-  );
-
-  /* ===== 02 — Helpers ===== */
-  const num = (v) => {
-    const n = parseFloat(String(v ?? "").replace(",", "."));
-    return Number.isFinite(n) ? n : NaN;
-  };
-  const toLegAPI = (leg) => ({
-    enabled: !!leg?.enabled,
-    K: num(leg?.strike ?? leg?.K),
-    qty: Number.isFinite(+leg?.qty) ? +leg.qty : 0,
-  });
-
-  const legs = useMemo(() => {
-    const lc = toLegAPI(legsUi?.lc || {});
-    const sc = toLegAPI(legsUi?.sc || {});
-    const lp = toLegAPI(legsUi?.lp || {});
-    const sp = toLegAPI(legsUi?.sp || {});
-    return { lc, sc, lp, sp };
-  }, [legsUi]);
-
-  /* ===== 03 — Monte Carlo payload & call ===== */
-  const mcInput = useMemo(() => {
-    if (!(spotEff > 0) || !(T > 0) || !(sigma >= 0)) return null;
-    return {
-      spot: spotEff,
-      mu: 0,
-      sigma,
-      Tdays: horizon,
-      paths: 15000,
-      legs,
-      netPremium: Number.isFinite(netPremium) ? netPremium : 0,
-      carryPremium: false,
-      riskFree: market.riskFree ?? 0,
-    };
-  }, [spotEff, T, sigma, horizon, legs, netPremium, market.riskFree]);
-
-  const debouncedPayload = useDebounce(mcInput ? JSON.stringify(mcInput) : "", 250);
-
-  useEffect(() => {
-    let aborted = false;
-    async function run() {
-      if (!debouncedPayload) {
-        setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
-        return;
-      }
-      const body = JSON.parse(debouncedPayload);
-      try {
-        const r = await fetch("/api/montecarlo", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify(body),
-        });
-        const j = await r.json(); if (aborted) return;
-        if (!r.ok || j?.ok === false) {
-          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
-          return;
-        }
-        const src = j?.data || j || {};
-        setMcStats({
-          meanST: src.meanST ?? null,
-          q05ST: src.q05ST ?? null,
-          q25ST: src.q25ST ?? null,
-          q50ST: src.q50ST ?? null,
-          q75ST: src.q75ST ?? null,
-          q95ST: src.q95ST ?? null,
-          qLoST: src.qLoST ?? null,
-          qHiST: src.qHiST ?? null,
-        });
-        setProbProfit(Number.isFinite(src.pWin) ? src.pWin : null);
-        setExpectancy(Number.isFinite(src.evAbs) ? src.evAbs : null);
-        setExpReturn(Number.isFinite(src.evPct) ? src.evPct : null);
-      } catch {
-        if (!aborted) {
-          setMcStats(null); setProbProfit(null); setExpectancy(null); setExpReturn(null);
-        }
+/* ===== tiny fetchers (unchanged behavior) ===== */
+async function fetchSpotFromChart(sym) {
+  try {
+    const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    const arrs = [
+      j?.data?.c, j?.c, j?.close,
+      j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
+      j?.result?.[0]?.indicators?.quote?.[0]?.close,
+    ].filter(Boolean);
+    for (const a of arrs) {
+      if (Array.isArray(a) && a.length) {
+        const n = Number(a[a.length - 1]);
+        if (Number.isFinite(n) && n > 0) return n;
       }
     }
-    run();
-    return () => { aborted = true; };
-  }, [debouncedPayload]);
+    const metaPx =
+      j?.meta?.regularMarketPrice ??
+      j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
+      j?.regularMarketPrice;
+    return Number.isFinite(metaPx) && metaPx > 0 ? metaPx : null;
+  } catch {
+    return null;
+  }
+}
+async function fetchCompany(sym) {
+  const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+  const j = await r.json();
+  let spot = Number(j?.regularMarketPrice);
+  if (!Number.isFinite(spot) || spot <= 0) spot = await fetchSpotFromChart(j.symbol || sym);
+  const currency =
+    j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
+  return {
+    symbol: j.symbol || sym,
+    currency,
+    beta: typeof j.beta === "number" ? j.beta : null,
+    spot: Number.isFinite(spot) && spot > 0 ? spot : null,
+  };
+}
+async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
+  try {
+    const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(currency)}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    return {
+      rAnnual: typeof j?.riskFree?.r === "number" ? j.riskFree.r : null,
+      erp: typeof j?.mrp === "number" ? j.mrp : null,
+      indexAnn: typeof j?.indexAnn === "number" ? j.indexAnn : null,
+    };
+  } catch {
+    return { rAnnual: null, erp: null, indexAnn: null };
+  }
+}
+async function fetchBetaStats(sym, benchmark = "^GSPC") {
+  try {
+    const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(benchmark)}&range=5y&interval=1mo`;
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    const b = typeof j?.beta === "number" ? j.beta : null;
+    if (b == null) throw new Error("no_beta");
+    return b;
+  } catch {
+    try {
+      const rc = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+      const jc = await rc.json();
+      return typeof jc?.beta === "number" ? jc.beta : null;
+    } catch {
+      return null;
+    }
+  }
+}
+async function fetchVol(sym, mapped, d, cm, signal) {
+  const tryOne = async (param) => {
+    const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}&cmDays=${encodeURIComponent(cm)}`;
+    const r = await fetch(u, { cache: "no-store", signal });
+    const j = await r.json();
+    if (!r.ok || j?.ok === false) throw new Error(j?.error || `Vol ${r.status}`);
+    return j;
+  };
+  try {
+    return await tryOne("source");
+  } catch {
+    return await tryOne("volSource");
+  }
+}
 
-  /* ===== 04 — Fallback last close when company spot is 0 ===== */
+/* ===== CAPM ===== */
+const capmMu = (rf, beta, erp, q = 0) =>
+  (Number(rf) || 0) + (Number(beta) || 0) * (Number(erp) || 0) - (Number(q) || 0);
+
+/* ===== component ===== */
+export default function StatsRail({
+  /* expiry control (CONTROLLED) */
+  expiries = [],                 // same array used by Options
+  selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
+  onExpiryChange,                // (iso) => void
+  onDaysChange,                  // (days) => void
+
+  /* optional strategy plumbing */
+  rows = null, onRowsChange,
+  legs = null, onLegsChange,
+
+  /* pricing context (from Strategy) */
+  spot: propSpot,
+  currency: propCcy,
+  company,
+  market,
+  children,
+}) {
+  const { basis, setBasis } = useTimeBasis();
+
+  /* selection list */
+  const expiryList = useMemo(() => normalizeExpiries(expiries), [expiries]);
+
+  // internal only when uncontrolled
+  const [internalIso, setInternalIso] = useState(null);
+  const isControlled = !!selectedExpiry;
+  const iso = isControlled ? selectedExpiry : internalIso;
+
+  // when list first appears and we are UNCONTROLLED, pick nearest only once
   useEffect(() => {
-    let cancel = false;
-    setFallbackSpot(null);
-    if (!company?.symbol) return;
-    if (rawSpot > 0) return;
+    if (isControlled) return;
+    if (!expiryList.length) { setInternalIso(null); return; }
+    if (!internalIso || !expiryList.includes(internalIso)) {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const nearest = expiryList.find((e) => e >= todayISO) || expiryList[expiryList.length - 1];
+      setInternalIso(nearest);
+    }
+  }, [expiryList, internalIso, isControlled]);
 
+  const days = useMemo(() => daysToExpiry(iso, "Europe/Rome"), [iso]);
+
+  // propagate days only (never touch parent's ISO here)
+  useEffect(() => { if (days != null) onDaysChange?.(days); }, [days, onDaysChange]);
+
+  /* market/vol stuff */
+  const [symbol, setSymbol] = useState(company?.symbol || "");
+  const [currency, setCurrency] = useState(propCcy || company?.currency || "");
+  const [spot, setSpot] = useState(propSpot ?? null);
+  const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
+  const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
+  const [beta, setBeta] = useState(Number.isFinite(company?.beta) ? company.beta : null);
+  const [divPct, setDivPct] = useState("0.00");
+  const qDec = useMemo(() => {
+    const n = parsePctInput(divPct);
+    return Number.isFinite(n) ? n : 0;
+  }, [divPct]);
+
+  // ⬇⬇⬇ Default is now "hist"
+  const [volSrc, setVolSrc] = useState("hist"); // "iv" | "hist"
+  const [sigma, setSigma] = useState(null);
+  const [volMeta, setVolMeta] = useState(null);
+  const [volLoading, setVolLoading] = useState(false);
+  const volAbortRef = useRef(null);
+  const volSeqRef = useRef(0);
+  const cancelVol = () => { try { volAbortRef.current?.abort(); } catch {} volAbortRef.current = null; setVolLoading(false); };
+  const CM_DAYS = 30;
+
+  const muCapm = useMemo(() => capmMu(rf, beta, erp, qDec), [rf, beta, erp, qDec]);
+
+  // Drift mode (CAPM vs Risk-Free), persisted
+  const [driftMode, setDriftMode] = useState(() => {
+    try { return localStorage.getItem("stats.driftMode") || "CAPM"; } catch { return "CAPM"; }
+  });
+  useEffect(() => { try { localStorage.setItem("stats.driftMode", driftMode); } catch {} }, [driftMode]);
+
+  /* ---------- NEW: sync props → local state ---------- */
+  useEffect(() => {
+    // keep symbol in sync so fetchers run
+    const next = company?.symbol || "";
+    if (next !== symbol) setSymbol(next);
+  }, [company?.symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    // keep currency in sync with parent
+    const next = propCcy || company?.currency || "";
+    if (next && next !== currency) setCurrency(next);
+  }, [propCcy, company?.currency]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    // keep spot in sync with parent (only accept > 0)
+    if (isPos(propSpot) && propSpot !== spot) setSpot(propSpot);
+  }, [propSpot]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* --------------------------------------------------- */
+
+  useEffect(() => {
+    const onPick = (e) => {
+      const it = e?.detail || {};
+      const sym = (it.symbol || "").toUpperCase();
+      if (!sym) return;
+      setSymbol(sym);
+    };
+    window.addEventListener("app:ticker-picked", onPick);
+    return () => window.removeEventListener("app:ticker-picked", onPick);
+  }, []);
+
+  useEffect(() => {
+    if (!symbol) return;
+    let mounted = true;
     (async () => {
       try {
-        const u = `/api/chart?symbol=${encodeURIComponent(company.symbol)}&range=5d&interval=1d`;
-        const r = await fetch(u, { cache: "no-store" });
-        const j = await r.json();
-        if (cancel) return;
+        const c = await fetchCompany(symbol);
+        if (!mounted) return;
+        if (c.currency) setCurrency(c.currency);
+        if (isPos(c.spot)) setSpot(c.spot);            // ✅ only accept > 0
 
-        let last = null;
-        const arrs = [
-          j?.closes,
-          j?.close,
-          j?.data?.closes,
-          j?.data?.close,
-          Array.isArray(j?.prices) ? j.prices.map((p) => p?.close ?? p?.c) : null,
-          Array.isArray(j?.series) ? j.series.map((p) => p?.close ?? p?.c) : null,
-        ].filter(Boolean);
-        for (const a of arrs) {
-          if (Array.isArray(a) && a.length) { last = Number(a[a.length - 1]); break; }
+        const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || "USD", lookback: "2y" });
+        if (!mounted) return;
+        if (mb.rAnnual != null) setRf(mb.rAnnual);
+        if (mb.erp != null) setErp(mb.erp);
+
+        const b = await fetchBetaStats(symbol, "^GSPC");
+        if (!mounted) return;
+        if (b != null) setBeta(b);
+
+        if (volSrc !== "manual") {
+          cancelVol();
+          const ac = new AbortController();
+          volAbortRef.current = ac;
+          const mySeq = ++volSeqRef.current;
+          setVolLoading(true);
+          try {
+            const mapped = volSrc === "hist" ? "historical" : "live";
+            const j = await fetchVol(symbol, mapped, 30, CM_DAYS, ac.signal);
+            if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
+            setSigma(j?.sigmaAnnual ?? null);
+            setVolMeta(j?.meta || null);
+          } finally {
+            if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
+          }
         }
-        if (!Number.isFinite(last) && Number.isFinite(j?.lastClose)) last = Number(j.lastClose);
-        if (!Number.isFinite(last) && Number.isFinite(j?.data?.lastClose)) last = Number(j.data.lastClose);
-
-        if (Number.isFinite(last) && last > 0) setFallbackSpot(last);
-      } catch { /* ignore */ }
+      } catch {}
     })();
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
 
-    return () => { cancel = true; };
-  }, [company?.symbol, rawSpot]);
-
-  /* ===== 05 — Hero helpers ===== */
-  const exLabel = useMemo(() => (company ? normalizeExchangeLabel(company) : ""), [company]);
-
-  // Big title = Company Name only (no "(AAPL)").
-  const displayTitle = useMemo(() => {
-    const name =
-      company?.longName ??
-      company?.name ??
-      company?.shortName ??
-      company?.companyName ??
-      "";
-    return name || company?.symbol || "";
-  }, [company]);
-
-  // If we only have a ticker (no good name), try IB first, then Yahoo.
   useEffect(() => {
-    if (!company?.symbol) return;
-    const needName = !(company?.longName || company?.name || company?.shortName || company?.companyName);
-    const needExch = !(company?.primaryExchange || company?.exchangeName || company?.exchange);
-    if (!needName && !needExch) return;
+    if (typeof market?.riskFree === "number") setRf(market.riskFree);
+    if (typeof market?.mrp === "number") setErp(market.mrp);
+  }, [market?.riskFree, market?.mrp]);
 
-    let cancel = false;
+  useEffect(() => {
+    if (!symbol || volSrc === "manual") { cancelVol(); return; }
     (async () => {
-      const sym = company.symbol;
-
-      const tryIB = async () => {
-        try {
-          const r = await fetch(`/api/provider/ib/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-          const j = await r.json();
-          if (r.ok && j?.ok !== false) return j;
-          return null;
-        } catch { return null; }
-      };
-
-      const tryYahoo = async () => {
-        try {
-          const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-          return await r.json();
-        } catch { return null; }
-      };
-
-      const ib = await tryIB();
-      const ya = ib ? null : await tryYahoo();
-      if (cancel) return;
-
-      const name =
-        ib?.longName ||
-        ya?.longName || ya?.shortName || ya?.name || ya?.companyName ||
-        "";
-
-      const exchange =
-        ib?.primaryExchange ||
-        ya?.fullExchangeName || ya?.exchangeName || ya?.exchange || "";
-
-      const ccy = ib?.currency || ya?.currency || company?.currency;
-
-      if (name || exchange || ccy) {
-        setCompany(prev => {
-          if (!prev || prev.symbol !== sym) return prev;
-          return {
-            ...prev,
-            longName: name || prev.longName || prev.name,
-            exchangeName: exchange || prev.exchangeName || prev.exchange,
-            primaryExchange: ib?.primaryExchange || prev?.primaryExchange || null,
-            currency: ccy || prev.currency,
-          };
-        });
+      cancelVol();
+      const ac = new AbortController();
+      volAbortRef.current = ac;
+      const mySeq = ++volSeqRef.current;
+      setVolLoading(true);
+      try {
+        const mapped = volSrc === "hist" ? "historical" : "live";
+        const j = await fetchVol(symbol, mapped, 30, CM_DAYS, ac.signal);
+        if (ac.signal.aborted || mySeq !== volSeqRef.current) return;
+        setSigma(j?.sigmaAnnual ?? null);
+        setVolMeta(j?.meta || null);
+      } catch {} finally {
+        if (mySeq === volSeqRef.current) { setVolLoading(false); volAbortRef.current = null; }
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [volSrc, symbol]);
 
-    return () => { cancel = true; };
-  }, [company?.symbol]);
+  useEffect(() => {
+    if (!symbol) return;
+    let stop = false, id;
+    const tick = async () => {
+      const px = await fetchSpotFromChart(symbol);
+      if (!stop && isPos(px)) setSpot(px);            // ✅ guard against 0/negatives
+      id = setTimeout(tick, 15000);
+    };
+    tick();
+    return () => { stop = true; clearTimeout(id); };
+  }, [symbol]);
 
-  const handleApply = (legsObj, netPrem) => {
-    setLegsUi(legsObj || {});
-    setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
-    if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+  // optional stamping
+  const stampDaysOnRows = useCallback((rows, days) => {
+    if (!Array.isArray(rows)) return rows;
+    return rows.map((r) => {
+      const t = String(r?.type || "").toLowerCase();
+      const isOption = /^(lc|lp|sc|sp)$/.test(t);
+      return isOption ? { ...r, days } : r;
+    });
+  }, []);
+  const stampDaysOnLegs = useCallback((legs, days) => {
+    if (!legs || typeof legs !== "object") return legs;
+    const out = { ...legs };
+    ["lc", "lp", "sc", "sp"].forEach((k) => { if (out[k]) out[k] = { ...out[k], days }; });
+    return out;
+  }, []);
+  useEffect(() => {
+    if (!(days > 0)) return;
+    if (Array.isArray(rows) && typeof onRowsChange === "function") {
+      onRowsChange(stampDaysOnRows(rows, days));
+    }
+    if (legs && typeof onLegsChange === "function") {
+      onLegsChange(stampDaysOnLegs(legs, days));
+    }
+  }, [days, rows, legs, onRowsChange, onLegsChange, stampDaysOnRows, stampDaysOnLegs]);
+
+  const showVolSkeleton = volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
+
+  // Remove the “Imp (30d)” / “Hist (Xd)” label; only show a fallback note if present.
+  const volDiag = volMeta?.fallback ? "fallback" : "";
+
+  const fmtLong = (iso) => {
+    const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return String(iso || "");
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return d.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
   };
 
-  /* ===== 06 — Tabs ===== */
-  const [tab, setTab] = useState("overview");
-  const TABS = [
-    { key: "overview",   label: "Overview" },
-    { key: "financials", label: "Financials" },
-    { key: "news",       label: "News" },
-    { key: "options",    label: "Options" },
-    { key: "bonds",      label: "Bonds" },
-  ];
+  const handlePick = (nextIso) => {
+    if (!nextIso) return;
+    if (isControlled) onExpiryChange?.(nextIso);
+    else setInternalIso(nextIso);
+  };
 
-  const tabTitle = useMemo(() => {
-    const base = TABS.find(t => t.key === tab)?.label || "Overview";
-    return company?.symbol ? `${company.symbol} ${base.toLowerCase()}` : base;
-  }, [tab, company?.symbol]);
+  // ---- BROADCAST CONTEXT to consumers (ChainTable)
+  useEffect(() => {
+    publishStatsCtx({
+      basis,
+      days,
+      sigma,                  // annualized (decimal)
+      rf,                     // annual rate
+      erp,
+      beta,
+      muCapm,                 // rf + beta*erp - q
+      q: qDec,                // dividend yield (decimal)
+      spot: isPos(spot) ? spot : null,   // ✅ never broadcast 0/negatives
+      currency,
+      driftMode,              // "CAPM" | "RF"
+    });
+  }, [basis, days, sigma, rf, erp, beta, muCapm, qDec, spot, currency, driftMode]);
 
-  // persist key state to memory
-  useEffect(() => { if (memReady && company?.symbol) memSave({ horizon }); }, [memReady, company?.symbol, horizon, memSave]);
-  useEffect(() => { if (memReady && company?.symbol) memSave({ ivSource, ivValue }); }, [memReady, company?.symbol, ivSource, ivValue, memSave]);
-  useEffect(() => { if (memReady && company?.symbol) memSave({ legsUi, netPremium }); }, [memReady, company?.symbol, legsUi, netPremium, memSave]);
-  useEffect(() => { if (memReady && company?.symbol) memSave({ tab }); }, [memReady, company?.symbol, tab, memSave]);
-  useEffect(() => { if (memReady && company?.symbol) memSave({ expiry: selectedExpiry || null }); }, [memReady, company?.symbol, selectedExpiry, memSave]);
-
-  /* ===== 07 — Render ===== */
   return (
-    <div className="container">
-      {/* Hero */}
-      {company?.symbol ? (
-        <section className="hero">
-          <div className="hero-id">
-            <div className="hero-logo" aria-hidden="true">
-              {String((displayTitle || company?.symbol || "?")).slice(0, 1)}
-            </div>
-            <div className="hero-texts">
-              {/* Title: Company name only */}
-              <h1 className="hero-name">{displayTitle}</h1>
-              <div className="hero-pill" aria-label="Ticker and exchange">
-                <span className="tkr">{company.symbol}</span>
-                {exLabel && (
-                  <>
-                    <span className="dot">•</span>
-                    <span className="ex">{exLabel}</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
+    <aside className="card">
+      <h3>Key stats</h3>
 
-          <div className="hero-price">
-            <div className="p-big">
-              {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
-              <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
-            </div>
-            <div className="p-sub">
-              At close •{" "}
-              {new Date().toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZoneName: "short",
-              })}
-            </div>
-          </div>
-        </section>
-      ) : (
-        <header className="page-header">
-          <div className="titles">
-            <div className="eyebrow">Portfolio</div>
-            <h1 className="page-title">Strategy</h1>
-            {/* UPDATED COPY */}
-            <p className="subtitle">Build, compare, and validate option strategies.</p>
-          </div>
-        </header>
-      )}
-
-      {/* Company (full width) */}
-      <CompanyCard
-        value={company}
-        market={market}
-        onConfirm={(c) => { setCompany(c); setCurrency(c.currency || "EUR"); }}
-        onHorizonChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
-        onIvSourceChange={(s) => { setIvSource(s); if (company?.symbol) memSave({ ivSource: s }); }}
-        onIvValueChange={(v) => { setIvValue(v); if (company?.symbol) memSave({ ivValue: v }); }}
-      />
-
-      {/* Tabs header */}
-      <nav className="tabs" role="tablist" aria-label="Sections">
-        {TABS.map(t => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            className={`tab ${tab === t.key ? "is-active" : ""}`}
-            onClick={() => { setTab(t.key); if (company?.symbol) memSave({ tab: t.key }); }}
+      {/* Expiration (T) — controlled */}
+      <div className="row">
+        <div className="k">Expiration (T)</div>
+        <div className="v v-expiry">
+          <select
+            className="select"
+            value={iso || ""}
+            onChange={(e) => handlePick(e.target.value || null)}
+            title="Pick expiry"
           >
-            {t.label}
-          </button>
-        ))}
-      </nav>
-
-      {/* Title between tabs and cards */}
-      <h2 className="tab-title">{tabTitle}</h2>
-
-      {/* Tabbed content */}
-      {tab === "overview" && (
-        <div className="layout-2col">
-          <div className="g-item">
-            <MarketCard onRates={(r) => setMarket(r)} />
-          </div>
-
-          <div className="g-item">
-            <StatsRail
-              /* pricing context */
-              spot={spotEff}
-              currency={company?.currency || currency}
-              company={company}
-              iv={sigma}
-              market={market}
-
-              /* expiry list shared across tabs */
-              expiries={expiries}
-              /* Optional: pass current selection for future support */
-              selectedExpiry={selectedExpiry}
-              onExpiryChange={(iso) => {
-                setSelectedExpiry(iso || null);
-                if (company?.symbol) memSave({ expiry: iso || null });
-              }}
-              onDaysChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
-
-              /* let StatsRail stamp days on legs if needed */
-              legs={legsUi}
-              onLegsChange={(v) => { setLegsUi(v); if (company?.symbol) memSave({ legsUi: v }); }}
-            />
-          </div>
-
-          <div className="g-span">
-            <StrategyGallery
-              spot={spotEff}
-              currency={currency}
-              sigma={sigma}
-              T={T}
-              riskFree={market.riskFree ?? 0}
-              mcStats={mcStats}
-              onApply={handleApply}
-            />
-          </div>
+            {!expiryList.length ? (
+              <option value="">No expiries</option>
+            ) : (
+              expiryList.map((d) => <option key={d} value={d}>{fmtLong(d)}</option>)
+            )}
+          </select>
+          <span className="dte-pill" title="Days to expiry (Europe/Rome end-of-day)">
+            {days != null ? `${days}d` : "—"}
+          </span>
         </div>
-      )}
+      </div>
 
-      {tab === "financials" && (
-        <section>
-          <h3 className="section-title">Financials</h3>
-          <p className="muted">Coming soon.</p>
-        </section>
-      )}
+      {/* Current Price */}
+      <div className="row">
+        <div className="k">Current Price</div>
+        <div className="v value">
+          {isPos(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}
+        </div>
+      </div>
 
-      {tab === "news" && (
-        <section>
-          <h3 className="section-title">News</h3>
-          <p className="muted">Coming soon.</p>
-        </section>
-      )}
+      {/* Currency */}
+      <div className="row">
+        <div className="k">Currency</div>
+        <div className="v value">{currency || "—"}</div>
+      </div>
 
-      {tab === "options" && (
-        <OptionsTab
-          symbol={company?.symbol || ""}
-          currency={company?.currency || currency}
-          /* share expiries + controlled selection */
-          expiries={expiries}
-          selectedExpiry={selectedExpiry}
-          onChangeExpiry={(iso) => {
-            setSelectedExpiry(iso || null);
-            if (company?.symbol) memSave({ expiry: iso || null });
-          }}
-          onDaysChange={(d) => { setHorizon(d); if (company?.symbol) memSave({ horizon: d }); }}
-        />
-      )}
+      {/* Time basis */}
+      <div className="row">
+        <div className="k">Time</div>
+        <div className="v">
+          <select className="select" value={basis} onChange={(e) => setBasis(Number(e.target.value))}>
+            <option value={365}>365</option>
+            <option value={252}>252</option>
+          </select>
+        </div>
+      </div>
 
-      {tab === "bonds" && (
-        <section>
-          <h3 className="section-title">Bonds</h3>
-          <p className="muted">Coming soon.</p>
-        </section>
-      )}
+      {/* Volatility */}
+      <div className="row">
+        <div className="k">Volatility</div>
+        <div className="v v-vol">
+          <select className="select" value={volSrc} onChange={(e) => setVolSrc(e.target.value)} title="Vol source">
+            <option value="iv">Imp</option>
+            <option value="hist">Hist</option>
+          </select>
+          <span className={`value volval ${showVolSkeleton ? "is-pending" : ""}`} aria-live="polite">
+            {Number.isFinite(sigma) ? `${(sigma * 100).toFixed(0)}%` : "—"}
+          </span>
+          {volDiag && <span className="meta small">{volDiag}</span>}
+          {showVolSkeleton && <span className="skl" aria-hidden="true" />}
+        </div>
+      </div>
+
+      {/* Beta */}
+      <div className="row">
+        <div className="k">Beta</div>
+        <div className="v value">{Number.isFinite(beta) ? beta.toFixed(2) : "—"}</div>
+      </div>
+
+      {/* Dividend (q) */}
+      <div className="row">
+        <div className="k">Dividend (q)</div>
+        <div className="v">
+          <input
+            className="input"
+            placeholder="0.00"
+            value={divPct}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/[^\d.]/g, "");
+              if (raw === "" || /^\d{0,3}(\.\d{0,2})?$/.test(raw)) e.target.value && setDivPct(raw);
+              if (raw === "") setDivPct("");
+            }}
+            onBlur={() => {
+              const v = parsePctInput(divPct);
+              setDivPct(Number.isFinite(v) ? (v * 100).toFixed(2) : "0.00");
+            }}
+          />
+        </div>
+      </div>
+
+      {/* CAPM μ */}
+      <div className="row">
+        <div className="k">CAPM μ</div>
+        <div className="v value">{Number.isFinite(muCapm) ? `${(muCapm * 100).toFixed(2)}%` : "—"}</div>
+      </div>
+
+      {/* Drift chooser */}
+      <div className="row">
+        <div className="k">Drift</div>
+        <div className="v">
+          <select
+            className="select"
+            value={driftMode}
+            onChange={(e) => setDriftMode(e.target.value)}
+            title="Choose drift"
+          >
+            <option value="CAPM">CAPM</option>
+            <option value="RF">Risk-Free Rate</option>
+          </select>
+        </div>
+      </div>
+
+      {children}
 
       <style jsx>{`
-        /* Tabs */
-        .tabs{
-          display:flex; gap:6px;
-          margin:12px 0 16px;
-          border-bottom:1px solid var(--border);
+        .row{
+          display:grid;
+          grid-template-columns: minmax(120px, 1fr) minmax(0, 520px);
+          align-items:center;
+          gap:16px;
+          padding:10px 0;
+          border-bottom:1px dashed var(--border, #2a2f3a);
+          width:100%;
+          box-sizing:border-box;
         }
-        .tab{
-          height:42px; padding:0 14px; border:0; background:transparent;
-          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
-          border-bottom:2px solid transparent; margin-bottom:-1px;
+        .row:last-of-type{ border-bottom:0; }
+        .k{ font-size:14px; opacity:.75; min-width:0; }
+        .v{
+          display:flex; justify-content:flex-end; align-items:center; gap:10px;
+          width:100%; min-width:0; flex-wrap:nowrap;
         }
-        .tab:hover{ opacity:1; }
-        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
-
-        /* Title between tabs and cards */
-        .tab-title{
-          margin: 2px 0 18px;
-          font-size: 22px;
-          line-height: 1.2;
-          font-weight: 800;
-          letter-spacing: -.2px;
+        .v-expiry{ gap:12px; }
+        .dte-pill{
+          padding: 6px 10px;
+          border: 1px solid var(--border, #2a2f3a);
+          border-radius: 10px;
+          background: var(--card, #111214);
+          font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
         }
-
-        /* Hero */
-        .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
-        .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
-        .hero-logo{
-          width:84px; height:84px; border-radius:20px;
-          background: radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.08), rgba(0,0,0,.35));
-          border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
-          font-weight:700; font-size:36px;
+        .value{
+          font-variant-numeric: tabular-nums; font-weight:600;
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+          max-width:100%;
         }
-        .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
-        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .hero-pill{
-          display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 14px;
-          border-radius:9999px; border:1px solid var(--border); background:var(--card); font-weight:600;
-          width:fit-content;
+        .meta.small{ font-size:12px; opacity:.70; white-space:nowrap; }
+        .select, .input{
+          height:38px; padding:6px 12px; border-radius:10px;
+          border:1px solid var(--border, #2a2f3a);
+          background:var(--card, #111214); color:var(--foreground, #e5e7eb);
+          font-size:14px; line-height:22px;
+          width:100%; max-width:260px; min-width:0;
+          box-sizing:border-box;
+          transition:border-color 140ms ease, outline-color 140ms ease, background 140ms ease;
         }
-        .hero-pill .dot{ opacity:.6; }
-
-        .hero-price{ margin-top:12px; }
-        .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
-        .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
-        .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
-
-        /* Grid below — stretch so both cards share the same height */
-        .layout-2col{ display:grid; grid-template-columns: 1fr 320px; gap: var(--row-gap); align-items: stretch; }
-        .g-item{ min-width:0; }
-        .g-span{ grid-column: 1 / -1; min-width:0; }
-        .g-item :global(.card){ height:100%; display:flex; flex-direction:column; }
-
-        .section-title{ font-weight:800; margin:8px 0; }
-        .muted{ opacity:.7; }
-
-        @media (max-width:1100px){
-          .layout-2col{ grid-template-columns: 1fr; }
-          .g-span{ grid-column: 1 / -1; }
-          .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
-          .hero-name{ font-size:32px; }
-          .p-big{ font-size:40px; }
-          .tab-title{ font-size:20px; }
+        .select:hover, .input:hover{ border-color: var(--ring, #3b3f47); }
+        .select:focus-visible, .input:focus-visible{
+          outline:2px solid color-mix(in srgb, var(--text, #e5e7eb) 24%, transparent);
+          outline-offset:2px;
+        }
+        .v-vol{ position:relative; }
+        .volval{ min-width:48px; text-align:right; }
+        .skl{
+          position:absolute; right:10px; top:50%; height:10px; width:80px;
+          transform:translateY(-50%); border-radius:7px;
+          background: color-mix(in srgb, var(--text, #0f172a) 12%, var(--surface, #f7f9fc));
+          overflow:hidden;
+        }
+        .skl::after{
+          content:""; position:absolute; inset:0; transform:translateX(-100%);
+          background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
+          animation:shimmer 1.15s ease-in-out infinite;
+        }
+        .is-pending{ opacity:.6; }
+        @media (prefers-color-scheme: light){
+          .select, .input{
+            border:1px solid var(--border, #e5e7eb);
+            background:#fff; color:#111827;
+          }
+          .select:hover, .input:hover{ border-color:#a3a3a3; }
+          .dte-pill{ background:#fff; color:#111827; border-color:#e5e7eb; }
         }
       `}</style>
-    </div>
+    </aside>
   );
 }
