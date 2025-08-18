@@ -17,10 +17,27 @@ import { publishStatsCtx } from "./statsBus";
 /* ===== helpers ===== */
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
+
 const isNum = (x) => Number.isFinite(Number(x));
+const isPos = (x) => Number.isFinite(Number(x)) && Number(x) > 0; // NEW: only accept positive prices
+
 const parsePctInput = (str) => {
   const v = Number(String(str).replace("%", "").trim());
   return Number.isFinite(v) ? v / 100 : NaN;
+};
+
+const fmtCur = (x, ccy = "USD") => {
+  if (!isPos(x)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: ccy || "USD",
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+    }).format(Number(x));
+  } catch {
+    return `${moneySign(ccy)}${Number(x).toFixed(2)}`;
+  }
 };
 
 function normalizeExpiries(expiries) {
@@ -75,7 +92,7 @@ async function fetchSpotFromChart(sym) {
       j?.meta?.regularMarketPrice ??
       j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
       j?.regularMarketPrice;
-    return Number.isFinite(metaPx) ? metaPx : null;
+    return Number.isFinite(metaPx) && metaPx > 0 ? metaPx : null; // ensure positive
   } catch {
     return null;
   }
@@ -91,7 +108,7 @@ async function fetchCompany(sym) {
     symbol: j.symbol || sym,
     currency,
     beta: typeof j.beta === "number" ? j.beta : null,
-    spot: Number.isFinite(spot) ? spot : null,
+    spot: Number.isFinite(spot) && spot > 0 ? spot : null, // ensure positive
   };
 }
 async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
@@ -148,10 +165,10 @@ const capmMu = (rf, beta, erp, q = 0) =>
 /* ===== component ===== */
 export default function StatsRail({
   /* expiry control (CONTROLLED) */
-  expiries = [],                 // same array used by Options
-  selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
-  onExpiryChange,                // (iso) => void
-  onDaysChange,                  // (days) => void
+  expiries = [],
+  selectedExpiry = null,
+  onExpiryChange,
+  onDaysChange,
 
   /* optional strategy plumbing */
   rows = null, onRowsChange,
@@ -193,7 +210,7 @@ export default function StatsRail({
   /* market/vol stuff (kept as-is) */
   const [symbol, setSymbol] = useState(company?.symbol || "");
   const [currency, setCurrency] = useState(propCcy || company?.currency || "");
-  const [spot, setSpot] = useState(propSpot ?? null);
+  const [spot, setSpot] = useState(isPos(propSpot) ? Number(propSpot) : null); // NEW: ignore 0/negatives
   const [rf, setRf] = useState(typeof market?.riskFree === "number" ? market.riskFree : null);
   const [erp, setErp] = useState(typeof market?.mrp === "number" ? market.mrp : null);
   const [beta, setBeta] = useState(Number.isFinite(company?.beta) ? company.beta : null);
@@ -240,7 +257,7 @@ export default function StatsRail({
         const c = await fetchCompany(symbol);
         if (!mounted) return;
         if (c.currency) setCurrency(c.currency);
-        if (isNum(c.spot)) setSpot(c.spot);
+        if (isPos(c.spot)) setSpot(c.spot); // NEW: only positive spot
 
         const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || "USD", lookback: "2y" });
         if (!mounted) return;
@@ -304,7 +321,7 @@ export default function StatsRail({
     let stop = false, id;
     const tick = async () => {
       const px = await fetchSpotFromChart(symbol);
-      if (!stop && isNum(px)) setSpot(px);
+      if (!stop && isPos(px)) setSpot(px); // NEW: guard against 0/negative
       id = setTimeout(tick, 15000);
     };
     tick();
@@ -334,7 +351,7 @@ export default function StatsRail({
     if (legs && typeof onLegsChange === "function") {
       onLegsChange(stampDaysOnLegs(legs, days));
     }
-  }, [days, rows, legs, onRowsChange, onLegsChange, stampDaysOnRows, stampDaysOnLegs]);
+  }, [days, rows, legs, onLegsChange, onRowsChange, stampDaysOnRows, stampDaysOnLegs]);
 
   const showVolSkeleton = volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
 
@@ -401,7 +418,7 @@ export default function StatsRail({
       <div className="row">
         <div className="k">Current Price</div>
         <div className="v value">
-          {isNum(spot) ? `${moneySign(currency)}${Number(spot).toFixed(2)}` : "—"}
+          {fmtCur(spot, currency)}
         </div>
       </div>
 
