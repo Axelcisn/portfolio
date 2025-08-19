@@ -1,5 +1,8 @@
 // components/Strategy/statsBus.js
+'use client';
+
 // Safe, SSR-friendly singleton bus for Stats context (with backward compatibility)
+import { useSyncExternalStore } from "react";
 
 const GLOBAL_KEY = "__STATS_BUS_SINGLETON__";
 const root = typeof globalThis !== "undefined" ? globalThis : {};
@@ -17,13 +20,13 @@ const BUS = root[GLOBAL_KEY];
 /**
  * @typedef {Object} StatsCtx
  * @property {number|null} days       // days to expiry
- * @property {number}       basis      // day-count basis (e.g., 365)
- * @property {number|null}  sigma      // annualized vol (decimal, e.g., 0.25)
+ * @property {number}       basis     // day-count basis (e.g., 365 or 252)
+ * @property {number|null}  sigma     // annualized vol (decimal, e.g., 0.25)
  * @property {"CAPM"|"R-N"|string} driftMode // drift source/mode
- * @property {number}       rf         // risk-free rate (annual, decimal)
- * @property {number}       q          // dividend yield (annual, decimal)
- * @property {number}       muCapm     // CAPM expected return (annual, decimal)
- * @property {number|null}  spot       // current underlying price
+ * @property {number}       rf        // risk-free rate (annual, decimal)
+ * @property {number}       q         // dividend yield (annual, decimal)
+ * @property {number}       muCapm    // CAPM expected return (annual, decimal)
+ * @property {number|null}  spot      // current underlying price
  */
 
 // ---- helpers ----
@@ -44,7 +47,7 @@ function sanitize(partial = {}) {
   return out;
 }
 
-// ---- public API ----
+// ---- public API (store) ----
 /** Get current snapshot */
 export function snapshotStatsCtx() {
   return BUS.ctx;
@@ -81,8 +84,21 @@ export function clearStatsCtx() {
   }
 }
 
+// ---- consumer hook (new) ----
+/**
+ * React hook to consume the Stats context with concurrent/SSR safety.
+ * @returns {Partial<StatsCtx>}
+ */
+export function useStatsCtx() {
+  // subscribe function for useSyncExternalStore
+  const subscribe = (onStoreChange) => subscribeStatsCtx(onStoreChange);
+  const getSnapshot = () => BUS.ctx;
+  const getServerSnapshot = () => BUS.ctx || {};
+  // returns a stable object snapshot; components re-render on updates
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
 // ---- backward compatibility shims ----
-// Keep these exports so existing imports don't break.
 export const STATS_CTX_EVENT = "stats:ctx:update";
 
 /** Legacy name: now simply delegates to setStatsCtx */
@@ -96,5 +112,6 @@ export default {
   setStatsCtx,
   clearStatsCtx,
   publishStatsCtx,
+  useStatsCtx,
   STATS_CTX_EVENT,
 };
