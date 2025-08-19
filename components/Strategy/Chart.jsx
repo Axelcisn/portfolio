@@ -12,6 +12,9 @@ import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
 import quantPkg, * as quantNS from "lib/quant/index.js";
 import payoffPkg, * as payoffNS from "lib/strategy/payoff";
 
+// ✅ Time basis context (252/365) — keep chart in sync with Key stats
+import { useTimeBasis } from "../ui/TimeBasisContext";
+
 /* ---------- utils ---------- */
 function lin([d0, d1], [r0, r1]) {
   const m = (r1 - r0) / (d1 - d0);
@@ -262,10 +265,10 @@ export default function Chart({
   sigma = 0.2,
   T = 30 / 365,        // legacy fallback (years)
   dividend = 0,        // q
-  yearBasis = 365,     // <- NEW: 252 or 365, from "Time" in Key stats
-  drift = "capm",      // <- NEW: "capm" | "riskfree" | "custom"
-  capmMu = null,       // <- NEW: CAPM μ shown in Key stats
-  customMu = null,     // <- NEW: optional manual μ
+  yearBasis = 365,     // <- prop fallback, context will override
+  drift = "capm",      // "capm" | "riskfree" | "custom"
+  capmMu = null,       // CAPM μ from Key stats
+  customMu = null,     // optional manual μ
   greek: greekProp,
   onGreekChange,
   onLegsChange,
@@ -274,19 +277,23 @@ export default function Chart({
   frameless = false,
   strategy = null,
 }) {
+  // ✅ Pull basis from context; context wins
+  const ctx = (typeof useTimeBasis === "function" ? useTimeBasis() : null) || {};
+  const basisEff = Number.isFinite(Number(ctx?.basis)) ? Number(ctx.basis) : (Number(yearBasis) || 365);
+
   const rowsEff = useMemo(() => {
     if (rows && Array.isArray(rows)) return rows;
-    const days = Math.max(1, Math.round((T || 30 / 365) * (yearBasis || 365)));
+    const days = Math.max(1, Math.round((T || 30 / 365) * basisEff));
     return rowsFromLegs(legs, days);
-  }, [rows, legs, T, yearBasis]);
+  }, [rows, legs, T, basisEff]);
 
   // payoff bundle for centralized payoff engine
   const payoffBundle = useMemo(() => buildPayoffBundle(rowsEff, contractSize), [rowsEff, contractSize]);
 
   // fallback days used when a row lacks days/dte/expiry
   const fallbackDays = useMemo(
-    () => Math.max(1, Math.round((Number.isFinite(Number(T)) ? Number(T) : 30 / 365) * (yearBasis || 365))),
-    [T, yearBasis]
+    () => Math.max(1, Math.round((Number.isFinite(Number(T)) ? Number(T) : 30 / 365) * basisEff)),
+    [T, basisEff]
   );
 
   // strikes and base domain
@@ -335,8 +342,8 @@ export default function Chart({
 
   // All Greeks/mark-to-market use Key Stats inputs
   const env = useMemo(
-    () => ({ r: Number(riskFree) || 0, sigma: Number(sigma) || 0, q: Number(dividend) || 0, yearBasis: Number(yearBasis) || 365 }),
-    [riskFree, sigma, dividend, yearBasis]
+    () => ({ r: Number(riskFree) || 0, sigma: Number(sigma) || 0, q: Number(dividend) || 0, yearBasis: basisEff }),
+    [riskFree, sigma, dividend, basisEff]
   );
 
   // --- CENTRALIZED EXPIRATION PAYOFF (with safe hub access) ---
@@ -415,7 +422,7 @@ export default function Chart({
   }, [rowsEff, fallbackDays]);
 
   const S0 = Number.isFinite(Number(spot)) ? Number(spot) : ks[0] ?? xDomain[0];
-  const Tyrs = (avgDays || 0) / (Number(yearBasis) || 365);
+  const Tyrs = (avgDays || 0) / basisEff;
   const mu = deriveMu({ drift, capmMu, riskFree, customMu });
   const sVol = Number(sigma) || 0;
 
@@ -714,7 +721,7 @@ export default function Chart({
               <span className="val">{fmtCur(yExp[i], currency)}</span>
             </div>
             <div className="row">
-              <span className="dot" style={{ background: greekColor }} />
+              <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
               <span>{GREEK_LABEL[greekWhich]}</span>
               <span className="val">{fmtNum(gVals[i], 2)}</span>
             </div>
