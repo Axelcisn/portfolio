@@ -79,6 +79,22 @@ function greekNiceRange(values) {
   return [lo - pad, hi + pad];
 }
 
+
+
+/* ---------- series sanitizer (remove NaN/±Inf and clamp one-sample spikes) ---------- */
+function sanitizeSeries(arr){
+  if (!Array.isArray(arr)) return arr;
+  const out = arr.map(v => (Number.isFinite(v) ? v : 0));
+  // clamp single-sample spikes that are >> neighbors
+  for (let i = 1; i < out.length - 1; i++){
+    const v = out[i], pv = out[i-1], nv = out[i+1];
+    if (Number.isFinite(v) && Number.isFinite(pv) && Number.isFinite(nv)){
+      const a = Math.abs(v), ap = Math.abs(pv)+1e-9, an = Math.abs(nv)+1e-9;
+      if (a > 20*ap && a > 20*an){ out[i] = (pv + nv) / 2; }
+    }
+  }
+  return out;
+}
 /* ---------- safe hub accessors + fallback ---------- */
 const hasFn = (f) => typeof f === "function";
 const safeGbmMean = (args) => {
