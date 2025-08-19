@@ -389,9 +389,12 @@ export default function Chart({
 
   // current mark-to-market (BS) — anchored to entry (S0 or user premium)
   const yNow = useMemo(
-    () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
-    [xs, rowsEff, env, contractSize, fallbackDays]
-  );
+  () =>
+    sanitizeSeries(
+      xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays))
+    ),
+  [xs, rowsEff, env, contractSize, fallbackDays]
+);
 
   const greekWhich = (greekProp || "vega").toLowerCase();
   const gVals = useMemo(
