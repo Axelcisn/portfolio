@@ -369,13 +369,76 @@ export default function Chart({
   const zoomOut = () => zoomAt((xDomain[0] + xDomain[1]) / 2, 1.1);
   const resetZoom = () => setXDomain(baseDomain);
 
-  const N = 401;
-  const xs = useMemo(() => {
-    const [lo, hi] = xDomain, step = (hi - lo) / (N - 1);
-    const arr = new Array(N);
-    for (let i = 0; i < N; i++) arr[i] = lo + i * step;
-    return arr;
-  }, [xDomain]);
+  
+// --- Master grid & master series -------------------------------------------
+const NX = 1601; // higher resolution master grid
+const xsMaster = useMemo(() => {
+  const [lo, hi] = baseDomain;
+  const step = (hi - lo) / Math.max(1, NX - 1);
+  const base = new Array(NX); for (let i = 0; i < NX; i++) base[i] = lo + i * step;
+
+  // Inject key breakpoints: all strikes + S₀ (spotEff)
+  const inject = [];
+  if (Array.isArray(ks)) for (const k of ks) if (Number.isFinite(k)) inject.push(Number(k));
+  if (Number.isFinite(Number(spotEff))) inject.push(Number(spotEff));
+
+  // Unique + sort
+  const set = new Set(base.concat(inject).map(v => +v));
+  return Array.from(set).sort((a,b) => a - b);
+}, [baseDomain, ks, spotEff]);
+
+// Master series (single computation; zoom will window these)
+const yExpMaster = useMemo(
+  () => xsMaster.map((S) => safePayoffAt(S, payoffBundle)),
+  [xsMaster, payoffBundle]
+);
+
+// Anchored current P&L (premium or BS@S₀)
+const yNowMaster = useMemo(
+  () => sanitizeSeries(xsMaster.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays))),
+  [xsMaster, rowsEff, env, contractSize, fallbackDays]
+);
+
+// Greeks on master grid
+const greekWhich = (greekProp || "vega").toLowerCase();
+const gValsMaster = useMemo(
+  () => xsMaster.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
+  [xsMaster, rowsEff, env, contractSize, greekWhich, fallbackDays]
+);
+
+// Visible window (no resample): filter master arrays by current xDomain
+const xs = useMemo(() => {
+  const [lo, hi] = xDomain; const out = [];
+  for (let i = 0; i < xsMaster.length; i++) {
+    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(v);
+  }
+  return out;
+}, [xsMaster, xDomain]);
+
+const yExp = useMemo(() => {
+  const [lo, hi] = xDomain; const out = [];
+  for (let i = 0; i < xsMaster.length; i++) {
+    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(yExpMaster[i]);
+  }
+  return out;
+}, [xsMaster, yExpMaster, xDomain]);
+
+const yNow = useMemo(() => {
+  const [lo, hi] = xDomain; const out = [];
+  for (let i = 0; i < xsMaster.length; i++) {
+    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(yNowMaster[i]);
+  }
+  return out;
+}, [xsMaster, yNowMaster, xDomain]);
+
+const gVals = useMemo(() => {
+  const [lo, hi] = xDomain; const out = [];
+  for (let i = 0; i < xsMaster.length; i++) {
+    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(gValsMaster[i]);
+  }
+  return out;
+}, [xsMaster, gValsMaster, xDomain]);
+
   const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
   // All Greeks/mark-to-market use effective params (+basis)
@@ -385,23 +448,6 @@ export default function Chart({
   );
 
   // --- CENTRALIZED EXPIRATION PAYOFF ---
-  const yExp = useMemo(() => xs.map((S) => safePayoffAt(S, payoffBundle)), [xs, payoffBundle]);
-
-  // current mark-to-market (BS) — anchored to entry (S0 or user premium)
-  const yNow = useMemo(
-  () =>
-    sanitizeSeries(
-      xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays))
-    ),
-  [xs, rowsEff, env, contractSize, fallbackDays]
-);
-
-  const greekWhich = (greekProp || "vega").toLowerCase();
-  const gVals = useMemo(
-    () => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
-    [xs, rowsEff, env, contractSize, greekWhich, fallbackDays]
-  );
-
   const beFromGraph = useMemo(() => {
     const out = [];
     for (let i = 1; i < xs.length; i++) {
