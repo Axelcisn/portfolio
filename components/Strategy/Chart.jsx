@@ -5,15 +5,17 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import BreakEvenBadge from "./BreakEvenBadge";
 import analyticPop from "./math/analyticPop";
 import { rowsToApiLegs } from "./utils";
-// centralized BS math (price + greeks) via shims
 import { bsValueByKey, greeksByKey } from "./math/bsGreeks";
 
-// ✅ Hub imports made tolerant to both named and default exports
+// Hub math (tolerant)
 import quantPkg, * as quantNS from "lib/quant/index.js";
 import payoffPkg, * as payoffNS from "lib/strategy/payoff";
 
-// ✅ Time basis context (252/365) — keep chart in sync with Key stats
+// Time basis context 252/365
 import { useTimeBasis } from "../ui/TimeBasisContext";
+
+// 🔹 NEW: live Stats context from Key stats
+import { useStatsCtx } from "./statsBus";
 
 /* ---------- utils ---------- */
 function lin([d0, d1], [r0, r1]) {
@@ -50,7 +52,6 @@ const fmtCur = (x, ccy = "USD") => {
     return `${Number(x).toFixed(2)} ${ccy}`;
   }
 };
-/** Fast quantile on a numeric copy (no external libs). */
 function quantile(arr, p) {
   if (!arr?.length) return NaN;
   const a = [...arr].sort((x, y) => x - y);
@@ -60,7 +61,6 @@ function quantile(arr, p) {
   const t = i - lo;
   return a[lo] * (1 - t) + a[hi] * t;
 }
-/** Build a tight, zero-aware range for Greeks; trims outliers (2%-98%). */
 function greekNiceRange(values) {
   if (!values?.length) return [-1, 1];
   let lo = quantile(values, 0.02);
@@ -147,10 +147,8 @@ function rowsFromLegs(legs, days = 30) {
 function daysForRow(row, fallbackDays) {
   const d1 = Number(row?.days);
   if (Number.isFinite(d1) && d1 >= 1) return Math.round(d1);
-
   const d2 = Number(row?.dte);
   if (Number.isFinite(d2) && d2 >= 1) return Math.round(d2);
-
   const exp = row?.expiry ?? row?.expiration ?? row?.exp;
   if (exp != null) {
     const t = typeof exp === "number" ? exp : Date.parse(String(exp));
@@ -159,7 +157,6 @@ function daysForRow(row, fallbackDays) {
       if (rem >= 1) return rem;
     }
   }
-
   const fb = Math.max(1, Number(fallbackDays) || 30);
   return fb;
 }
@@ -175,9 +172,9 @@ function buildPayoffBundle(rows, contractSize) {
 
     if (r.type === "lc") legs.push({ kind: "call", side: "long", strike: K, premium, qty });
     else if (r.type === "sc") legs.push({ kind: "call", side: "short", strike: K, premium, qty });
-    else if (r.type === "lp") legs.push({ kind: "put",  side: "long", strike: K, premium, qty });
-    else if (r.type === "sp") legs.push({ kind: "put",  side: "short", strike: K, premium, qty });
-    else if (r.type === "ls") legs.push({ kind: "stock", side: "long",  premium: K, qty });
+    else if (r.type === "lp") legs.push({ kind: "put", side: "long", strike: K, premium, qty });
+    else if (r.type === "sp") legs.push({ kind: "put", side: "short", strike: K, premium, qty });
+    else if (r.type === "ls") legs.push({ kind: "stock", side: "long", premium: K, qty });
     else if (r.type === "ss") legs.push({ kind: "stock", side: "short", premium: K, qty });
   }
   return { legs };
@@ -202,7 +199,7 @@ function payoffCurrent(S, rows, { r, sigma, q, yearBasis }, contractSize, fallba
     const T = days / (yearBasis || 365);
     const prem = Number.isFinite(r0.premium) ? Number(r0.premium) : 0;
 
-    const px = bsValueByKey(r0.type, S, K, r, sigma, T, q); // long price
+    const px = bsValueByKey(r0.type, S, K, r, sigma, T, q);
     y += info.sign * px * qty + -info.sign * prem * qty;
   }
   return y;
@@ -226,7 +223,7 @@ function greekTotal(which, S, rows, { r, sigma, q, yearBasis }, contractSize, fa
     const days = daysForRow(r0, fallbackDays);
     const T = days / (yearBasis || 365);
 
-    const G = greeksByKey(r0.type, S, K, r, sigma, T, q); // long greeks; vega per 1%, theta per day
+    const G = greeksByKey(r0.type, S, K, r, sigma, T, q);
     const g1 = Number.isFinite(G[w]) ? G[w] : 0;
 
     g += (info.sign > 0 ? +1 : -1) * g1 * qty;
@@ -252,8 +249,7 @@ function deriveMu({ drift, capmMu, riskFree, customMu }) {
   const d = (drift || "").toLowerCase();
   if (d === "capm" && Number.isFinite(Number(capmMu))) return Number(capmMu);
   if (d === "custom" && Number.isFinite(Number(customMu))) return Number(customMu);
-  // default to risk-free (risk-neutral)
-  return Number(riskFree) || 0;
+  return Number(riskFree) || 0; // risk-neutral
 }
 
 export default function Chart({
@@ -263,12 +259,12 @@ export default function Chart({
   legs = null,
   riskFree = 0.02,
   sigma = 0.2,
-  T = 30 / 365,        // legacy fallback (years)
-  dividend = 0,        // q
-  yearBasis = 365,     // <- prop fallback, context will override
-  drift = "capm",      // "capm" | "riskfree" | "custom"
-  capmMu = null,       // CAPM μ from Key stats
-  customMu = null,     // optional manual μ
+  T = 30 / 365,
+  dividend = 0,
+  yearBasis = 365,
+  drift = "capm",
+  capmMu = null,
+  customMu = null,
   greek: greekProp,
   onGreekChange,
   onLegsChange,
@@ -277,9 +273,19 @@ export default function Chart({
   frameless = false,
   strategy = null,
 }) {
-  // ✅ Pull basis from context; context wins
-  const ctx = (typeof useTimeBasis === "function" ? useTimeBasis() : null) || {};
-  const basisEff = Number.isFinite(Number(ctx?.basis)) ? Number(ctx.basis) : (Number(yearBasis) || 365);
+  // time basis from context wins
+  const tb = (typeof useTimeBasis === "function" ? useTimeBasis() : null) || {};
+  const basisEff = Number.isFinite(Number(tb?.basis)) ? Number(tb.basis) : (Number(yearBasis) || 365);
+
+  // 🔹 NEW: consume live values from Key stats bus
+  const stats = (typeof useStatsCtx === "function" ? useStatsCtx() : {}) || {};
+  const sigmaEff = Number.isFinite(Number(stats?.sigma)) ? Number(stats.sigma) : Number(sigma);
+  const rfEff    = Number.isFinite(Number(stats?.rf))    ? Number(stats.rf)    : Number(riskFree);
+  const qEff     = Number.isFinite(Number(stats?.q))     ? Number(stats.q)     : Number(dividend);
+  const driftEff = typeof stats?.driftMode === "string"   ? stats.driftMode     : drift;
+  const capmEff  = Number.isFinite(Number(stats?.muCapm))? Number(stats.muCapm): (Number(capmMu) || 0);
+  const spotEff  = Number.isFinite(Number(spot)) ? Number(spot)
+                   : (Number.isFinite(Number(stats?.spot)) ? Number(stats.spot) : null);
 
   const rowsEff = useMemo(() => {
     if (rows && Array.isArray(rows)) return rows;
@@ -287,28 +293,25 @@ export default function Chart({
     return rowsFromLegs(legs, days);
   }, [rows, legs, T, basisEff]);
 
-  // payoff bundle for centralized payoff engine
   const payoffBundle = useMemo(() => buildPayoffBundle(rowsEff, contractSize), [rowsEff, contractSize]);
 
-  // fallback days used when a row lacks days/dte/expiry
   const fallbackDays = useMemo(
     () => Math.max(1, Math.round((Number.isFinite(Number(T)) ? Number(T) : 30 / 365) * basisEff)),
     [T, basisEff]
   );
 
-  // strikes and base domain
   const ks = useMemo(
     () => rowsEff.filter((r) => Number.isFinite(r?.K)).map((r) => +r.K).sort((a, b) => a - b),
     [rowsEff]
   );
+
   const baseDomain = useMemo(() => {
-    const s = Number.isFinite(Number(spot)) ? Number(spot) : (ks[0] ?? 100);
+    const s = Number.isFinite(Number(spotEff)) ? Number(spotEff) : (ks[0] ?? 100);
     const lo = Math.max(0.01, Math.min(ks[0] ?? s, s) * 0.9);
     const hi = Math.max(lo * 1.1, Math.max(ks[ks.length - 1] ?? s, s) * 1.1);
     return [lo, hi];
-  }, [spot, ks]);
+  }, [spotEff, ks]);
 
-  // zoomable domain
   const [xDomain, setXDomain] = useState(baseDomain);
   useEffect(() => setXDomain(baseDomain), [baseDomain[0], baseDomain[1]]);
   const zoomAt = (cx, factor) => {
@@ -340,29 +343,19 @@ export default function Chart({
   }, [xDomain]);
   const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
-  // All Greeks/mark-to-market use Key Stats inputs
+  // env built from effective values (bus -> props)
   const env = useMemo(
-    () => ({ r: Number(riskFree) || 0, sigma: Number(sigma) || 0, q: Number(dividend) || 0, yearBasis: basisEff }),
-    [riskFree, sigma, dividend, basisEff]
+    () => ({ r: Number(rfEff) || 0, sigma: Number(sigmaEff) || 0, q: Number(qEff) || 0, yearBasis: basisEff }),
+    [rfEff, sigmaEff, qEff, basisEff]
   );
 
-  // --- CENTRALIZED EXPIRATION PAYOFF (with safe hub access) ---
-  const yExp = useMemo(
-    () => xs.map((S) => safePayoffAt(S, payoffBundle)),
-    [xs, payoffBundle]
-  );
-
-  // current mark-to-market (BS)
-  const yNow = useMemo(
-    () => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
-    [xs, rowsEff, env, contractSize, fallbackDays]
-  );
+  const yExp = useMemo(() => xs.map((S) => safePayoffAt(S, payoffBundle)), [xs, payoffBundle]);
+  const yNow = useMemo(() => xs.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays)),
+    [xs, rowsEff, env, contractSize, fallbackDays]);
 
   const greekWhich = (greekProp || "vega").toLowerCase();
-  const gVals = useMemo(
-    () => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
-    [xs, rowsEff, env, contractSize, greekWhich, fallbackDays]
-  );
+  const gVals = useMemo(() => xs.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
+    [xs, rowsEff, env, contractSize, greekWhich, fallbackDays]);
 
   const beFromGraph = useMemo(() => {
     const out = [];
@@ -398,22 +391,20 @@ export default function Chart({
   const xScale = useMemo(() => lin(xDomain, [pad.l, pad.l + innerW]), [xDomain, innerW]);
   const yScale = useMemo(() => lin([yRange[0], yRange[1]], [pad.t + innerH, pad.t]), [yRange, innerH]);
 
-  // 🔧 RIGHT-AXIS (Greek) — trimmed, zero-aware, independent from P&L
   const [gLo, gHi] = useMemo(() => greekNiceRange(gVals), [gVals]);
   const gScale = useMemo(() => lin([gLo, gHi], [pad.t + innerH, pad.t]), [gLo, gHi, innerH]);
   const gTicks = useMemo(() => ticks(gLo, gHi, 6), [gLo, gHi]);
 
   const xTicks = ticks(xDomain[0], xDomain[1], 7);
   const yTicks = ticks(yRange[0], yRange[1], 6);
-  const centerStrike = ks.length ? (ks[0] + ks[ks.length - 1]) / 2 : Number(spot) || xDomain[0];
+  const centerStrike = ks.length ? (ks[0] + ks[ks.length - 1]) / 2 : Number(spotEff) || xDomain[0];
 
-  // shaded PL areas
   const { pos: posPaths, neg: negPaths } = useMemo(
     () => buildAreaPaths(xs, yExp, xScale, yScale),
     [xs, yExp, xScale, yScale]
   );
 
-  // --- GBM mean & 95% CI (uses drift selection) ---
+  // GBM mean & CI
   const avgDays = useMemo(() => {
     const opt = rowsEff.filter((r) => !TYPE_INFO[r.type]?.stock);
     if (!opt.length) return fallbackDays;
@@ -421,10 +412,10 @@ export default function Chart({
     return Math.max(1, Math.round(sum / opt.length));
   }, [rowsEff, fallbackDays]);
 
-  const S0 = Number.isFinite(Number(spot)) ? Number(spot) : ks[0] ?? xDomain[0];
+  const S0 = Number.isFinite(Number(spotEff)) ? Number(spotEff) : ks[0] ?? xDomain[0];
   const Tyrs = (avgDays || 0) / basisEff;
-  const mu = deriveMu({ drift, capmMu, riskFree, customMu });
-  const sVol = Number(sigma) || 0;
+  const mu = deriveMu({ drift: driftEff, capmMu: capmEff, riskFree: rfEff, customMu });
+  const sVol = Number(sigmaEff) || 0;
 
   let meanPrice = Number.isFinite(S0) ? S0 * Math.exp(mu * Tyrs) : null;
   {
@@ -455,7 +446,7 @@ export default function Chart({
 
   const greekColor = GREEK_COLOR[greekWhich] || "#f59e0b";
 
-  // --- Tooltip state ---
+  // hover
   const [hover, setHover] = useState(null);
   const onMove = (evt) => {
     const svg = evt.currentTarget;
@@ -464,13 +455,7 @@ export default function Chart({
     const S = Math.min(xDomain[1], Math.max(xDomain[0], xScale.invert(px)));
     let i = Math.round((S - xs[0]) / (stepX || 1));
     i = Math.max(0, Math.min(xs.length - 1, i));
-    setHover({
-      i,
-      sx: xScale(xs[i]),
-      syNow: yScale(yNow[i]),
-      syExp: yScale(yExp[i]),
-      gy: gScale(gVals[i]),
-    });
+    setHover({ i, sx: xScale(xs[i]), syNow: yScale(yNow[i]), syExp: yScale(yExp[i]), gy: gScale(gVals[i]) });
   };
   const onLeave = () => setHover(null);
 
@@ -489,7 +474,7 @@ export default function Chart({
     return () => ro.disconnect();
   }, []);
 
-  /* ---- Fetch BE via API to drive analytic Win rate ---- */
+  /* ---- BE via API for analytic Win rate ---- */
   const apiLegs = useMemo(() => rowsToApiLegs(rowsEff), [rowsEff]);
   const [beState, setBeState] = useState({ be: null, meta: null, loading: false });
   const acRef2 = useRef(null);
@@ -528,38 +513,29 @@ export default function Chart({
   }, [strategy, contractSize, apiLegs]);
 
   const winRate = useMemo(() => {
-    if (!(Number(spot) > 0)) return null;
+    if (!(Number(spotEff) > 0)) return null;
     if (!Array.isArray(beState.be) || !beState.be.length) return null;
     const out = analyticPop({
-      S: Number(spot),
-      sigma: Number(sigma),
+      S: Number(spotEff),
+      sigma: Number(sigmaEff),
       T: Number(T),
       legs: apiLegs,
+      r: Number(rfEff),
       be: beState.be,
-      r: Number(riskFree),
     });
     const p = Number(out?.pop);
     if (!Number.isFinite(p)) return null;
     return Math.max(0, Math.min(1, p));
-  }, [beState.be, apiLegs, spot, sigma, T, riskFree]);
+  }, [beState.be, apiLegs, spotEff, sigmaEff, T, rfEff]);
 
   return (
     <Wrapper className={wrapClass} ref={ref} style={{ position: "relative" }}>
       {/* header */}
       <div className="chart-header">
         <div className="legend">
-          <div className="leg">
-            <span className="dot" style={{ background: "var(--accent)" }} />
-            Current P&amp;L
-          </div>
-          <div className="leg">
-            <span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />
-            Expiration P&amp;L
-          </div>
-          <div className="leg">
-            <span className="dot" style={{ background: greekColor }} />
-            {GREEK_LABEL[greekWhich] || "Greek"}
-          </div>
+          <div className="leg"><span className="dot" style={{ background: "var(--accent)" }} />Current P&L</div>
+          <div className="leg"><span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />Expiration P&L</div>
+          <div className="leg"><span className="dot" style={{ background: greekColor }} />{GREEK_LABEL[greekWhich] || "Greek"}</div>
           <div className="leg"><span className="dot" style={{ background: SPOT_COLOR }} />Spot</div>
           <div className="leg"><span className="dot" style={{ background: MEAN_COLOR }} />Mean</div>
           <div className="leg"><span className="dot" style={{ background: CI_COLOR }} />95% CI</div>
@@ -584,151 +560,39 @@ export default function Chart({
       </div>
 
       {/* chart */}
-      <svg
-        width="100%"
-        height={h}
-        role="img"
-        aria-label="Strategy payoff chart"
-        onMouseMove={onMove}
-        onMouseLeave={onLeave}
-        style={{ display: "block" }}
-      >
-        {/* shaded profit/loss areas */}
+      <svg width="100%" height={h} role="img" aria-label="Strategy payoff chart" onMouseMove={onMove} onMouseLeave={onLeave} style={{ display: "block" }}>
         {negPaths.map((d, i) => (<path key={`neg-${i}`} d={d} fill="rgba(239,68,68,.10)" stroke="none" />))}
         {posPaths.map((d, i) => (<path key={`pos-${i}`} d={d} fill="rgba(16,185,129,.12)" stroke="none" />))}
-
-        {/* grid */}
-        {xTicks.map((t, i) => (
-          <line key={`xg-${i}`} x1={xScale(t)} x2={xScale(t)} y1={pad.t} y2={pad.t + innerH}
-                stroke="var(--border)" strokeOpacity="0.6" />
-        ))}
-        {yTicks.map((t, i) => (
-          <line key={`yg-${i}`} x1={pad.l} x2={pad.l + innerW} y1={yScale(t)} y2={yScale(t)}
-                stroke="var(--border)" strokeOpacity="0.6" />
-        ))}
-
-        {/* axes labels & guide lines */}
-        <line x1={pad.l} x2={pad.l + innerW} y1={yScale(0)} y2={yScale(0)}
-              stroke="var(--text)" strokeOpacity="0.8" />
-        {yTicks.map((t, i) => (
-          <g key={`yl-${i}`}>
-            <line x1={pad.l - 4} x2={pad.l} y1={yScale(t)} y2={yScale(t)} stroke="var(--text)" />
-            <text x={pad.l - 8} y={yScale(t)} dy="0.32em" textAnchor="end" className="tick">
-              {fmtNum(t)}
-            </text>
-          </g>
-        ))}
-        {xTicks.map((t, i) => (
-          <g key={`xl-${i}`}>
-            <line x1={xScale(t)} x2={xScale(t)} y1={pad.t + innerH} y2={pad.t + innerH + 4} stroke="var(--text)" />
-            <text x={xScale(t)} y={pad.t + innerH + 16} textAnchor="middle" className="tick">
-              {fmtNum(t, 0)}
-            </text>
-          </g>
-        ))}
-        {Number.isFinite(centerStrike) && (
-          <line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t + innerH}
-                stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />
-        )}
-
-        {/* RIGHT GREEK AXIS */}
-        <line x1={pad.l + innerW} x2={pad.l + innerW} y1={pad.t} y2={pad.t + innerH}
-              stroke={greekColor} strokeOpacity="0.25" />
-        {gTicks.map((t, i) => (
-          <g key={`gr-${i}`}>
-            <line x1={pad.l + innerW} x2={pad.l + innerW + 4} y1={gScale(t)} y2={gScale(t)}
-                  stroke={greekColor} strokeOpacity="0.8" />
-            <text x={pad.l + innerW + 6} y={gScale(t)} dy="0.32em" textAnchor="start"
-                  className="tick" style={{ fill: greekColor }}>
-              {(() => {
-                const a = Math.abs(t);
-                if (greekWhich === "gamma") return a >= 1 ? t.toFixed(2) : a >= 0.1 ? t.toFixed(3) : t.toFixed(4);
-                if (greekWhich === "delta") return t.toFixed(2);
-                if (greekWhich === "vega")  return a >= 10 ? t.toFixed(0) : a >= 1 ? t.toFixed(1) : t.toFixed(2);
-                if (greekWhich === "theta") return a >= 1 ? t.toFixed(2) : t.toFixed(3);
-                if (greekWhich === "rho")   return a >= 1 ? t.toFixed(2) : t.toFixed(3);
-                return t.toFixed(2);
-              })()}
-            </text>
-          </g>
-        ))}
-        <text transform={`translate(${w - 14} ${pad.t + innerH / 2}) rotate(90)`}
-              textAnchor="middle" className="axis" style={{ fill: greekColor }}>
-          {GREEK_LABEL[greekWhich] || "Greek"}
-        </text>
-
-        {/* series */}
-        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yNow[i])}`).join(" ")}
-              fill="none" stroke="var(--accent)" strokeWidth="2.2" />
-        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yExp[i])}`).join(" ")}
-              fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
-        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")}
-              fill="none" stroke={greekColor} strokeWidth="2" />
-
-        {/* overlays: spot / mean / CI */}
-        {Number.isFinite(spot) && spot >= xDomain[0] && spot <= xDomain[1] && (
-          <line x1={xScale(Number(spot))} x2={xScale(Number(spot))}
-                y1={pad.t} y2={pad.t + innerH} stroke={SPOT_COLOR} strokeWidth="2" />
-        )}
-        {Number.isFinite(meanPrice) && meanPrice >= xDomain[0] && meanPrice <= xDomain[1] && (
-          <line x1={xScale(meanPrice)} x2={xScale(meanPrice)}
-                y1={pad.t} y2={pad.t + innerH} stroke={MEAN_COLOR} strokeWidth="2" />
-        )}
-        {Number.isFinite(ciLow) && ciLow >= xDomain[0] && ciLow <= xDomain[1] && (
-          <line x1={xScale(ciLow)} x2={xScale(ciLow)}
-                y1={pad.t} y2={pad.t + innerH} stroke={CI_COLOR} strokeWidth="2" />
-        )}
-        {Number.isFinite(ciHigh) && ciHigh >= xDomain[0] && ciHigh <= xDomain[1] && (
-          <line x1={xScale(ciHigh)} x2={xScale(ciHigh)}
-                y1={pad.t} y2={pad.t + innerH} stroke={CI_COLOR} strokeWidth="2" />
-        )}
-
-        {/* hover markers */}
-        {hover && (
-          <>
-            <line x1={hover.sx} x2={hover.sx} y1={pad.t} y2={pad.t + innerH} stroke="rgba(255,255,255,.25)" />
-            <circle cx={hover.sx} cy={hover.syNow} r="4" fill="var(--accent)" />
-            <circle cx={hover.sx} cy={hover.syExp} r="4" fill="var(--text-muted,#8a8a8a)" />
-            <circle cx={hover.sx} cy={hover.gy} r="3.2" fill={greekColor} />
-          </>
-        )}
-
-        {/* break-evens (chart markers only; numeric values live in KPI cell) */}
-        {beFromGraph.map((b, i) => (
-          <g key={`be-${i}`}>
-            <line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t + innerH}
-                  stroke="var(--text)" strokeOpacity="0.25" />
-            <circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" />
-          </g>
-        ))}
+        {xTicks.map((t, i) => (<line key={`xg-${i}`} x1={xScale(t)} x2={xScale(t)} y1={pad.t} y2={pad.t + innerH} stroke="var(--border)" strokeOpacity="0.6" />))}
+        {yTicks.map((t, i) => (<line key={`yg-${i}`} x1={pad.l} x2={pad.l + innerW} y1={yScale(t)} y2={yScale(t)} stroke="var(--border)" strokeOpacity="0.6" />))}
+        <line x1={pad.l} x2={pad.l + innerW} y1={yScale(0)} y2={yScale(0)} stroke="var(--text)" strokeOpacity="0.8" />
+        {yTicks.map((t, i) => (<g key={`yl-${i}`}><line x1={pad.l - 4} x2={pad.l} y1={yScale(t)} y2={yScale(t)} stroke="var(--text)" /><text x={pad.l - 8} y={yScale(t)} dy="0.32em" textAnchor="end" className="tick">{fmtNum(t)}</text></g>))}
+        {xTicks.map((t, i) => (<g key={`xl-${i}`}><line x1={xScale(t)} x2={xScale(t)} y1={pad.t + innerH} y2={pad.t + innerH + 4} stroke="var(--text)" /><text x={xScale(t)} y={pad.t + innerH + 16} textAnchor="middle" className="tick">{fmtNum(t, 0)}</text></g>))}
+        {Number.isFinite(centerStrike) && (<line x1={xScale(centerStrike)} x2={xScale(centerStrike)} y1={pad.t} y2={pad.t + innerH} stroke="var(--text)" strokeDasharray="2 6" strokeOpacity="0.6" />)}
+        <line x1={pad.l + innerW} x2={pad.l + innerW} y1={pad.t} y2={pad.t + innerH} stroke={greekColor} strokeOpacity="0.25" />
+        {gTicks.map((t, i) => (<g key={`gr-${i}`}><line x1={pad.l + innerW} x2={pad.l + innerW + 4} y1={gScale(t)} y2={gScale(t)} stroke={greekColor} strokeOpacity="0.8" /><text x={pad.l + innerW + 6} y={gScale(t)} dy="0.32em" textAnchor="start" className="tick" style={{ fill: greekColor }}>{(() => { const a = Math.abs(t); if (greekWhich === "gamma") return a >= 1 ? t.toFixed(2) : a >= 0.1 ? t.toFixed(3) : t.toFixed(4); if (greekWhich === "delta") return t.toFixed(2); if (greekWhich === "vega") return a >= 10 ? t.toFixed(0) : a >= 1 ? t.toFixed(1) : t.toFixed(2); if (greekWhich === "theta") return a >= 1 ? t.toFixed(2) : t.toFixed(3); if (greekWhich === "rho") return a >= 1 ? t.toFixed(2) : t.toFixed(3); return t.toFixed(2); })()}</text></g>))}
+        <text transform={`translate(${w - 14} ${pad.t + innerH / 2}) rotate(90)`} textAnchor="middle" className="axis" style={{ fill: greekColor }}>{GREEK_LABEL[greekWhich] || "Greek"}</text>
+        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yNow[i])}`).join(" ")} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
+        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${yScale(yExp[i])}`).join(" ")} fill="none" stroke="var(--text-muted,#8a8a8a)" strokeWidth="2" />
+        <path d={xs.map((v, i) => `${i ? "L" : "M"}${xScale(v)},${gScale(gVals[i])}`).join(" ")} fill="none" stroke={greekColor} strokeWidth="2" />
+        {Number.isFinite(spotEff) && spotEff >= xDomain[0] && spotEff <= xDomain[1] && (<line x1={xScale(Number(spotEff))} x2={xScale(Number(spotEff))} y1={pad.t} y2={pad.t + innerH} stroke={SPOT_COLOR} strokeWidth="2" />)}
+        {Number.isFinite(meanPrice) && meanPrice >= xDomain[0] && meanPrice <= xDomain[1] && (<line x1={xScale(meanPrice)} x2={xScale(meanPrice)} y1={pad.t} y2={pad.t + innerH} stroke={MEAN_COLOR} strokeWidth="2" />)}
+        {Number.isFinite(ciLow) && ciLow >= xDomain[0] && ciLow <= xDomain[1] && (<line x1={xScale(ciLow)} x2={xScale(ciLow)} y1={pad.t} y2={pad.t + innerH} stroke={CI_COLOR} strokeWidth="2" />)}
+        {Number.isFinite(ciHigh) && ciHigh >= xDomain[0] && ciHigh <= xDomain[1] && (<line x1={xScale(ciHigh)} x2={xScale(ciHigh)} y1={pad.t} y2={pad.t + innerH} stroke={CI_COLOR} strokeWidth="2" />)}
+        {hover && (<><line x1={hover.sx} x2={hover.sx} y1={pad.t} y2={pad.t + innerH} stroke="rgba(255,255,255,.25)" /><circle cx={hover.sx} cy={yScale(yNow[hover.i])} r="4" fill="var(--accent)" /><circle cx={hover.sx} cy={yScale(yExp[hover.i])} r="4" fill="var(--text-muted,#8a8a8a)" /><circle cx={hover.sx} cy={gScale(gVals[hover.i])} r="3.2" fill={greekColor} /></>)}
+        {beFromGraph.map((b, i) => (<g key={`be-${i}`}><line x1={xScale(b)} x2={xScale(b)} y1={pad.t} y2={pad.t + innerH} stroke="var(--text)" strokeOpacity="0.25" /><circle cx={xScale(b)} cy={yScale(0)} r="3.5" fill="var(--bg,#111)" stroke="var(--text)" /></g>))}
       </svg>
 
       {/* floating tooltip */}
       {hover && (() => {
         const i = hover.i;
         return (
-          <div className="tip"
-               style={{ left: Math.min(Math.max(hover.sx + 14, 8), w - 260),
-                        top: Math.max(pad.t + 8, Math.min(hover.syNow, h - 120)) }}>
-            <div className="row">
-              <span className="dot" style={{ background: "var(--accent)" }} />
-              <span>Current P&amp;L</span>
-              <span className="val">{fmtCur(yNow[i], currency)}</span>
-            </div>
-            <div className="row">
-              <span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} />
-              <span>Expiration P&amp;L</span>
-              <span className="val">{fmtCur(yExp[i], currency)}</span>
-            </div>
-            <div className="row">
-              <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
-              <span>{GREEK_LABEL[greekWhich]}</span>
-              <span className="val">{fmtNum(gVals[i], 2)}</span>
-            </div>
-
+          <div className="tip" style={{ left: Math.min(Math.max(hover.sx + 14, 8), w - 260), top: Math.max(pad.t + 8, Math.min(hover.syNow, h - 120)) }}>
+            <div className="row"><span className="dot" style={{ background: "var(--accent)" }} /><span>Current P&L</span><span className="val">{fmtCur(yNow[i], currency)}</span></div>
+            <div className="row"><span className="dot" style={{ background: "var(--text-muted,#8a8a8a)" }} /><span>Expiration P&L</span><span className="val">{fmtCur(yExp[i], currency)}</span></div>
+            <div className="row"><span className="dot" style={{ background: greekColor }} /><span>{GREEK_LABEL[greekWhich]}</span><span className="val">{fmtNum(gVals[i], 2)}</span></div>
             <div className="price">{fmtCur(xs[i], currency)}</div>
             <div className="sub">Underlying price</div>
-
             <div className="rule" />
             <div className="sub">95% CI & Mean shown on chart</div>
           </div>
@@ -738,32 +602,12 @@ export default function Chart({
       {/* KPI row */}
       <div className="kpi-scroll" ref={kpiRef} aria-label="Strategy metrics">
         <div className="metrics">
-          <div className="m">
-            <div className="k">Underlying price</div>
-            <div className="v">{Number.isFinite(Number(spot)) ? fmtCur(spot, currency) : "—"}</div>
-          </div>
-          <div className="m">
-            <div className="k">Max profit</div>
-            <div className="v">{fmtNum(Math.max(...yExp), 2)}</div>
-          </div>
-          <div className="m">
-            <div className="k">Max loss</div>
-            <div className="v">{fmtNum(Math.min(...yExp), 2)}</div>
-          </div>
-          <div className="m">
-            <div className="k">Win rate</div>
-            <div className="v">{winRate == null ? "—" : `${(winRate * 100).toFixed(2)}%`}</div>
-          </div>
-
-          <div className="m">
-            <div className="k">Breakeven</div>
-            <BreakEvenBadge rows={rowsEff} currency={currency} strategy={strategy} />
-          </div>
-
-          <div className="m">
-            <div className="k">Lot size</div>
-            <div className="v">{lotSize}</div>
-          </div>
+          <div className="m"><div className="k">Underlying price</div><div className="v">{Number.isFinite(Number(spotEff)) ? fmtCur(spotEff, currency) : "—"}</div></div>
+          <div className="m"><div className="k">Max profit</div><div className="v">{fmtNum(Math.max(...yExp), 2)}</div></div>
+          <div className="m"><div className="k">Max loss</div><div className="v">{fmtNum(Math.min(...yExp), 2)}</div></div>
+          <div className="m"><div className="k">Win rate</div><div className="v">{winRate == null ? "—" : `${(winRate * 100).toFixed(2)}%`}</div></div>
+          <div className="m"><div className="k">Breakeven</div><BreakEvenBadge rows={rowsEff} currency={currency} strategy={strategy} /></div>
+          <div className="m"><div className="k">Lot size</div><div className="v">{lotSize}</div></div>
         </div>
       </div>
 
