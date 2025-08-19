@@ -861,3 +861,49 @@ function buildAreaPaths(xs, ys, xScale, yScale) {
   if (seg) { seg.push([xs[xs.length - 1], 0]); push(); }
   return { pos, neg };
 }
+
+// ---------- payoff helper (reintroduced) ----------
+/**
+ * Convert builder rows into a normalized payoff bundle for the expiration engine.
+ * Hoisted function declaration so it is available to earlier calls in the module.
+ * @param {Array} rows   Builder rows (lc/sc/lp/sp/ls/ss)
+ * @param {number} contractSize  Multiplier per contract (e.g., 1 or 100)
+ * @returns {{ legs: Array }}
+ */
+function buildPayoffBundle(rows, contractSize) {
+  const legs = [];
+  const size = Number(contractSize) || 1;
+
+  for (const r of rows || []) {
+    if (!r || !r.enabled) continue;
+
+    const qty = (Number(r.qty) || 0) * size;
+    const K = Number(r.K) || 0;
+    const prem = Number.isFinite(r.premium) ? Number(r.premium) : 0;
+
+    switch (String(r.type || "").toLowerCase()) {
+      case "lc":
+        legs.push({ kind: "call", side: "long",  strike: K, premium: prem, qty });
+        break;
+      case "sc":
+        legs.push({ kind: "call", side: "short", strike: K, premium: prem, qty });
+        break;
+      case "lp":
+        legs.push({ kind: "put",  side: "long",  strike: K, premium: prem, qty });
+        break;
+      case "sp":
+        legs.push({ kind: "put",  side: "short", strike: K, premium: prem, qty });
+        break;
+      case "ls": // long stock: reuse 'premium' field to store entry/basis price for clarity
+        legs.push({ kind: "stock", side: "long",  premium: K, qty });
+        break;
+      case "ss": // short stock
+        legs.push({ kind: "stock", side: "short", premium: K, qty });
+        break;
+      default:
+        // ignore unknown rows
+        break;
+    }
+  }
+  return { legs };
+}
