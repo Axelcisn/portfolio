@@ -400,6 +400,7 @@ const yNowMaster = useMemo(
 );
 
 // Greeks on master grid
+// Greeks on master grid
 const greekWhich = (greekProp || "vega").toLowerCase();
 const gValsMaster = useMemo(
   () => xsMaster.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
@@ -408,38 +409,46 @@ const gValsMaster = useMemo(
 
 // Visible window (no resample): filter master arrays by current xDomain
 const xs = useMemo(() => {
-  const [lo, hi] = xDomain; const out = [];
+  const [lo, hi] = xDomain;
+  const out = [];
   for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(v);
+    const v = xsMaster[i];
+    if (v >= lo && v <= hi) out.push(v);
   }
   return out;
 }, [xsMaster, xDomain]);
 
 const yExp = useMemo(() => {
-  const [lo, hi] = xDomain; const out = [];
+  const [lo, hi] = xDomain;
+  const out = [];
   for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(yExpMaster[i]);
+    const v = xsMaster[i];
+    if (v >= lo && v <= hi) out.push(yExpMaster[i]);
   }
   return out;
 }, [xsMaster, yExpMaster, xDomain]);
 
 const yNow = useMemo(() => {
-  const [lo, hi] = xDomain; const out = [];
+  const [lo, hi] = xDomain;
+  const out = [];
   for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(yNowMaster[i]);
+    const v = xsMaster[i];
+    if (v >= lo && v <= hi) out.push(yNowMaster[i]);
   }
   return out;
 }, [xsMaster, yNowMaster, xDomain]);
 
 const gVals = useMemo(() => {
-  const [lo, hi] = xDomain; const out = [];
+  const [lo, hi] = xDomain;
+  const out = [];
   for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i]; if (v >= lo && v <= hi) out.push(gValsMaster[i]);
+    const v = xsMaster[i];
+    if (v >= lo && v <= hi) out.push(gValsMaster[i]);
   }
   return out;
 }, [xsMaster, gValsMaster, xDomain]);
 
-  const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
+const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
   // All Greeks/mark-to-market use effective params (+basis)
   const env = useMemo(
