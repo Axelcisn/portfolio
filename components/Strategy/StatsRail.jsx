@@ -18,7 +18,7 @@ import { publishStatsCtx } from "./statsBus";
 const moneySign = (ccy) =>
   ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
 const isNum = (x) => Number.isFinite(Number(x));
-/** ✅ Only accept strictly positive, finite prices */
+/** Only accept strictly positive, finite prices */
 const isPos = (x) => {
   const n = Number(x);
   return Number.isFinite(n) && n > 0;
@@ -59,46 +59,96 @@ function daysToExpiry(expiryISO, tz = "Europe/Rome") {
   }
 }
 
-/* ===== tiny fetchers (unchanged behavior) ===== */
+/* ===== price fetchers ===== */
+
+/** Last 1m tick / meta price / last close */
 async function fetchSpotFromChart(sym) {
   try {
     const u = `/api/chart?symbol=${encodeURIComponent(sym)}&range=1d&interval=1m`;
     const r = await fetch(u, { cache: "no-store" });
     const j = await r.json();
-    const arrs = [
-      j?.data?.c, j?.c, j?.close,
-      j?.chart?.result?.[0]?.indicators?.quote?.[0]?.close,
-      j?.result?.[0]?.indicators?.quote?.[0]?.close,
-    ].filter(Boolean);
-    for (const a of arrs) {
-      if (Array.isArray(a) && a.length) {
-        const n = Number(a[a.length - 1]);
-        if (Number.isFinite(n) && n > 0) return n;
-      }
-    }
+
+    // candidates in order: last minute tick, meta, last close
+    const lastTick = Array.isArray(j?.data?.c) ? Number(j.data.c[j.data.c.length - 1]) : NaN;
+    if (isPos(lastTick)) return lastTick;
+
     const metaPx =
-      j?.meta?.regularMarketPrice ??
-      j?.chart?.result?.[0]?.meta?.regularMarketPrice ??
-      j?.regularMarketPrice;
-    return Number.isFinite(metaPx) && metaPx > 0 ? metaPx : null;
+      Number(j?.meta?.regularMarketPrice) ??
+      Number(j?.chart?.result?.[0]?.meta?.regularMarketPrice) ??
+      Number(j?.regularMarketPrice);
+    if (isPos(metaPx)) return metaPx;
+
+    const lastClose = Array.isArray(j?.close) ? Number(j.close[j.close.length - 1]) : NaN;
+    if (isPos(lastClose)) return lastClose;
+
+    return null;
   } catch {
     return null;
   }
 }
-async function fetchCompany(sym) {
-  const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
-  const j = await r.json();
-  let spot = Number(j?.regularMarketPrice);
-  if (!Number.isFinite(spot) || spot <= 0) spot = await fetchSpotFromChart(j.symbol || sym);
-  const currency =
-    j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
+
+/** Yahoo company endpoint (may be null/0 in some envs) */
+async function fetchCompanyYahoo(sym) {
+  try {
+    const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+    const j = await r.json();
+    const currency =
+      j.currency || j.ccy || j?.quote?.currency || j?.price?.currency || j?.meta?.currency || "";
+    const spot = Number(j?.regularMarketPrice);
+    return {
+      spot: isPos(spot) ? spot : null,
+      currency: currency || "",
+      beta: typeof j?.beta === "number" ? j.beta : null,
+      symbol: j?.symbol || sym,
+    };
+  } catch {
+    return { spot: null, currency: "", beta: null, symbol: sym };
+  }
+}
+
+/** IB provider endpoint (preferred if available & authenticated) */
+async function fetchCompanyIB(sym) {
+  try {
+    const r = await fetch(`/api/provider/ib/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
+    const j = await r.json();
+    // Accept a wide set of candidate fields
+    const candidates = [
+      j?.regularMarketPrice,
+      j?.marketPrice,
+      j?.mark,
+      j?.lastPrice,
+      j?.last,
+      j?.close,
+    ].map(Number);
+    const spot = candidates.find(isPos) ?? null;
+    const currency = j?.currency || j?.ccy || "";
+    return { spot: isPos(spot) ? spot : null, currency, beta: null, symbol: j?.symbol || sym };
+  } catch {
+    return { spot: null, currency: "", beta: null, symbol: sym };
+  }
+}
+
+/** Robust company fetch: IB → Yahoo → chart last tick → last close */
+async function fetchCompanyRobust(sym) {
+  // 1) IB
+  const ib = await fetchCompanyIB(sym);
+  if (isPos(ib.spot)) return ib;
+
+  // 2) Yahoo
+  const ya = await fetchCompanyYahoo(sym);
+  if (isPos(ya.spot)) return ya;
+
+  // 3) Chart fallbacks
+  const tick = await fetchSpotFromChart(sym);
   return {
-    symbol: j.symbol || sym,
-    currency,
-    beta: typeof j.beta === "number" ? j.beta : null,
-    spot: Number.isFinite(spot) && spot > 0 ? spot : null,
+    spot: isPos(tick) ? tick : null,
+    currency: ya.currency || ib.currency || "",
+    beta: ya.beta ?? null,
+    symbol: sym,
   };
 }
+
+/** Market stats (RF/MRP/Index Mean) */
 async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback = "2y" }) {
   try {
     const u = `/api/market/stats?index=${encodeURIComponent(index)}&currency=${encodeURIComponent(currency)}&lookback=${encodeURIComponent(lookback)}&basis=annual`;
@@ -113,6 +163,7 @@ async function fetchMarketBasics({ index = "^GSPC", currency = "USD", lookback =
     return { rAnnual: null, erp: null, indexAnn: null };
   }
 }
+
 async function fetchBetaStats(sym, benchmark = "^GSPC") {
   try {
     const u = `/api/beta/stats?symbol=${encodeURIComponent(sym)}&benchmark=${encodeURIComponent(benchmark)}&range=5y&interval=1mo`;
@@ -131,6 +182,7 @@ async function fetchBetaStats(sym, benchmark = "^GSPC") {
     }
   }
 }
+
 async function fetchVol(sym, mapped, d, cm, signal) {
   const tryOne = async (param) => {
     const u = `/api/volatility?symbol=${encodeURIComponent(sym)}&${param}=${encodeURIComponent(mapped)}&days=${encodeURIComponent(d)}&cmDays=${encodeURIComponent(cm)}`;
@@ -153,10 +205,10 @@ const capmMu = (rf, beta, erp, q = 0) =>
 /* ===== component ===== */
 export default function StatsRail({
   /* expiry control (CONTROLLED) */
-  expiries = [],                 // same array used by Options
-  selectedExpiry = null,         // controlled ISO (YYYY-MM-DD)
-  onExpiryChange,                // (iso) => void
-  onDaysChange,                  // (days) => void
+  expiries = [],
+  selectedExpiry = null,
+  onExpiryChange,
+  onDaysChange,
 
   /* optional strategy plumbing */
   rows = null, onRowsChange,
@@ -195,7 +247,7 @@ export default function StatsRail({
   // propagate days only (never touch parent's ISO here)
   useEffect(() => { if (days != null) onDaysChange?.(days); }, [days, onDaysChange]);
 
-  /* market/vol stuff (kept as-is) */
+  /* ===== market/vol/price state ===== */
   const [symbol, setSymbol] = useState(company?.symbol || "");
   const [currency, setCurrency] = useState(propCcy || company?.currency || "");
   const [spot, setSpot] = useState(propSpot ?? null);
@@ -208,7 +260,7 @@ export default function StatsRail({
     return Number.isFinite(n) ? n : 0;
   }, [divPct]);
 
-  // ⬇⬇⬇ Default is now "hist"
+  // default vol source
   const [volSrc, setVolSrc] = useState("hist"); // "iv" | "hist"
   const [sigma, setSigma] = useState(null);
   const [volMeta, setVolMeta] = useState(null);
@@ -226,28 +278,35 @@ export default function StatsRail({
   });
   useEffect(() => { try { localStorage.setItem("stats.driftMode", driftMode); } catch {} }, [driftMode]);
 
+  // sync props if Strategy already knows spot/currency
+  useEffect(() => { if (isPos(propSpot)) setSpot(propSpot); }, [propSpot]);
+  useEffect(() => { if (propCcy) setCurrency(propCcy); }, [propCcy]);
+
+  // ticker picked
   useEffect(() => {
     const onPick = (e) => {
       const it = e?.detail || {};
       const sym = (it.symbol || "").toUpperCase();
       if (!sym) return;
       setSymbol(sym);
+      if (isPos(it.price)) setSpot(it.price);
     };
     window.addEventListener("app:ticker-picked", onPick);
     return () => window.removeEventListener("app:ticker-picked", onPick);
   }, []);
 
+  // robust initial fetch (IB → Yahoo → chart)
   useEffect(() => {
     if (!symbol) return;
     let mounted = true;
     (async () => {
       try {
-        const c = await fetchCompany(symbol);
+        const c = await fetchCompanyRobust(symbol);
         if (!mounted) return;
-        if (c.currency) setCurrency(c.currency);
-        if (isPos(c.spot)) setSpot(c.spot);            // ✅ only accept > 0
+        if (c.currency) setCurrency((p) => p || c.currency);
+        if (isPos(c.spot)) setSpot(c.spot);
 
-        const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || "USD", lookback: "2y" });
+        const mb = await fetchMarketBasics({ index: "^GSPC", currency: c.currency || currency || "USD", lookback: "2y" });
         if (!mounted) return;
         if (mb.rAnnual != null) setRf(mb.rAnnual);
         if (mb.erp != null) setErp(mb.erp);
@@ -278,11 +337,13 @@ export default function StatsRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
+  // mirror RF/MRP changes from parent
   useEffect(() => {
     if (typeof market?.riskFree === "number") setRf(market.riskFree);
     if (typeof market?.mrp === "number") setErp(market.mrp);
   }, [market?.riskFree, market?.mrp]);
 
+  // volatility fetcher
   useEffect(() => {
     if (!symbol || volSrc === "manual") { cancelVol(); return; }
     (async () => {
@@ -304,12 +365,13 @@ export default function StatsRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volSrc, symbol]);
 
+  // soft tick (chart 1m) for spot
   useEffect(() => {
     if (!symbol) return;
     let stop = false, id;
     const tick = async () => {
       const px = await fetchSpotFromChart(symbol);
-      if (!stop && isPos(px)) setSpot(px);            // ✅ guard against 0/negatives
+      if (!stop && isPos(px)) setSpot(px);
       id = setTimeout(tick, 15000);
     };
     tick();
@@ -342,8 +404,6 @@ export default function StatsRail({
   }, [days, rows, legs, onRowsChange, onLegsChange, stampDaysOnRows, stampDaysOnLegs]);
 
   const showVolSkeleton = volSrc !== "manual" && symbol && (volLoading || !Number.isFinite(sigma));
-
-  // Remove the “Imp (30d)” / “Hist (Xd)” label; only show a fallback note if present.
   const volDiag = volMeta?.fallback ? "fallback" : "";
 
   const fmtLong = (iso) => {
@@ -370,7 +430,7 @@ export default function StatsRail({
       beta,
       muCapm,                 // rf + beta*erp - q
       q: qDec,                // dividend yield (decimal)
-      spot: isPos(spot) ? spot : null,   // ✅ never broadcast 0/negatives
+      spot: isPos(spot) ? spot : null,
       currency,
       driftMode,              // "CAPM" | "RF"
     });
