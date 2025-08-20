@@ -3,8 +3,10 @@
 
 import { useCallback, useMemo, useState } from "react";
 import StrategyGallery from "./StrategyGallery";
-import Chart from "../Chart";
+import dynamic from "next/dynamic";
 import { calculateNetPremium } from "./assignStrategy";
+
+const Chart = dynamic(() => import("./Chart"), { ssr: false });
 
 /**
  * Props
