@@ -3,10 +3,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import DirectionBadge from "./DirectionBadge";
-import Chart from "./Chart";
+import dynamic from "next/dynamic";
 import PositionBuilder from "./PositionBuilder";
 import SummaryTable from "./SummaryTable";
 import materializeSeeded from "./defs/materializeSeeded";
+
+const Chart = dynamic(() => import("./Chart"), { ssr: false });
 
 // --- centralized strategy aggregator (hub) ---
 // Allow two common export names to avoid churn while migrating.
