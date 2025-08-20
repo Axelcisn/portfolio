@@ -304,12 +304,12 @@ export default function Chart({
   frameless = false,
   strategy = null,
 }) {
-  // ✅ Pull basis from context; context wins
-  const tb = (typeof useTimeBasis === "function" ? useTimeBasis() : null) || {};
+  // ✅ Pull basis from context; context wins (UNCONDITIONAL HOOK CALLS)
+  const tb = useTimeBasis();
   const basisEff = Number.isFinite(Number(tb?.basis)) ? Number(tb.basis) : (Number(yearBasis) || 365);
 
-  // 🔹 Pull live stats; fall back to props
-  const stats = (typeof useStatsCtx === "function" ? useStatsCtx() : {}) || {};
+  // 🔹 Pull live stats; fall back to props (UNCONDITIONAL HOOK CALL)
+  const stats = useStatsCtx() || {};
   const sigmaEff = Number.isFinite(Number(stats?.sigma)) ? Number(stats.sigma) : Number(sigma);
   const rfEff    = Number.isFinite(Number(stats?.rf))    ? Number(stats.rf)    : Number(riskFree);
   const qEff     = Number.isFinite(Number(stats?.q))     ? Number(stats.q)     : Number(dividend);
@@ -391,7 +391,7 @@ export default function Chart({
     [xsMaster, payoffBundle]
   );
 
-  // ✅ TDZ FIX: define env BEFORE any usage below
+  // ✅ env defined before any usage below
   const env = useMemo(
     () => ({ r: Number(rfEff) || 0, sigma: Number(sigmaEff) || 0, q: Number(qEff) || 0, yearBasis: basisEff, S0: spotEff }),
     [rfEff, sigmaEff, qEff, basisEff, spotEff]
