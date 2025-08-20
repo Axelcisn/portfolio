@@ -79,8 +79,6 @@ function greekNiceRange(values) {
   return [lo - pad, hi + pad];
 }
 
-
-
 /* ---------- series sanitizer (remove NaN/±Inf and clamp one-sample spikes) ---------- */
 function sanitizeSeries(arr){
   if (!Array.isArray(arr)) return arr;
@@ -95,6 +93,7 @@ function sanitizeSeries(arr){
   }
   return out;
 }
+
 /* ---------- safe hub accessors + fallback ---------- */
 const hasFn = (f) => typeof f === "function";
 const safeGbmMean = (args) => {
@@ -369,92 +368,90 @@ export default function Chart({
   const zoomOut = () => zoomAt((xDomain[0] + xDomain[1]) / 2, 1.1);
   const resetZoom = () => setXDomain(baseDomain);
 
-  
-// --- Master grid & master series -------------------------------------------
-const NX = 1601; // higher resolution master grid
-const xsMaster = useMemo(() => {
-  const [lo, hi] = baseDomain;
-  const step = (hi - lo) / Math.max(1, NX - 1);
-  const base = new Array(NX); for (let i = 0; i < NX; i++) base[i] = lo + i * step;
+  // --- Master grid & master series -------------------------------------------
+  const NX = 1601; // higher resolution master grid
+  const xsMaster = useMemo(() => {
+    const [lo, hi] = baseDomain;
+    const step = (hi - lo) / Math.max(1, NX - 1);
+    const base = new Array(NX); for (let i = 0; i < NX; i++) base[i] = lo + i * step;
 
-  // Inject key breakpoints: all strikes + S₀ (spotEff)
-  const inject = [];
-  if (Array.isArray(ks)) for (const k of ks) if (Number.isFinite(k)) inject.push(Number(k));
-  if (Number.isFinite(Number(spotEff))) inject.push(Number(spotEff));
+    // Inject key breakpoints: all strikes + S₀ (spotEff)
+    const inject = [];
+    if (Array.isArray(ks)) for (const k of ks) if (Number.isFinite(k)) inject.push(Number(k));
+    if (Number.isFinite(Number(spotEff))) inject.push(Number(spotEff));
 
-  // Unique + sort
-  const set = new Set(base.concat(inject).map(v => +v));
-  return Array.from(set).sort((a,b) => a - b);
-}, [baseDomain, ks, spotEff]);
+    // Unique + sort
+    const set = new Set(base.concat(inject).map(v => +v));
+    return Array.from(set).sort((a,b) => a - b);
+  }, [baseDomain, ks, spotEff]);
 
-// Master series (single computation; zoom will window these)
-const yExpMaster = useMemo(
-  () => xsMaster.map((S) => safePayoffAt(S, payoffBundle)),
-  [xsMaster, payoffBundle]
-);
+  // Expiration P&L on master grid
+  const yExpMaster = useMemo(
+    () => xsMaster.map((S) => safePayoffAt(S, payoffBundle)),
+    [xsMaster, payoffBundle]
+  );
 
-// Anchored current P&L (premium or BS@S₀)
-const yNowMaster = useMemo(
-  () => sanitizeSeries(xsMaster.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays))),
-  [xsMaster, rowsEff, env, contractSize, fallbackDays]
-);
-
-// Greeks on master grid
-// Greeks on master grid
-const greekWhich = (greekProp || "vega").toLowerCase();
-const gValsMaster = useMemo(
-  () => xsMaster.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
-  [xsMaster, rowsEff, env, contractSize, greekWhich, fallbackDays]
-);
-
-// Visible window (no resample): filter master arrays by current xDomain
-const xs = useMemo(() => {
-  const [lo, hi] = xDomain;
-  const out = [];
-  for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i];
-    if (v >= lo && v <= hi) out.push(v);
-  }
-  return out;
-}, [xsMaster, xDomain]);
-
-const yExp = useMemo(() => {
-  const [lo, hi] = xDomain;
-  const out = [];
-  for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i];
-    if (v >= lo && v <= hi) out.push(yExpMaster[i]);
-  }
-  return out;
-}, [xsMaster, yExpMaster, xDomain]);
-
-const yNow = useMemo(() => {
-  const [lo, hi] = xDomain;
-  const out = [];
-  for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i];
-    if (v >= lo && v <= hi) out.push(yNowMaster[i]);
-  }
-  return out;
-}, [xsMaster, yNowMaster, xDomain]);
-
-const gVals = useMemo(() => {
-  const [lo, hi] = xDomain;
-  const out = [];
-  for (let i = 0; i < xsMaster.length; i++) {
-    const v = xsMaster[i];
-    if (v >= lo && v <= hi) out.push(gValsMaster[i]);
-  }
-  return out;
-}, [xsMaster, gValsMaster, xDomain]);
-
-const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
-
-  // All Greeks/mark-to-market use effective params (+basis)
+  // ✅ TDZ FIX: define env BEFORE any usage below
   const env = useMemo(
     () => ({ r: Number(rfEff) || 0, sigma: Number(sigmaEff) || 0, q: Number(qEff) || 0, yearBasis: basisEff, S0: spotEff }),
     [rfEff, sigmaEff, qEff, basisEff, spotEff]
   );
+
+  // Anchored current P&L (premium or BS@S₀)
+  const yNowMaster = useMemo(
+    () => sanitizeSeries(xsMaster.map((S) => payoffCurrent(S, rowsEff, env, contractSize, fallbackDays))),
+    [xsMaster, rowsEff, env, contractSize, fallbackDays]
+  );
+
+  // Greeks on master grid
+  const greekWhich = (greekProp || "vega").toLowerCase();
+  const gValsMaster = useMemo(
+    () => xsMaster.map((S) => greekTotal(greekWhich, S, rowsEff, env, contractSize, fallbackDays)),
+    [xsMaster, rowsEff, env, contractSize, greekWhich, fallbackDays]
+  );
+
+  // Visible window (no resample): filter master arrays by current xDomain
+  const xs = useMemo(() => {
+    const [lo, hi] = xDomain;
+    const out = [];
+    for (let i = 0; i < xsMaster.length; i++) {
+      const v = xsMaster[i];
+      if (v >= lo && v <= hi) out.push(v);
+    }
+    return out;
+  }, [xsMaster, xDomain]);
+
+  const yExp = useMemo(() => {
+    const [lo, hi] = xDomain;
+    const out = [];
+    for (let i = 0; i < xsMaster.length; i++) {
+      const v = xsMaster[i];
+      if (v >= lo && v <= hi) out.push(yExpMaster[i]);
+    }
+    return out;
+  }, [xsMaster, yExpMaster, xDomain]);
+
+  const yNow = useMemo(() => {
+    const [lo, hi] = xDomain;
+    const out = [];
+    for (let i = 0; i < xsMaster.length; i++) {
+      const v = xsMaster[i];
+      if (v >= lo && v <= hi) out.push(yNowMaster[i]);
+    }
+    return out;
+  }, [xsMaster, yNowMaster, xDomain]);
+
+  const gVals = useMemo(() => {
+    const [lo, hi] = xDomain;
+    const out = [];
+    for (let i = 0; i < xsMaster.length; i++) {
+      const v = xsMaster[i];
+      if (v >= lo && v <= hi) out.push(gValsMaster[i]);
+    }
+    return out;
+  }, [xsMaster, gValsMaster, xDomain]);
+
+  const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
 
   // --- CENTRALIZED EXPIRATION PAYOFF ---
   const beFromGraph = useMemo(() => {
@@ -650,7 +647,7 @@ const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
             Expiration P&amp;L
           </div>
           <div className="leg">
-            <span className="dot" style={{ background: greekColor }} />
+            <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
             {GREEK_LABEL[greekWhich] || "Greek"}
           </div>
           <div className="leg"><span className="dot" style={{ background: SPOT_COLOR }} />Spot</div>
@@ -814,7 +811,7 @@ const stepX = useMemo(() => (xs.length > 1 ? xs[1] - xs[0] : 1), [xs]);
               <span className="val">{fmtCur(yExp[i], currency)}</span>
             </div>
             <div className="row">
-              <span className="dot" style={{ background: greekColor }} />
+              <span className="dot" style={{ background: GREEK_COLOR[greekWhich] || "#f59e0b" }} />
               <span>{GREEK_LABEL[greekWhich]}</span>
               <span className="val">{fmtNum(gVals[i], 2)}</span>
             </div>
