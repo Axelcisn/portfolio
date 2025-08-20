@@ -41,3 +41,4 @@ Thumbs.db
 # Vercel / hosts (keep project file out of git)
 .vercel/
 services/ib-proxy/.env
+.vercel
