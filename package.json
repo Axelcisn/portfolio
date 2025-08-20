@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=18.17.0" },
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -19,7 +21,10 @@
     "react-dom": "18"
   },
   "devDependencies": {
-    "vitest": "^3.2.4",
-    "@vitest/coverage-v8": "^3.2.4"
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.10",
+    "@vitest/coverage-v8": "^3.2.4",
+    "typescript": "5.9.2",
+    "vitest": "^3.2.4"
   }
 }
