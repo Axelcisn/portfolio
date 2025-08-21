@@ -54,7 +54,6 @@ export default function ChainTable({
   symbol,
   currency,
   provider,
-  groupBy,
   expiry,
   settings, // row count / sort controls from the popover
   onToggleSort, // header click toggles sort
@@ -107,7 +106,12 @@ export default function ChainTable({
   };
 
   // Date fallback resolver (YYYY-MM-DD)
-  async function resolveDate(sym, sel) {
+  const resolveDate = useCallback(async (sym, sel) => {
+    // Month helper inside resolveDate to avoid extra deps
+    const monthLabel = (d) => {
+      const m = d.toLocaleString(undefined, { month: "short" });
+      return d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
+    };
     if (!sym || !sel?.m || !sel?.d) return null;
     try {
       const r = await fetch(`/api/expiries?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
@@ -142,7 +146,7 @@ export default function ChainTable({
   });
 
   // Merge calls & puts by strike; compute center IV midpoint
-  const buildRows = (calls, puts) => {
+  const buildRows = useCallback((calls, puts) => {
     const byStrike = new Map();
     const add = (side, o) => {
       if (!Number.isFinite(o?.strike)) return;
@@ -1048,7 +1052,8 @@ export default function ChainTable({
       `}</style>
     </div>
   );
-}
+}, []);
+
 
 /* ---------- Metric pill (boxed, auto tone: pos/neg/neutral) ---------- */
 function Metric({ label, value, num, compact = false }) {
@@ -1246,3 +1251,5 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
     </>
   );
 }
+, [],
+      [symbol, provider, currency, expiry, buildRows, resolveDate]);
