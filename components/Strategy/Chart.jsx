@@ -298,9 +298,9 @@ export default function Chart({
   customMu = null,     // optional manual μ
   greek: greekProp,
   onGreekChange,
-  onLegsChange,
+  onLegsChange: _onLegsChange,
   contractSize = 1,
-  showControls = true,
+  showControls: _showControls = true,
   frameless = false,
   strategy = null,
 }) {

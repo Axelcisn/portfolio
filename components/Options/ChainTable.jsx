@@ -78,7 +78,6 @@ export default function ChainTable({
     const unsub = subscribeStatsCtx(setCtx);
     return typeof unsub === "function" ? unsub : () => {};
   }, []);
-
   const fmt = (v, d = 2) => (isNum(v) ? Number(v).toFixed(d) : "—");
   const effCurrency = meta?.currency || currency || "USD";
   const fmtMoney = (v, d = 2) =>
@@ -99,19 +98,9 @@ export default function ChainTable({
   const showGreeks =
     settings?.showGreeks === true || settings?.cols?.greeks === true || false;
 
-  // Month label helper (Jan shows year)
-  const monthLabel = (d) => {
-    const m = d.toLocaleString(undefined, { month: "short" });
-    return d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
-  };
 
   // Date fallback resolver (YYYY-MM-DD)
   const resolveDate = useCallback(async (sym, sel) => {
-    // Month helper inside resolveDate to avoid extra deps
-    const monthLabel = (d) => {
-      const m = d.toLocaleString(undefined, { month: "short" });
-      return d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
-    };
     if (!sym || !sel?.m || !sel?.d) return null;
     try {
       const r = await fetch(`/api/expiries?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
@@ -120,7 +109,9 @@ export default function ChainTable({
       const matches = list.filter((s) => {
         const d = new Date(s);
         if (!Number.isFinite(d.getTime())) return false;
-        return monthLabel(d) === sel.m && d.getDate() === sel.d;
+        const m = d.toLocaleString(undefined, { month: "short" });
+        const label = d.getMonth() === 0 ? `${m} ’${String(d.getFullYear()).slice(-2)}` : m;
+        return label === sel.m && d.getDate() === sel.d;
       });
       if (!matches.length) return null;
       const now = Date.now();
@@ -129,9 +120,9 @@ export default function ChainTable({
     } catch {
       return null;
     }
-  }
+  }, []);
 
-  // STRICT mid (only if both sides exist)
+// STRICT mid (only if both sides exist)
   const strictMid = (ask, bid) => {
     const a = pick(ask), b = pick(bid);
     return a != null && b != null ? (a + b) / 2 : null;
@@ -180,7 +171,7 @@ export default function ChainTable({
       if (r.put) r.put.mid = strictMid(r.put.ask, r.put.bid);
     }
     return out.sort((a, b) => a.strike - b.strike);
-  };
+  }, []);
 
   // Fetch chain
   useEffect(() => {
@@ -236,7 +227,7 @@ export default function ChainTable({
     return () => {
       cancelled = true;
     };
-  }, [symbol, provider, expiry?.iso, expiry?.m, expiry?.d, currency]);
+  }, [symbol, provider, currency, expiry?.iso, expiry?.m, expiry?.d, buildRows, resolveDate]);
 
   /* ---------- visible rows centered around ATM ---------- */
   function selectAroundATM(sortedAsc, atmIndex, N) {
