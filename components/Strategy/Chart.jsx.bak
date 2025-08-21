@@ -347,7 +347,7 @@ export default function Chart({
 
   // zoomable domain
   const [xDomain, setXDomain] = useState(baseDomain);
-  useEffect(() => setXDomain(baseDomain), [baseDomain]);
+  useEffect(() => setXDomain(baseDomain), [baseDomain[0], baseDomain[1]]);
   const zoomAt = (cx, factor) => {
     setXDomain(([lo, hi]) => {
       const span = hi - lo;
@@ -485,12 +485,12 @@ export default function Chart({
     return [lo, hi === lo ? lo + 1 : hi];
   }, [yExp, yNow]);
 
-  const xScale = useMemo(() => lin(xDomain, [pad.l, pad.l + innerW]), [xDomain, innerW, pad.l]);
-  const yScale = useMemo(() => lin([yRange[0], yRange[1]], [pad.t + innerH, pad.t]), [yRange, innerH, pad.t]);
+  const xScale = useMemo(() => lin(xDomain, [pad.l, pad.l + innerW]), [xDomain, innerW]);
+  const yScale = useMemo(() => lin([yRange[0], yRange[1]], [pad.t + innerH, pad.t]), [yRange, innerH]);
 
   // 🔧 RIGHT-AXIS (Greek) — trimmed, zero-aware, independent from P&L
   const [gLo, gHi] = useMemo(() => greekNiceRange(gVals), [gVals]);
-  const gScale = useMemo(() => lin([gLo, gHi], [pad.t + innerH, pad.t]), [gLo, gHi, innerH, pad.t]);
+  const gScale = useMemo(() => lin([gLo, gHi], [pad.t + innerH, pad.t]), [gLo, gHi, innerH]);
   const gTicks = useMemo(() => ticks(gLo, gHi, 6), [gLo, gHi]);
 
   const xTicks = ticks(xDomain[0], xDomain[1], 7);

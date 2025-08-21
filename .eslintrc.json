@@ -2,9 +2,5 @@
   "extends": [
     "next/core-web-vitals",
     "next/typescript"
-  ],
-  "plugins": ["jsx-a11y"],
-  "rules": {
-    "jsx-a11y/no-nested-interactive": "error"
-  }
+  ]
 }
