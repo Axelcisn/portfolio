@@ -59,6 +59,12 @@ export default function ChainTable({
   settings, // row count / sort controls from the popover
   onToggleSort, // header click toggles sort
 }) {
+  // Hoisted hooks (Rules of Hooks)
+  const uid = useId().replace(/:/g, "");
+  const [zoom, setZoom] = useState(1);
+  const aboveId = `above-${uid}`;
+  const belowId = `below-${uid}`;
+
   const [status, setStatus] = useState("idle"); // idle | loading | ready | error
   const [error, setError] = useState(null);
   const [meta, setMeta] = useState(null); // { spot, currency, expiry }
@@ -1090,19 +1096,12 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
   const premRaw = Number(premium);
   const prem = Number.isFinite(premRaw) && premRaw >= 0 ? premRaw : 0;
 
-// eslint-disable-next-line react-hooks/rules-of-hooks
-  const uid = useId().replace(/:/g, "");
-  const aboveId = `above-${uid}`;
-  const belowId = `below-${uid}`;
-
   // base window centered at BE (or S0)
   const centerPx = Number.isFinite(BE) ? BE : S0;
   const baseSpan = Math.max(
     1e-6,
     0.4 * (S0 || K) + 0.2 * Math.abs((S0 || 0) - (K || 0))
   );
-// eslint-disable-next-line react-hooks/rules-of-hooks
-  const [zoom, setZoom] = React.useState(1);
   const span0 = baseSpan / Math.max(1e-6, zoom);
   let xmin = Math.max(0.01, centerPx - span0);
   let xmax = centerPx + span0;
