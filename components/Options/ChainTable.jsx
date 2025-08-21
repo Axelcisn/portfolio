@@ -305,3 +305,4 @@ function MiniPL({ S0, K, premium, type, pos, BE, mu, sigma, T, showLegend }) {
     </>
   );
 }
+}
