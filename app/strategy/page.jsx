@@ -95,6 +95,39 @@ function StrategyInner() {
     [rawSpot, fallbackSpot]
   );
 
+  /* ===== 01.b — Live IBKR polling to keep spotEff fresh ===== */
+  useEffect(() => {
+    if (!company?.symbol) return;
+    let stopped = false;
+    let id = null;
+
+    const tick = async () => {
+      try {
+        const u = `/api/ibkr/basic?symbol=${encodeURIComponent(company.symbol)}`;
+        const r = await fetch(u, { cache: "no-store" });
+        const j = await r.json();
+        if (!r.ok || j?.ok === false) throw new Error(j?.error || `ibkr ${r.status}`);
+        const px = Number(j.price ?? j.fields?.["31"] ?? j.fields?.[31]);
+        if (Number.isFinite(px) && px > 0) {
+          // update fallbackSpot and notify parent company object
+          setFallbackSpot(px);
+          setCompany(prev => {
+            if (!prev || prev.symbol !== company.symbol) return prev;
+            return { ...prev, spot: px };
+          });
+        }
+      } catch (e) {
+        // silently ignore polling errors
+      } finally {
+        if (!stopped) id = setTimeout(tick, 5000);
+      }
+    };
+
+    tick();
+    return () => { stopped = true; if (id) clearTimeout(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?.symbol]);
+
 
   /* ===== 02 — Helpers ===== */
   const num = (v) => {
