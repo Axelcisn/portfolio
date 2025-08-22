@@ -33,7 +33,7 @@ export default function IconsPreview() {
         {NAMES.map((n) => (
           <div key={n} className="tile">
             <div className="ico">
-              <StrategyIcon name={n} size={56} />
+              <StrategyIcon strategy={n} size={56} />
             </div>
             <div className="cap" title={n}>{n}</div>
           </div>

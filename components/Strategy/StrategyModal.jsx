@@ -120,7 +120,7 @@ export default function StrategyModal({ strategy, env, onApply, onClose }) {
   const legsObj = useMemo(() => rowsToLegsObject(rows), [rows]);
   const totalPrem = useMemo(() => netPremium(rows), [rows]);
   const save = () => {
-    onApply?.(legsObj, totalPrem);
+    onApply?.(legsObj, totalPrem, null, { id: strategy?.id, name: strategy?.name });
     onClose?.();
   };
 
