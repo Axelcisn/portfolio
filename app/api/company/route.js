@@ -28,11 +28,25 @@ export async function GET(req) {
       const msg = (j && (j.error || j.message)) || text || "ibkr_basic_failed";
       return NextResponse.json({ error: msg });
     }
-    const spot = Number(j.price);
+    let spot = Number(j.price);
+    if (!Number.isFinite(spot) || spot <= 0) {
+      const bid = j.fields ? Number(j.fields["84"]) : NaN;
+      const ask = j.fields ? Number(j.fields["86"]) : NaN;
+      if (Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0) {
+        spot = (bid + ask) / 2;
+      } else if (Number.isFinite(bid) && bid > 0) {
+        spot = bid;
+      } else if (Number.isFinite(ask) && ask > 0) {
+        spot = ask;
+      } else {
+        spot = NaN;
+      }
+    }
+
     let prevClose = null,
       change = null,
       changePct = null;
-    if (j.fields && j.fields["83"] !== undefined && Number.isFinite(spot)) {
+    if (j.fields && j.fields["83"] !== undefined && Number.isFinite(spot) && spot > 0) {
       const pct = Number(j.fields["83"]);
       if (Number.isFinite(pct)) {
         changePct = pct;
@@ -47,7 +61,7 @@ export async function GET(req) {
       {
         symbol: j.symbol || symbol,
         currency: j.currency || null,
-        spot: Number.isFinite(spot) ? spot : null,
+        spot: Number.isFinite(spot) && spot > 0 ? spot : null,
         prevClose: Number.isFinite(prevClose) ? prevClose : null,
         change: Number.isFinite(change) ? change : null,
         changePct: Number.isFinite(changePct) ? changePct : null,

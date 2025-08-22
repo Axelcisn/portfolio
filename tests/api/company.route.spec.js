@@ -31,6 +31,28 @@ describe("company price from IB", () => {
     expect(data.changePct).toBe(1);
   });
 
+  test("computes mid price from bid/ask when last is 0", async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          symbol: "AAPL",
+          currency: "USD",
+          price: 0,
+          fields: { "84": "101", "86": "103", "83": "2" },
+        }),
+    }));
+    const req = { nextUrl: new URL("http://localhost/api/company?symbol=AAPL") };
+    const res = await GET(req);
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.spot).toBe(102);
+    expect(data.prevClose).toBeCloseTo(100);
+    expect(data.change).toBeCloseTo(2);
+    expect(data.changePct).toBe(2);
+  });
+
   test("handles upstream failure", async () => {
     global.fetch = vi.fn(async () => ({
       ok: false,
