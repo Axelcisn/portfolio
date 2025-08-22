@@ -153,6 +153,12 @@ export default function CompanyCard({
   const [spot, setSpot] = useState(value?.spot || null);
   const [exchangeLabel, setExchangeLabel] = useState("");
   const [msg, setMsg] = useState("");
+  const latestRef = useRef(value);
+
+  // keep ref in sync with latest parent value
+  useEffect(() => {
+    latestRef.current = value;
+  }, [value]);
 
   async function fetchCompany(sym) {
     const r = await fetch(`/api/company?symbol=${encodeURIComponent(sym)}`, { cache: "no-store" });
@@ -253,16 +259,14 @@ export default function CompanyCard({
       const px = await fetchSpotFromIB(selSymbol);
       if (!stop && Number.isFinite(px)) {
         setSpot(px);
+        const prev = latestRef.current || {};
         onConfirm?.({
+          ...prev,
           symbol: selSymbol,
-          name: picked?.name || value?.name || "",
-          exchange: picked?.exchange || null,
-          currency,
+          name: prev.name || picked?.name || "",
+          exchange: prev.exchange || picked?.exchange || null,
+          currency: prev.currency || currency,
           spot: px,
-          prevClose: value?.prevClose ?? null,
-          high52: value?.high52 ?? null,
-          low52: value?.low52 ?? null,
-          beta: value?.beta ?? null,
         });
       }
       id = setTimeout(tick, 5000);
