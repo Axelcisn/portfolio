@@ -98,36 +98,37 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
           position:sticky; top:0; z-index:100;
           display:flex; align-items:center; justify-content:space-between;
           gap:18px; padding:10px 16px;
-          background:#0e0f12; border-bottom:1px solid var(--border,#232632);
+          background:rgba(0,0,0,0.03); border-bottom:1px solid var(--border);
         }
+        html.dark .nav{ background:rgba(0,0,0,0.35); }
         .tabs{ display:flex; align-items:center; gap:22px; }
         .tab{
           padding:10px 6px; font-weight:800; letter-spacing:.1px;
-          color:var(--foreground,#e5e7eb); opacity:.85; text-decoration:none;
+          color:var(--text); opacity:.85; text-decoration:none;
           border-radius:12px; transition:opacity .15s ease, background .15s ease;
         }
         .tab:hover{ opacity:1; }
-        .tab.is-active{ background:#161a21; border:1px solid var(--border,#232632); padding:10px 14px; opacity:1; }
+        .tab.is-active{ background:var(--card); border:1px solid var(--border); padding:10px 14px; opacity:1; }
 
         .center{ flex:0 1 720px; max-width:56vw; width:100%; display:flex; justify-content:center; }
         .pill{
           position:relative; width:100%; height:44px;
-          background:#171a1f; border:1px solid var(--border,#2a2f3a);
+          background:var(--card); border:1px solid var(--border);
           border-radius:14px; display:flex; align-items:center; overflow:visible;
         }
         :global(.search-input){
           height:100%; width:100%; background:transparent; border:0; outline:0;
-          color:var(--foreground,#e5e7eb); font-size:14.5px; padding-left:38px; padding-right:36px; box-sizing:border-box;
+          color:var(--text); font-size:14.5px; padding-left:38px; padding-right:36px; box-sizing:border-box;
         }
 
         .right{ display:flex; align-items:center; gap:14px; }
-        .clock{ font-weight:600; color:var(--foreground,#e5e7eb); }
+        .clock{ font-weight:600; color:var(--text); }
         .muted{ opacity:.7; }
         .theme{
           width:36px; height:36px; border-radius:50%;
           display:flex; align-items:center; justify-content:center;
-          background:#161a1f; color:var(--foreground,#e5e7eb);
-          border:1px solid var(--border,#2a2f3a); cursor:pointer;
+          background:var(--card); color:var(--text);
+          border:1px solid var(--border); cursor:pointer;
         }
         @media (max-width:1024px){ .tabs{ gap:16px; } .center{ max-width:48vw; } }
         @media (max-width:720px){ .tabs{ display:none; } .center{ max-width:100%; } }

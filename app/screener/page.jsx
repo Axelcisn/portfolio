@@ -54,16 +54,15 @@ export default function ScreenerPage() {
         <p className="empty">No saved strategies.</p>
       )}
       <style jsx>{`
-        .screener-page{ background:#fff; color:#111; min-height:100vh; padding:24px; }
-        html.dark .screener-page{ background:#fff; color:#111; }
+        .screener-page{ background:var(--bg); color:var(--text); min-height:100vh; padding:24px; }
         .scr-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
-        .scr-search{ padding:8px 12px; border:1px solid #e5e7eb; border-radius:8px; }
+        .scr-search{ padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card); color:var(--text); }
         .scr-table{ width:100%; border-collapse:collapse; }
-        .scr-table th, .scr-table td{ border-bottom:1px solid #e5e7eb; padding:8px 12px; text-align:left; }
-        .scr-table th{ background:#f9fafb; font-weight:600; }
-        .scr-table tr:hover{ background:#f3f4f6; }
-        button{ background:transparent; border:0; cursor:pointer; }
-        .empty{ color:#6b7280; }
+        .scr-table th, .scr-table td{ border-bottom:1px solid var(--border); padding:8px 12px; text-align:left; }
+        .scr-table th{ background:var(--card); font-weight:600; }
+        .scr-table tr:hover{ background:var(--card); }
+        button{ background:transparent; border:0; cursor:pointer; color:var(--text); }
+        .empty{ color:var(--muted); }
       `}</style>
     </div>
   );
