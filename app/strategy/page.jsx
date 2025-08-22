@@ -320,10 +320,28 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol]);
 
-  const handleApply = (legsObj, netPrem) => {
+  const handleApply = (legsObj, netPrem, _meta, info) => {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
-    if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+    if (company?.symbol) {
+      memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+      if (info?.name) {
+        try {
+          const raw = localStorage.getItem("screener_saved");
+          const list = raw ? JSON.parse(raw) : [];
+          const entry = {
+            symbol: company.symbol,
+            strategy: info.name,
+            savedAt: Date.now(),
+          };
+          const next = list.filter(
+            (i) => !(i.symbol === entry.symbol && i.strategy === entry.strategy)
+          );
+          next.push(entry);
+          localStorage.setItem("screener_saved", JSON.stringify(next));
+        } catch {}
+      }
+    }
   };
 
   /* ===== 06 — Tabs ===== */

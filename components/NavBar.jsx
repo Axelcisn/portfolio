@@ -45,6 +45,7 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
       { label: "Dashboard", href: "/dashboard" },
       { label: "Portfolio", href: "/portfolio" },
       { label: "Strategy", href: "/strategy" },
+      { label: "Screener", href: "/screener" },
     ],
     []
   );
