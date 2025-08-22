@@ -60,6 +60,7 @@ export default function CompanyCard({ symbol }) {
   const [error, setError] = useState("");
   const lastSymbolRef = useRef("");
   const abortControllerRef = useRef(null);
+  const mountedRef = useRef(false);
 
   const fetchCompanyData = useCallback(async (sym) => {
     if (!sym || sym === lastSymbolRef.current) return;
@@ -145,8 +146,23 @@ export default function CompanyCard({ symbol }) {
     }
   }, []);
 
+  // Prevent duplicate mounts in StrictMode
+  useEffect(() => {
+    if (mountedRef.current) return;
+    mountedRef.current = true;
+    
+    return () => {
+      mountedRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   // Fetch data when symbol changes
   useEffect(() => {
+    if (!mountedRef.current) return;
+    
     if (symbol && symbol.trim()) {
       fetchCompanyData(symbol.trim().toUpperCase());
     } else {
@@ -157,27 +173,30 @@ export default function CompanyCard({ symbol }) {
 
   // Poll for live updates
   useEffect(() => {
-    if (!symbol || !companyData) return;
+    if (!mountedRef.current || !symbol || !companyData) return;
     
     const intervalId = setInterval(() => {
       // Silently update price in background
-      fetch(`/api/ibkr/basic?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" })
-        .then(res => res.json())
-        .then(data => {
-          const newPrice = extractPrice(data);
-          if (newPrice && companyData.previousClose) {
-            const newChange = newPrice - companyData.previousClose;
-            const newChangePercent = (newChange / companyData.previousClose) * 100;
-            
-            setCompanyData(prev => ({
-              ...prev,
-              price: newPrice,
-              change: newChange,
-              changePercent: newChangePercent
-            }));
-          }
-        })
-        .catch(() => {}); // Silently fail for background updates
+      if (mountedRef.current) {
+        fetch(`/api/ibkr/basic?symbol=${encodeURIComponent(symbol)}`, { cache: "no-store" })
+          .then(res => res.json())
+          .then(data => {
+            if (!mountedRef.current) return;
+            const newPrice = extractPrice(data);
+            if (newPrice && companyData.previousClose) {
+              const newChange = newPrice - companyData.previousClose;
+              const newChangePercent = (newChange / companyData.previousClose) * 100;
+              
+              setCompanyData(prev => ({
+                ...prev,
+                price: newPrice,
+                change: newChange,
+                changePercent: newChangePercent
+              }));
+            }
+          })
+          .catch(() => {}); // Silently fail for background updates
+      }
     }, 5000); // Update every 5 seconds
     
     return () => clearInterval(intervalId);
