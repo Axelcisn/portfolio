@@ -36,9 +36,9 @@ export async function GET(req: NextRequest) {
   if (!symbol) {
     return new Response(JSON.stringify({ ok:false, error:'symbol required' } satisfies BasicOut), { status: 400 });
   }
-
-  const port = getPort();
-  const BASE = `https://localhost:${port}/v1/api`;
+  try {
+    const port = getPort();
+    const BASE = `https://localhost:${port}/v1/api`;
 
   // 1) secdef/search -> pick a STK conid (fallback: first result)
   const s1 = await fetchText(`${BASE}/iserver/secdef/search?symbol=${encodeURIComponent(symbol)}`);
@@ -92,16 +92,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const out: BasicOut = {
-    ok: true,
-    symbol,
-    name,
-    exchange: exch || null,
-    currency: currency || null,
-    conid,
-    price,
-    fields: fieldMap,
-    ts: Date.now(),
-  };
-  return new Response(JSON.stringify(out), { status: 200, headers: { 'content-type':'application/json' }});
+    const out: BasicOut = {
+      ok: true,
+      symbol,
+      name,
+      exchange: exch || null,
+      currency: currency || null,
+      conid,
+      price,
+      fields: fieldMap,
+      ts: Date.now(),
+    };
+    return new Response(JSON.stringify(out), { status: 200, headers: { 'content-type':'application/json' }});
+  } catch (err: any) {
+    const msg = typeof err?.message === 'string' ? err.message : String(err);
+    return new Response(JSON.stringify({ ok:false, error: msg } satisfies BasicOut), { status: 502 });
+  }
 }

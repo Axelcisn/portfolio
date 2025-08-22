@@ -11,7 +11,7 @@ describe("company price from IB", () => {
   test("returns normalized price data", async () => {
     global.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({
+      text: async () => JSON.stringify({
         ok: true,
         symbol: "AAPL",
         currency: "USD",
@@ -34,7 +34,7 @@ describe("company price from IB", () => {
   test("handles upstream failure", async () => {
     global.fetch = vi.fn(async () => ({
       ok: false,
-      json: async () => ({ error: "bad" }),
+      text: async () => JSON.stringify({ error: "bad" }),
     }));
     const req = { nextUrl: new URL("http://localhost/api/company?symbol=FAIL") };
     const res = await GET(req);

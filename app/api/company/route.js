@@ -17,10 +17,17 @@ export async function GET(req) {
       `${base}/api/ibkr/basic?symbol=${encodeURIComponent(symbol)}`,
       { cache: "no-store" }
     );
-    const j = await r.json();
-    if (!r.ok || j?.ok === false) {
+    const text = await r.text();
+    let j;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      j = null;
+    }
+    if (!r.ok || !j || j?.ok === false) {
+      const msg = (j && (j.error || j.message)) || text || "ibkr_basic_failed";
       return NextResponse.json(
-        { error: j?.error || "ibkr_basic_failed" },
+        { error: msg },
         { status: 502 }
       );
     }
