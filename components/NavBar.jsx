@@ -1,7 +1,7 @@
 // components/NavBar.jsx
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import TickerSearchUnified from "./Search/TickerSearchUnified";
@@ -54,15 +54,25 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
     [pathname]
   );
 
+  /* search bar visibility */
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef(null);
+  const openSearch = () => {
+    setSearchOpen(true);
+    setTimeout(() => searchRef.current?.focus(), 0);
+  };
+  const closeSearch = () => setSearchOpen(false);
+
   /* search -> broadcast + optional nav */
   const onPick = (item) => {
     try { window.dispatchEvent(new CustomEvent("app:ticker-picked", { detail: item })); } catch {}
     if (autoNavigateOnPick && pathname !== "/strategy") router.push("/strategy");
+    closeSearch();
   };
 
   return (
-    <header className="nav">
-      <nav className="tabs" role="tablist" aria-label="Primary">
+    <header className={`nav${searchOpen ? " searching" : ""}`}>
+      <nav className="tabs" role="tablist" aria-label="Primary" style={{ opacity: searchOpen ? 0 : 1, pointerEvents: searchOpen ? "none" : "auto" }}>
         {items.map((it, i) => {
           const active = isActive(it.href);
           return (
@@ -73,35 +83,54 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
         })}
       </nav>
 
-      {/* Center search pill (the input fills its height) */}
-      <div className="center">
-        <div className="pill" role="search">
-          <TickerSearchUnified onSelect={onPick} />
-        </div>
+      {/* Center search pill (input expands on activation) */}
+      <div className={`center${searchOpen ? " open" : ""}`}>
+        {searchOpen && (
+          <div className="pill" role="search">
+            <TickerSearchUnified ref={searchRef} onSelect={onPick} endpoint="/api/company/search" />
+          </div>
+        )}
       </div>
 
       <div className="right">
-        <div className="clock">{now} <span className="muted">({tz.split("/")[1] || "Rome"})</span></div>
-        <button type="button" className="theme" aria-label="Toggle dark mode" onClick={toggleTheme}>
-          {theme === "dark" ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-            </svg>
-          )}
-        </button>
+        {searchOpen ? (
+          <button type="button" className="search-close" aria-label="Close search" onClick={closeSearch}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        ) : (
+          <>
+            <div className="clock">{now} <span className="muted">({tz.split("/")[1] || "Rome"})</span></div>
+            <button type="button" className="theme" aria-label="Toggle dark mode" onClick={toggleTheme}>
+              {theme === "dark" ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                </svg>
+              )}
+            </button>
+            <button type="button" className="search-trigger" aria-label="Search" onClick={openSearch}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+            </button>
+          </>
+        )}
       </div>
 
       <style jsx>{`
         .nav{
           position:sticky; top:0; z-index:100;
           display:flex; align-items:center; justify-content:space-between;
-          gap:18px; padding:10px 16px;
-          background:rgba(0,0,0,0.03); border-bottom:1px solid var(--border);
+          padding:0 16px; height:48px;
+          backdrop-filter:saturate(180%) blur(20px);
+          background:rgba(255,255,255,0.55);
+          border-bottom:1px solid var(--border);
+          transition:background .25s ease;
         }
-        html.dark .nav{ background:rgba(0,0,0,0.35); }
-        .tabs{ display:flex; align-items:center; gap:22px; }
+        html.dark .nav{ background:rgba(0,0,0,0.55); }
+        .nav.searching{ background:rgba(255,255,255,0.8); }
+        html.dark .nav.searching{ background:rgba(0,0,0,0.8); }
+
+        .tabs{ display:flex; align-items:center; gap:22px; transition:opacity .25s ease; }
         .tab{
           padding:10px 6px; font-weight:800; letter-spacing:.1px;
           color:var(--text); opacity:.85; text-decoration:none;
@@ -110,11 +139,16 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
         .tab:hover{ opacity:1; }
         .tab.is-active{ background:var(--card); border:1px solid var(--border); padding:10px 14px; opacity:1; }
 
-        .center{ flex:0 1 720px; max-width:56vw; width:100%; display:flex; justify-content:center; }
+        .center{
+          position:absolute; left:16px; right:16px; top:0; bottom:0;
+          display:flex; align-items:center; justify-content:center;
+          opacity:0; pointer-events:none; transition:opacity .25s ease;
+        }
+        .center.open{ opacity:1; pointer-events:auto; }
         .pill{
-          position:relative; width:100%; height:44px;
+          position:relative; width:100%; max-width:600px; height:36px;
           background:var(--card); border:1px solid var(--border);
-          border-radius:14px; display:flex; align-items:center; overflow:visible;
+          border-radius:12px; display:flex; align-items:center; overflow:hidden;
         }
         :global(.search-input){
           height:100%; width:100%; background:transparent; border:0; outline:0;
@@ -124,14 +158,14 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
         .right{ display:flex; align-items:center; gap:14px; }
         .clock{ font-weight:600; color:var(--text); }
         .muted{ opacity:.7; }
-        .theme{
-          width:36px; height:36px; border-radius:50%;
+        .theme, .search-trigger, .search-close{
+          width:32px; height:32px; border-radius:50%;
           display:flex; align-items:center; justify-content:center;
           background:var(--card); color:var(--text);
           border:1px solid var(--border); cursor:pointer;
         }
-        @media (max-width:1024px){ .tabs{ gap:16px; } .center{ max-width:48vw; } }
-        @media (max-width:720px){ .tabs{ display:none; } .center{ max-width:100%; } }
+        @media (max-width:1024px){ .tabs{ gap:16px; } }
+        @media (max-width:720px){ .tabs{ display:none; } }
       `}</style>
     </header>
   );
