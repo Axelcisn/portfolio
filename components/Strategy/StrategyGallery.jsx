@@ -68,64 +68,6 @@ const BASE_STRATEGIES = [
   { id: "stock-repair", name: "Stock Repair", direction: "Bullish", isMulti: true, metrics: {} },
 ];
 
-/* ---------- NEW: strategy → icon mapping ---------- */
-const ICON_FOR = {
-  // single-legs
-  "long-call": "bull-slope",
-  "short-put": "bull-slope",
-  "protective-put": "bull-slope",
-  leaps: "bull-slope",
-  "short-call": "bear-slope",
-  "long-put": "bear-slope",
-
-  // verticals
-  "bull-put-spread": "stepped-up",
-  "bear-call-spread": "stepped-down",
-  "bear-put-spread": "bear-slope",
-
-  // calendars
-  "call-calendar": "calendar",
-  "put-calendar": "calendar",
-
-  // diagonals
-  "call-diagonal": "diagonal-up",
-  "put-diagonal": "diagonal-down",
-
-  // straddles/strangles
-  "long-straddle": "v-tent",
-  "long-strangle": "v-tent",
-  "short-straddle": "inv-tent",
-  "short-strangle": "inv-tent",
-
-  // butterflies & condors
-  "call-butterfly": "butterfly-up",
-  "put-butterfly": "butterfly-down",
-  "iron-butterfly": "v-tent",
-  "iron-condor": "inv-tent",
-  "reverse-condor": "cross",
-
-  // ratios / backspreads
-  "call-ratio": "ratio-up",
-  "put-ratio": "ratio-down",
-  "call-backspread": "ratio-up",
-  "put-backspread": "ratio-down",
-
-  // covered / synthetic / misc
-  "covered-call": "bull-slope",
-  "covered-put": "bear-slope",
-  collar: "bull-slope",
-  strap: "bull-slope",
-  "long-box": "box-long",
-  "short-box": "box-short",
-  reversal: "cross",
-  "stock-repair": "bull-slope",
-
-  // special
-  manual: "cross",
-};
-
-const fallbackByDirection = (dir) =>
-  dir === "Bullish" ? "bull-slope" : dir === "Bearish" ? "bear-slope" : "v-tent";
 
 export default function StrategyGallery({
   spot = null,
@@ -174,10 +116,10 @@ export default function StrategyGallery({
   /* modal */
   const [active, setActive] = useState(null);
 
-  /* filter + sort (+ add iconName for each row) */
+  /* filter + sort */
   const strategies = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let rows = BASE_STRATEGIES.filter((s) => {
+    const rows = BASE_STRATEGIES.filter((s) => {
       const passQ = !q || s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q);
       const passDir = dir === "All" || s.direction === dir;
       return passQ && passDir;
@@ -191,12 +133,6 @@ export default function StrategyGallery({
       case "pwin":   rows.sort((a,b)=>v(b.metrics?.pWin)-v(a.metrics?.pWin)); break;
       default:       rows.sort((a,b)=>a.name.localeCompare(b.name));
     }
-
-    // Attach icon key to each row
-    rows = rows.map((s) => ({
-      ...s,
-      iconName: ICON_FOR[s.id] || fallbackByDirection(s.direction),
-    }));
     return rows;
   }, [dir, sortBy, query]);
 
@@ -339,11 +275,22 @@ export default function StrategyGallery({
           <StrategyTile
             key={s.id}
             item={s}
-            /* NEW: pass iconName + renderIcon. StrategyTile will be updated in step 3/4 to use these. */
-            iconName={s.iconName}
-            renderIcon={(props) => <StrategyIcon name={s.iconName} {...props} />}
+            iconName={s.id}
+            renderIcon={(name) => (
+              <StrategyIcon
+                strategy={name}
+                spot={spot ?? 100}
+                sigma={sigma ?? 0.2}
+                T={T ?? 30 / 365}
+                riskFree={riskFree ?? 0}
+                size={44}
+              />
+            )}
             // On tile click: try instant instantiate (if helper exists), then open modal for edits.
-            onOpen={() => { quickInstantiate(s.id); setActive(s); }}
+            onOpen={() => {
+              quickInstantiate(s.id);
+              setActive(s);
+            }}
           />
         ))}
       </div>

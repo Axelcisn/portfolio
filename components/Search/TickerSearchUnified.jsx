@@ -9,7 +9,8 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     minLen = 2,
     limit = 8,
     debounceMs = 220,
-    endpoint = "/api/company/search",
+    endpoint = "/api/ibkr/search",
+    fallbackEndpoint = "/api/company/search",
     mapResult,
   },
   forwardedRef
@@ -54,7 +55,7 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
   const fetchResults = useCallback(
     async (qstr) => {
       if (!qstr || qstr.length < minLen) { setResults([]); setLoading(false); return; }
-      const key = `${endpoint}|${qstr}|${limit}`;
+      const key = `${endpoint}|${fallbackEndpoint}|${qstr}|${limit}`;
       if (cache.current.has(key)) { setResults(cache.current.get(key)); setLoading(false); setOpen(true); return; }
 
       try { acRef.current?.abort(); } catch {}
@@ -62,27 +63,44 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
       acRef.current = ac;
       setLoading(true);
 
-      try {
-        const u = `${endpoint}?q=${encodeURIComponent(qstr)}&limit=${limit}`;
+      const fetchFrom = async (ep) => {
+        const u = `${ep}?q=${encodeURIComponent(qstr)}&limit=${limit}`;
         const r = await fetch(u, { signal: ac.signal, cache: "no-store" });
         const j = await r.json();
         if (!r.ok || j?.ok === false) throw new Error(j?.error?.message || "search_failed");
-
         let list = [];
         if (Array.isArray(j?.results)) list = j.results;
         else if (Array.isArray(j?.data?.results)) list = j.data.results;
         else if (Array.isArray(j?.data)) list = j.data;
         else if (Array.isArray(j)) list = j;
+        return (list || []).slice(0, limit).map(normalize);
+      };
 
-        const out = (list || []).slice(0, limit).map(normalize);
+      try {
+        let out = await fetchFrom(endpoint);
+        if (!out.length && fallbackEndpoint && fallbackEndpoint !== endpoint) {
+          out = await fetchFrom(fallbackEndpoint).catch(() => []);
+        }
         cache.current.set(key, out);
         setResults(out);
         setOpen(true);
       } catch (e) {
-        if (e?.name !== "AbortError") { setResults([]); setOpen(false); }
+        if (fallbackEndpoint && fallbackEndpoint !== endpoint) {
+          try {
+            const out = await fetchFrom(fallbackEndpoint);
+            cache.current.set(key, out);
+            setResults(out);
+            setOpen(true);
+          } catch {
+            setResults([]);
+            setOpen(false);
+          }
+        } else {
+          if (e?.name !== "AbortError") { setResults([]); setOpen(false); }
+        }
       } finally { setLoading(false); }
     },
-    [endpoint, limit, minLen, normalize]
+    [endpoint, fallbackEndpoint, limit, minLen, normalize]
   );
 
   useEffect(() => {

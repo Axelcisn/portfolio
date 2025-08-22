@@ -130,6 +130,17 @@ export default function Strategy() {
     [rawSpot, fallbackSpot]
   );
 
+  const changeAbs = useMemo(() => {
+    const prev = Number(company?.prevClose);
+    if (Number.isFinite(prev) && prev > 0 && Number.isFinite(spotEff)) return spotEff - prev;
+    return null;
+  }, [spotEff, company?.prevClose]);
+
+  const changePct = useMemo(() => {
+    if (!Number.isFinite(changeAbs) || !Number.isFinite(company?.prevClose) || company.prevClose <= 0) return null;
+    return (changeAbs / company.prevClose) * 100;
+  }, [changeAbs, company?.prevClose]);
+
   /* ===== 02 — Helpers ===== */
   const num = (v) => {
     const n = parseFloat(String(v ?? "").replace(",", "."));
@@ -258,7 +269,7 @@ export default function Strategy() {
       company?.shortName ??
       company?.companyName ??
       "";
-    return name || company?.symbol || "";
+    return name;
   }, [company]);
 
   // If we only have a ticker (no good name), try IB first, then Yahoo.
@@ -320,10 +331,28 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol]);
 
-  const handleApply = (legsObj, netPrem) => {
+  const handleApply = (legsObj, netPrem, _meta, info) => {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
-    if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+    if (company?.symbol) {
+      memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+      if (info?.name) {
+        try {
+          const raw = localStorage.getItem("screener_saved");
+          const list = raw ? JSON.parse(raw) : [];
+          const entry = {
+            symbol: company.symbol,
+            strategy: info.name,
+            savedAt: Date.now(),
+          };
+          const next = list.filter(
+            (i) => !(i.symbol === entry.symbol && i.strategy === entry.strategy)
+          );
+          next.push(entry);
+          localStorage.setItem("screener_saved", JSON.stringify(next));
+        } catch {}
+      }
+    }
   };
 
   /* ===== 06 — Tabs ===== */
@@ -378,6 +407,11 @@ export default function Strategy() {
               {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
               <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
             </div>
+            {Number.isFinite(changeAbs) && Number.isFinite(changePct) && (
+              <div className={`p-change ${changeAbs >= 0 ? "up" : "down"}`}>
+                {changeAbs >= 0 ? "+" : ""}{changeAbs.toFixed(2)} ({changePct.toFixed(2)}%)
+              </div>
+            )}
             <div className="p-sub">
               At close •{" "}
               {new Date().toLocaleString(undefined, {
@@ -557,6 +591,9 @@ export default function Strategy() {
         .hero-price{ margin-top:12px; }
         .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
         .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
+        .p-change{ margin-top:4px; font-size:18px; font-weight:600; }
+        .p-change.up{ color:#16a34a; }
+        .p-change.down{ color:#dc2626; }
         .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
 
         /* Grid below — stretch so both cards share the same height */
