@@ -1,6 +1,6 @@
 // IBKR-backed symbol autocomplete via Client Portal Web API.
 // Primary: POST /iserver/secdef/search; Fallback: GET /trsrv/stocks
-// Env: IB_PROXY_URL (required), IB_PROXY_TOKEN (optional bearer)
+// Env: IB_PROXY_URL (optional, defaults to local gateway); IB_PROXY_TOKEN (optional bearer)
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,13 +9,21 @@ export const revalidate = 0;
 import { NextResponse } from "next/server";
 import https from "node:https";
 import http from "node:http";
+import { readFileSync } from "node:fs";
 
-const BASE = (process.env.IB_PROXY_URL || "").replace(/\/+$/,'');
+function getPort() {
+  try {
+    return (readFileSync("/tmp/ibkr_gateway_port", "utf8").trim() || "5001");
+  } catch {
+    return process.env.IBKR_PORT || "5001";
+  }
+}
+
+const BASE = (process.env.IB_PROXY_URL || `https://localhost:${getPort()}/v1/api`).replace(/\/+$/,'');
 const BEARER = process.env.IB_PROXY_TOKEN || "";
 
 /** Low-level request using Node http/https; allows self-signed proxies */
 function ibRequest(path, { method="GET", body, timeoutMs=8000 } = {}) {
-  if (!BASE) return Promise.resolve({ status: 500, json: { ok:false, error:"Missing IB_PROXY_URL" } });
   const url = new URL(BASE + path);
   const isHttps = url.protocol === "https:";
   const agent = isHttps ? new https.Agent({ rejectUnauthorized: false }) : undefined;
@@ -94,7 +102,6 @@ async function searchCore(q, limit) {
 }
 
 export async function GET(req) {
-  if (!BASE) return NextResponse.json({ ok:false, error:"Missing IB_PROXY_URL" }, { status:500 });
   const { searchParams } = new URL(req.url);
   const q = normQ(searchParams.get("q"));
   const limit = Math.min(20, Math.max(1, +(searchParams.get("limit") || 8)));
