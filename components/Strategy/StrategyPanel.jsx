@@ -2,9 +2,12 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import StrategyGallery from "./StrategyGallery";
-import Chart from "../Chart";
+import dynamic from "next/dynamic";
 import { calculateNetPremium } from "./assignStrategy";
+
+// Load heavier visual components on the client only to avoid early evaluation
+const StrategyGallery = dynamic(() => import("./StrategyGallery"), { ssr: false });
+const Chart = dynamic(() => import("./Chart"), { ssr: false });
 
 /**
  * Props

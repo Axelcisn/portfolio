@@ -2,9 +2,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import dynamic from "next/dynamic";
 import StrategyTile from "./StrategyTile";
-import StrategyModal from "./StrategyModal";
 import * as Strat from "./assignStrategy";
+
+// Load modal lazily on the client to avoid early evaluation issues
+const StrategyModal = dynamic(() => import("./StrategyModal"), { ssr: false });
 
 /* NEW: OA-style icon renderer */
 import StrategyIcon from "../Icons/StrategyIcon";
