@@ -56,6 +56,16 @@ export async function GET(req) {
 
     const r = await fetch(url, { cache: "no-store" });
     const j = await r.json().catch(() => null);
+    
+    // Handle authentication errors specifically
+    if (j?.authRequired || j?.error === "unauthorized") {
+      const payload = { 
+        ok: false, 
+        error: "Options data unavailable - authentication required. Please configure IB Bridge credentials." 
+      };
+      return Response.json(payload);
+    }
+    
     if (!r.ok || !j || j?.error) {
       const payload = { ok: false, error: j?.error || "IB fetch failed" };
       return Response.json(payload);
@@ -68,7 +78,18 @@ export async function GET(req) {
       ? opts.find((o) => toISO(o?.expiry || o?.expiration || o?.expirationDate) === iso) || null
       : opts[0] || null;
     if (!node) {
-      const payload = { ok: false, error: "No chain for selected expiry." };
+      // Provide more helpful error message
+      const availableExpiries = opts
+        .map(o => o?.expiry || o?.expiration || o?.expirationDate)
+        .filter(Boolean)
+        .map(d => toISO(d))
+        .filter(Boolean);
+      
+      const errorMsg = availableExpiries.length > 0
+        ? `No options data for ${dateParam || 'selected date'}. Available dates: ${availableExpiries.slice(0, 5).join(', ')}${availableExpiries.length > 5 ? '...' : ''}`
+        : "No options chain data available for this symbol.";
+      
+      const payload = { ok: false, error: errorMsg };
       return Response.json(payload);
     }
 

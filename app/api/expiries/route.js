@@ -1,4 +1,6 @@
 // app/api/expiries/route.js
+import { generateMockChain } from '../../../lib/providers/mockOptionsData';
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -45,6 +47,16 @@ export async function GET(req) {
     const url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
     const r = await fetch(url, { cache: "no-store" });
     const j = await r.json().catch(() => null);
+    
+    // Handle authentication errors - return mock expiries instead of error
+    if (j?.authRequired || j?.error === "unauthorized") {
+      console.log('[Expiries] Auth required for IB bridge, using mock data');
+      const mockData = generateMockChain(symbol);
+      const mockExpiries = mockData?.data?.expiries || [];
+      setCached(symbol, mockExpiries);
+      return Response.json({ ok: true, expiries: mockExpiries });
+    }
+    
     if (!r.ok || !j || j?.ok === false) {
       return Response.json({ ok: false, error: j?.error || "IB fetch failed" });
     }
