@@ -31,6 +31,7 @@ export async function GET(req) {
   const symbol = (searchParams.get("symbol") || "").trim();
   const dateParam = (searchParams.get("date") || "").trim();
   const noCache = searchParams.get("nocache") === "1";
+  const useYahoo = searchParams.get("provider") === "yahoo"; // Force Yahoo if specified
 
   if (!symbol) {
     return Response.json({ ok: false, error: "symbol required" }, { status: 400 });
@@ -48,6 +49,29 @@ export async function GET(req) {
     return Number.isFinite(d.getTime()) ? Math.floor(d.getTime() / 1000) : null;
   };
 
+  // Try IBKR first unless Yahoo is explicitly requested
+  if (!useYahoo) {
+    try {
+      let ibkrUrl = `/api/ibkr/options/chain?symbol=${encodeURIComponent(symbol)}`;
+      if (dateParam) {
+        ibkrUrl += `&date=${encodeURIComponent(dateParam)}`;
+      }
+      if (noCache) {
+        ibkrUrl += "&nocache=1";
+      }
+      
+      const ibkrRes = await fetch(ibkrUrl, { cache: "no-store" });
+      if (ibkrRes.ok) {
+        const ibkrData = await ibkrRes.json();
+        if (ibkrData.ok) {
+          return Response.json(ibkrData);
+        }
+      }
+    } catch (e) {
+      console.error("IBKR options failed, falling back to Yahoo:", e);
+    }
+  }
+  
   // Serve from cache if available (unless bypassed)
   if (!noCache) {
     const cached = getCached(symbol, dateParam);

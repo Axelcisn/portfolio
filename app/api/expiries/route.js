@@ -27,11 +27,32 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const symbol = (searchParams.get("symbol") || "").trim();
   const noCache = searchParams.get("nocache") === "1";
+  const useYahoo = searchParams.get("provider") === "yahoo"; // Force Yahoo if specified
 
   if (!symbol) {
     return Response.json({ ok: false, error: "symbol required" }, { status: 400 });
   }
 
+  // Try IBKR first unless Yahoo is explicitly requested
+  if (!useYahoo) {
+    try {
+      let ibkrUrl = `/api/ibkr/options/expiries?symbol=${encodeURIComponent(symbol)}`;
+      if (noCache) {
+        ibkrUrl += "&nocache=1";
+      }
+      
+      const ibkrRes = await fetch(ibkrUrl, { cache: "no-store" });
+      if (ibkrRes.ok) {
+        const ibkrData = await ibkrRes.json();
+        if (ibkrData.ok && ibkrData.expiries) {
+          return Response.json(ibkrData);
+        }
+      }
+    } catch (e) {
+      console.error("IBKR expiries failed, falling back to Yahoo:", e);
+    }
+  }
+  
   // serve from cache unless bypassed
   if (!noCache) {
     const cached = getCached(symbol);
