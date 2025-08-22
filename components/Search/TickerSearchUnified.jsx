@@ -92,11 +92,16 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
             setResults(out);
             setOpen(true);
           } catch {
+            // Show empty state rather than closing the list entirely
             setResults([]);
-            setOpen(false);
+            setOpen(true);
           }
         } else {
-          if (e?.name !== "AbortError") { setResults([]); setOpen(false); }
+          if (e?.name !== "AbortError") {
+            // Keep dropdown open so "No results" message is visible
+            setResults([]);
+            setOpen(true);
+          }
         }
       } finally { setLoading(false); }
     },
