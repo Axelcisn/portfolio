@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { Agent } from 'undici';
+import { Agent, type Dispatcher } from 'undici';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,12 +16,15 @@ const BEARER = process.env.IB_PROXY_TOKEN || '';
 const COMMON_HEADERS: Record<string, string> = BEARER ? { Authorization: `Bearer ${BEARER}` } : {};
 
 async function fetchText(url: string, init?: RequestInit) {
-  const dispatcher = url.startsWith('https:') ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
-  const r = await fetch(url, {
+  const dispatcher: Dispatcher | undefined = url.startsWith('https:')
+    ? new Agent({ connect: { rejectUnauthorized: false } })
+    : undefined;
+  const opts: RequestInit & { dispatcher?: Dispatcher } = {
     ...init,
-    dispatcher,
     headers: { accept: 'application/json', ...COMMON_HEADERS, ...(init?.headers || {}) },
-  });
+    ...(dispatcher ? { dispatcher } : {}),
+  };
+  const r = await fetch(url, opts);
   const text = await r.text();
   return { ok: r.ok, status: r.status, text };
 }
