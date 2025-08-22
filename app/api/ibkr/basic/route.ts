@@ -1,19 +1,27 @@
 import type { NextRequest } from 'next/server';
+import { Agent } from 'undici';
 
 export const dynamic = 'force-dynamic';
 
 function getPort(): string {
   try {
-    return (require('fs').readFileSync('/tmp/ibkr_gateway_port','utf8').trim() || '5001');
+    return (require('fs').readFileSync('/tmp/ibkr_gateway_port', 'utf8').trim() || '5001');
   } catch {
     return process.env.IBKR_PORT || '5001';
   }
 }
 
+const BASE = (process.env.IB_PROXY_URL || `https://localhost:${getPort()}/v1/api`).replace(/\/+$/, '');
+const BEARER = process.env.IB_PROXY_TOKEN || '';
+const COMMON_HEADERS: Record<string, string> = BEARER ? { Authorization: `Bearer ${BEARER}` } : {};
+
 async function fetchText(url: string, init?: RequestInit) {
-  // Allow self-signed CP Gateway cert locally
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-  const r = await fetch(url, { ...init, headers: { accept: 'application/json', ...(init?.headers||{}) }});
+  const dispatcher = url.startsWith('https:') ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined;
+  const r = await fetch(url, {
+    ...init,
+    dispatcher,
+    headers: { accept: 'application/json', ...COMMON_HEADERS, ...(init?.headers || {}) },
+  });
   const text = await r.text();
   return { ok: r.ok, status: r.status, text };
 }
@@ -37,9 +45,6 @@ export async function GET(req: NextRequest) {
     return new Response(JSON.stringify({ ok:false, error:'symbol required' } satisfies BasicOut), { status: 400 });
   }
   try {
-    const port = getPort();
-    const BASE = `https://localhost:${port}/v1/api`;
-
   // 1) secdef/search -> pick a STK conid (fallback: first result)
   const s1 = await fetchText(`${BASE}/iserver/secdef/search?symbol=${encodeURIComponent(symbol)}`);
   if (!s1.ok) {
