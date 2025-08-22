@@ -87,15 +87,29 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
       <div className={`center${searchOpen ? " open" : ""}`}>
         {searchOpen && (
           <div className="pill" role="search">
-            <TickerSearchUnified ref={searchRef} onSelect={onPick} endpoint="/api/company/search" />
+            <TickerSearchUnified ref={searchRef} onSelect={onPick} />
           </div>
         )}
       </div>
 
       <div className="right">
         {searchOpen ? (
-          <button type="button" className="search-close" aria-label="Close search" onClick={closeSearch}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          <button
+            type="button"
+            className="search-close"
+            aria-label="Close search"
+            onClick={closeSearch}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
           </button>
         ) : (
           <>
@@ -144,18 +158,21 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
           display:flex; align-items:center; justify-content:center;
           opacity:0; pointer-events:none; transition:opacity .25s ease;
         }
-        .center.open{ opacity:1; pointer-events:auto; }
+        .center.open{ opacity:1; }
+        .center .pill{ pointer-events:auto; }
         .pill{
           position:relative; width:100%; max-width:600px; height:36px;
-          background:var(--card); border:1px solid var(--border);
-          border-radius:12px; display:flex; align-items:center; overflow:hidden;
+          backdrop-filter:saturate(180%) blur(20px);
+          background:rgba(255,255,255,0.35); border:1px solid var(--border);
+          border-radius:12px; display:flex; align-items:center; overflow:visible;
         }
+        html.dark .pill{ background:rgba(0,0,0,0.35); }
         :global(.search-input){
           height:100%; width:100%; background:transparent; border:0; outline:0;
           color:var(--text); font-size:14.5px; padding-left:38px; padding-right:36px; box-sizing:border-box;
         }
 
-        .right{ display:flex; align-items:center; gap:14px; }
+        .right{ display:flex; align-items:center; gap:14px; position:relative; z-index:1; }
         .clock{ font-weight:600; color:var(--text); }
         .muted{ opacity:.7; }
         .theme, .search-trigger, .search-close{
@@ -164,6 +181,12 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
           background:var(--card); color:var(--text);
           border:1px solid var(--border); cursor:pointer;
         }
+        .search-close{
+          backdrop-filter:saturate(180%) blur(20px);
+          background:rgba(255,255,255,0.35);
+          border:1px solid var(--border);
+        }
+        html.dark .search-close{ background:rgba(0,0,0,0.35); }
         @media (max-width:1024px){ .tabs{ gap:16px; } }
         @media (max-width:720px){ .tabs{ display:none; } }
       `}</style>
