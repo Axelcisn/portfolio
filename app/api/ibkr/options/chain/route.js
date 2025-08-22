@@ -235,7 +235,7 @@ export async function GET(req) {
     
     // Fallback to Yahoo if IBKR fails
     try {
-      const yahooUrl = `/api/options?symbol=${searchParams.get("symbol")}`;
+      let yahooUrl = `/api/options?symbol=${searchParams.get("symbol")}`;
       if (searchParams.get("date")) {
         yahooUrl += `&date=${searchParams.get("date")}`;
       }
