@@ -1,7 +1,8 @@
 // app/strategy/page.jsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
@@ -9,57 +10,11 @@ import StrategyGallery from "../../components/Strategy/StrategyGallery";
 import StatsRail from "../../components/Strategy/StatsRail";
 import OptionsTab from "../../components/Options/OptionsTab";
 import useExpiries from "../../components/Options/useExpiries";
+import CompanyHeader from "../../components/Strategy/CompanyHeader";
+import { STRATEGY_TABS } from "../../components/Strategy/tabs";
 
 import useDebounce from "../../hooks/useDebounce";
 import useStrategyMemory from "../../components/state/useStrategyMemory";
-
-/* ============================ Exchange helpers ============================ */
-/** Hard mappings for terse exchange codes */
-const EX_CODES = {
-  NMS: "NASDAQ", NGM: "NASDAQ GM", NCM: "NASDAQ CM",
-  NYQ: "NYSE", ASE: "AMEX", PCX: "NYSE Arca",
-  MIL: "Milan", LSE: "London", EBS: "Swiss", SWX: "Swiss",
-  TOR: "Toronto", SAO: "São Paulo", BUE: "Buenos Aires",
-};
-
-/** Normalize arbitrary vendor strings to a clean display label */
-function normalizeExchangeLabel(co) {
-  const cands = [
-    co?.primaryExchange,
-    co?.fullExchangeName,
-    co?.exchangeName,
-    co?.exchange,
-    co?.exch,
-    co?.ex,
-    co?.market,
-    co?.mic,
-  ].map(x => String(x || "").trim()).filter(Boolean);
-
-  if (!cands.length) return "";
-
-  // 1) Exact code map first (e.g., NMS → NASDAQ)
-  for (const raw of cands) {
-    const up = raw.toUpperCase();
-    if (EX_CODES[up]) return EX_CODES[up];
-  }
-
-  // 2) Heuristic text map (handles "NasdaqGS", "Nasdaq Stock Market", etc.)
-  const txt = cands.join(" ").toLowerCase();
-  if (/(nasdaq|nasdaqgs|nasdaqgm|nasdaqcm)/.test(txt)) return "NASDAQ";
-  if (/nyse\s*arca|arca|pcx/.test(txt)) return "NYSE Arca";
-  if (/nyse(?!\s*arca)/.test(txt)) return "NYSE";
-  if (/amex|nysemkt/.test(txt)) return "AMEX";
-  if (/london|lse/.test(txt)) return "London";
-  if (/milan|borsa italiana|mil/.test(txt)) return "Milan";
-  if (/six|swiss|ebs|swx/.test(txt)) return "Swiss";
-  if (/tsx|toronto/.test(txt)) return "Toronto";
-  if (/b3|sao\s*paulo|bovespa|sao/.test(txt)) return "São Paulo";
-  if (/buenos\s*aires|byma|bue/.test(txt)) return "Buenos Aires";
-
-  // 3) Fallback: use the first candidate as-is
-  const first = cands[0];
-  return first.length > 3 ? first : first.toUpperCase();
-}
 
 const pickNearest = (list) => {
   if (!Array.isArray(list) || list.length === 0) return null;
@@ -68,7 +23,9 @@ const pickNearest = (list) => {
   return list[list.length - 1];
 };
 
-export default function Strategy() {
+function StrategyInner() {
+  const params = useSearchParams();
+  const symbolParam = params.get("symbol")?.toUpperCase() || null;
   /* ===== 00 — Local state ===== */
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
@@ -95,6 +52,12 @@ export default function Strategy() {
 
   // Controlled expiry selection (shared with OptionsTab + StatsRail)
   const [selectedExpiry, setSelectedExpiry] = useState(null);
+
+  useEffect(() => {
+    if (symbolParam && (!company || company.symbol !== symbolParam)) {
+      setCompany({ symbol: symbolParam });
+    }
+  }, [symbolParam]);
 
   /* ===== Memory (persists by symbol) ===== */
   const { data: mem, loaded: memReady, save: memSave } = useStrategyMemory(company?.symbol);
@@ -129,6 +92,7 @@ export default function Strategy() {
     () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
     [rawSpot, fallbackSpot]
   );
+
 
   /* ===== 02 — Helpers ===== */
   const num = (v) => {
@@ -248,18 +212,6 @@ export default function Strategy() {
   }, [company?.symbol, rawSpot]);
 
   /* ===== 05 — Hero helpers ===== */
-  const exLabel = useMemo(() => (company ? normalizeExchangeLabel(company) : ""), [company]);
-
-  // Big title = Company Name only (no "(AAPL)").
-  const displayTitle = useMemo(() => {
-    const name =
-      company?.longName ??
-      company?.name ??
-      company?.shortName ??
-      company?.companyName ??
-      "";
-    return name || company?.symbol || "";
-  }, [company]);
 
   // If we only have a ticker (no good name), try IB first, then Yahoo.
   useEffect(() => {
@@ -320,21 +272,33 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol]);
 
-  const handleApply = (legsObj, netPrem) => {
+  const handleApply = (legsObj, netPrem, _meta, info) => {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
-    if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+    if (company?.symbol) {
+      memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+      if (info?.name) {
+        try {
+          const raw = localStorage.getItem("screener_saved");
+          const list = raw ? JSON.parse(raw) : [];
+          const entry = {
+            symbol: company.symbol,
+            strategy: info.name,
+            savedAt: Date.now(),
+          };
+          const next = list.filter(
+            (i) => !(i.symbol === entry.symbol && i.strategy === entry.strategy)
+          );
+          next.push(entry);
+          localStorage.setItem("screener_saved", JSON.stringify(next));
+        } catch {}
+      }
+    }
   };
 
   /* ===== 06 — Tabs ===== */
   const [tab, setTab] = useState("overview");
-  const TABS = [
-    { key: "overview",   label: "Overview" },
-    { key: "financials", label: "Financials" },
-    { key: "news",       label: "News" },
-    { key: "options",    label: "Options" },
-    { key: "bonds",      label: "Bonds" },
-  ];
+  const TABS = STRATEGY_TABS;
 
   const tabTitle = useMemo(() => {
     const base = TABS.find(t => t.key === tab)?.label || "Overview";
@@ -353,43 +317,7 @@ export default function Strategy() {
     <div className="container">
       {/* Hero */}
       {company?.symbol ? (
-        <section className="hero">
-          <div className="hero-id">
-            <div className="hero-logo" aria-hidden="true">
-              {String((displayTitle || company?.symbol || "?")).slice(0, 1)}
-            </div>
-            <div className="hero-texts">
-              {/* Title: Company name only */}
-              <h1 className="hero-name">{displayTitle}</h1>
-              <div className="hero-pill" aria-label="Ticker and exchange">
-                <span className="tkr">{company.symbol}</span>
-                {exLabel && (
-                  <>
-                    <span className="dot">•</span>
-                    <span className="ex">{exLabel}</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="hero-price">
-            <div className="p-big">
-              {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
-              <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
-            </div>
-            <div className="p-sub">
-              At close •{" "}
-              {new Date().toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZoneName: "short",
-              })}
-            </div>
-          </div>
-        </section>
+        <CompanyHeader company={company} spot={spotEff} currency={company?.currency || currency} />
       ) : (
         <header className="page-header">
           <div className="titles">
@@ -490,6 +418,41 @@ export default function Strategy() {
         </section>
       )}
 
+      {tab === "ideas" && (
+        <section>
+          <h3 className="section-title">Ideas</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "discussions" && (
+        <section>
+          <h3 className="section-title">Discussions</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "technicals" && (
+        <section>
+          <h3 className="section-title">Technicals</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "forecast" && (
+        <section>
+          <h3 className="section-title">Forecast</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "seasonals" && (
+        <section>
+          <h3 className="section-title">Seasonals</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
       {tab === "options" && (
         <OptionsTab
           symbol={company?.symbol || ""}
@@ -516,16 +479,16 @@ export default function Strategy() {
         /* Tabs */
         .tabs{
           display:flex; gap:6px;
-          margin:12px 0 16px;
+          margin:20px 0 22px;
           border-bottom:1px solid var(--border);
         }
         .tab{
           height:42px; padding:0 14px; border:0; background:transparent;
-          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
+          color:var(--text); opacity:.8; font-weight:600; cursor:pointer;
           border-bottom:2px solid transparent; margin-bottom:-1px;
         }
         .tab:hover{ opacity:1; }
-        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+        .tab.is-active{ opacity:1; border-bottom-color:currentColor; }
 
         /* Title between tabs and cards */
         .tab-title{
@@ -535,29 +498,6 @@ export default function Strategy() {
           font-weight: 800;
           letter-spacing: -.2px;
         }
-
-        /* Hero */
-        .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
-        .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
-        .hero-logo{
-          width:84px; height:84px; border-radius:20px;
-          background: radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.08), rgba(0,0,0,.35));
-          border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
-          font-weight:700; font-size:36px;
-        }
-        .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
-        .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .hero-pill{
-          display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 14px;
-          border-radius:9999px; border:1px solid var(--border); background:var(--card); font-weight:600;
-          width:fit-content;
-        }
-        .hero-pill .dot{ opacity:.6; }
-
-        .hero-price{ margin-top:12px; }
-        .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
-        .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
-        .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
 
         /* Grid below — stretch so both cards share the same height */
         .layout-2col{ display:grid; grid-template-columns: 1fr 320px; gap: var(--row-gap); align-items: stretch; }
@@ -571,12 +511,17 @@ export default function Strategy() {
         @media (max-width:1100px){
           .layout-2col{ grid-template-columns: 1fr; }
           .g-span{ grid-column: 1 / -1; }
-          .hero-logo{ width:72px; height:72px; border-radius:16px; font-size:32px; }
-          .hero-name{ font-size:32px; }
-          .p-big{ font-size:40px; }
           .tab-title{ font-size:20px; }
         }
       `}</style>
     </div>
+  );
+}
+
+export default function Strategy() {
+  return (
+    <Suspense fallback={<div className="p-6 text-center text-sm text-muted">Loading…</div>}>
+      <StrategyInner />
+    </Suspense>
   );
 }

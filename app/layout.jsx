@@ -4,7 +4,7 @@ import NavBar from "../components/NavBar";
 import { TimeBasisProvider } from "../components/ui/TimeBasisContext";
 
 export const metadata = {
-  title: "Portfolio",
+  title: "Momentum",
   description: "Apple-style options toolkit",
 };
 

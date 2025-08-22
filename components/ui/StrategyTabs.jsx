@@ -2,6 +2,7 @@
 "use client";
 
 import TabsHost from "./TabsHost";
+import { STRATEGY_TABS } from "../Strategy/tabs";
 
 /**
  * StrategyTabs
@@ -33,13 +34,16 @@ export default function StrategyTabs({
       <TabsHost
         defaultActiveKey={defaultActive}
         onChange={onChange}
-        tabs={[
-          { key: "overview",   label: "Overview",   content: overview },
-          { key: "financials", label: "Financials", content: financials },
-          { key: "news",       label: "News",       content: news },
-          { key: "options",    label: "Options",    content: options },
-          { key: "bonds",      label: "Bonds",      content: bonds },
-        ]}
+        tabs={STRATEGY_TABS.map(t => ({
+          ...t,
+          content:
+            t.key === "overview" ? overview :
+            t.key === "financials" ? financials :
+            t.key === "news" ? news :
+            t.key === "options" ? options :
+            t.key === "bonds" ? bonds :
+            null,
+        }))}
       />
       <style jsx>{`
         .strategy-tabs {
