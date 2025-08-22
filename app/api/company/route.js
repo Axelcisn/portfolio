@@ -26,10 +26,7 @@ export async function GET(req) {
     }
     if (!r.ok || !j || j?.ok === false) {
       const msg = (j && (j.error || j.message)) || text || "ibkr_basic_failed";
-      return NextResponse.json(
-        { error: msg },
-        { status: 502 }
-      );
+      return NextResponse.json({ error: msg });
     }
     const spot = Number(j.price);
     let prevClose = null,
@@ -59,9 +56,6 @@ export async function GET(req) {
       { status: 200 }
     );
   } catch (e) {
-    return NextResponse.json(
-      { error: String(e?.message || e || "ibkr_basic_failed") },
-      { status: 502 }
-    );
+    return NextResponse.json({ error: String(e?.message || e || "ibkr_basic_failed") });
   }
 }

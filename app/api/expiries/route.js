@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-import { yahooJson } from "../../../lib/providers/yahooSession";
+// Fetch expiries via the Interactive Brokers chain proxy
 
 // ---- 30s micro-cache (module scoped) ----
 const TTL_MS = 30 * 1000;
@@ -41,25 +41,46 @@ export async function GET(req) {
   }
 
   try {
-    const url = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
-    const j = await yahooJson(url, { addCrumb: true });
-    const root = j?.optionChain?.result?.[0];
+    const base = new URL(req.url).origin;
+    const url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
+    const r = await fetch(url, { cache: "no-store" });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || j?.ok === false) {
+      return Response.json({ ok: false, error: j?.error || "IB fetch failed" });
+    }
 
-    const dates = Array.isArray(root?.expirationDates) ? root.expirationDates : [];
-    const expiries = dates
-      .map((unix) => new Date(Number(unix) * 1000))
-      .filter((d) => Number.isFinite(d?.getTime()))
-      .map((d) => d.toISOString().slice(0, 10));
+    let expiries = [];
+    if (Array.isArray(j.expiries)) {
+      expiries = j.expiries;
+    } else if (Array.isArray(j.expirationDates)) {
+      expiries = j.expirationDates
+        .map((d) => {
+          const nd = new Date(d);
+          if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
+          const unix = Number(d);
+          if (Number.isFinite(unix)) return new Date(unix * 1000).toISOString().slice(0, 10);
+          return null;
+        })
+        .filter(Boolean);
+    } else if (Array.isArray(j.options)) {
+      expiries = j.options
+        .map((o) => o?.expiry || o?.expiration || o?.expirationDate)
+        .filter(Boolean)
+        .map((d) => {
+          const nd = new Date(d);
+          if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
+          const unix = Number(d);
+          if (Number.isFinite(unix)) return new Date(unix * 1000).toISOString().slice(0, 10);
+          return null;
+        })
+        .filter(Boolean);
+    }
 
     // cache successful result
     setCached(symbol, expiries);
 
     return Response.json({ ok: true, expiries });
   } catch (err) {
-    // don't cache errors
-    return Response.json(
-      { ok: false, error: err?.message || "fetch failed" },
-      { status: 502 }
-    );
+    return Response.json({ ok: false, error: err?.message || "IB fetch failed" });
   }
 }

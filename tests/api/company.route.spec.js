@@ -39,7 +39,7 @@ describe("company price from IB", () => {
     const req = { nextUrl: new URL("http://localhost/api/company?symbol=FAIL") };
     const res = await GET(req);
     const data = await res.json();
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
     expect(data.error).toBeDefined();
   });
 });

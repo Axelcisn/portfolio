@@ -2,8 +2,6 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-import { yahooJson } from "../../../lib/providers/yahooSession";
-
 // ---- 30s micro-cache (module scoped) ----
 const TTL_MS = 30 * 1000;
 const CACHE = new Map(); // key: SYMBOL|DATE -> { ts, payload }
@@ -36,18 +34,6 @@ export async function GET(req) {
     return Response.json({ ok: false, error: "symbol required" }, { status: 400 });
   }
 
-  const num = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  const toUnix = (v) => {
-    if (!v) return null;
-    if (/^\d{10}$/.test(v)) return Number(v);
-    const d = new Date(v);
-    return Number.isFinite(d.getTime()) ? Math.floor(d.getTime() / 1000) : null;
-  };
-
   // Serve from cache if available (unless bypassed)
   if (!noCache) {
     const cached = getCached(symbol, dateParam);
@@ -56,74 +42,23 @@ export async function GET(req) {
     }
   }
 
-  // Build Yahoo URL (crumb added by yahooSession)
-  const base = "https://query2.finance.yahoo.com/v7/finance/options";
-  const unix = toUnix(dateParam);
-  const url = `${base}/${encodeURIComponent(symbol)}${unix ? `?date=${unix}` : ""}`;
-
-  let j;
   try {
-    // yahooJson handles cookie+crumb and 1x retry on 401/403/999
-    j = await yahooJson(url, { addCrumb: true });
-  } catch (e) {
-    const payload = { ok: false, error: e?.message || "Yahoo fetch failed" };
-    return Response.json(payload, { status: 502 });
-  }
+    const base = new URL(req.url).origin;
+    let url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
+    if (dateParam) url += `&date=${encodeURIComponent(dateParam)}`;
 
-  try {
-    const root = j?.optionChain?.result?.[0];
-    if (!root) {
-      const payload = { ok: false, error: "empty chain" };
-      return Response.json(payload, { status: 502 });
+    const r = await fetch(url, { cache: "no-store" });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || j?.ok === false) {
+      const payload = { ok: false, error: j?.error || "IB fetch failed" };
+      return Response.json(payload);
     }
 
-    const quote = root.quote || {};
-    const spot =
-      num(quote.regularMarketPrice) ??
-      num(quote.postMarketPrice) ??
-      num(quote.bid) ??
-      num(quote.ask);
-
-    const node = (root.options && root.options[0]) || {};
-    const calls = Array.isArray(node.calls) ? node.calls : [];
-    const puts  = Array.isArray(node.puts)  ? node.puts  : [];
-
-    // 🔵 Only change: include `volume`
-    const mapOpt = (o) => ({
-      strike: num(o?.strike),
-      bid:    num(o?.bid),
-      ask:    num(o?.ask),
-      price:  num(o?.lastPrice ?? o?.last ?? o?.regularMarketPrice),
-      ivPct:  num(o?.impliedVolatility) != null ? num(o.impliedVolatility) * 100 : null,
-      volume: num(o?.volume), // ← NEW
-    });
-
-    const expiryUnix = num(node?.expiration);
-    const expiry =
-      expiryUnix != null
-        ? new Date(expiryUnix * 1000).toISOString().slice(0, 10)
-        : null;
-
-    const payload = {
-      ok: true,
-      data: {
-        calls: calls.map(mapOpt).filter((x) => x.strike != null),
-        puts:  puts.map(mapOpt).filter((x) => x.strike != null),
-        meta: {
-          symbol: quote?.symbol || symbol.toUpperCase(),
-          currency: quote?.currency || null,
-          spot,
-          expiry,
-        },
-      },
-    };
-
-    // Cache success
-    setCached(symbol, dateParam, payload);
-
-    return Response.json(payload);
+    setCached(symbol, dateParam, j);
+    return Response.json(j);
   } catch (err) {
-    const payload = { ok: false, error: err?.message || "parse failed" };
-    return Response.json(payload, { status: 500 });
+    const payload = { ok: false, error: err?.message || "IB fetch failed" };
+    return Response.json(payload);
   }
 }
+
