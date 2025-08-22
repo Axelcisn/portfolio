@@ -10,6 +10,7 @@
   --bg:#ffffff;
   --text:#111827;
   --muted:#6b7280;
+  --nav-rgb:255,255,255;
 
   /* Cards & borders */
   --card:#f6f7f8;
@@ -42,6 +43,7 @@ html.dark{
   --bg:#0b0b0c;
   --text:#ffffff;
   --muted:#9aa0a6;
+  --nav-rgb:0,0,0;
 
   --card:#14161a;
   --border:#2b2f36;
