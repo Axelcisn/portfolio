@@ -5,14 +5,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 
 describe('ibkrService retry logic', () => {
   const realRequest = https.request;
+  const realFetch = global.fetch;
 
   beforeEach(() => {
-    // Ensure deterministic config
+    // Ensure deterministic config and force http/https path
     process.env.IBKR_PORT = '5001';
+    global.fetch = undefined;
   });
 
   afterEach(() => {
     https.request = realRequest;
+    global.fetch = realFetch;
     delete process.env.IB_PROXY_URL;
     delete process.env.IBKR_PORT;
   });

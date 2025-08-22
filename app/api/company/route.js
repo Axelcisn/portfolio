@@ -68,8 +68,8 @@ export async function GET(req) {
   } catch (e) {
     console.error(`Failed to get quote for ${symbol}:`, e);
     return NextResponse.json(
-      { error: e.message || "IBKR quote failed" },
-      { status: 502 }
+      { ok: false, error: e.message || "IBKR quote failed" },
+      { status: 200 }
     );
   }
 }

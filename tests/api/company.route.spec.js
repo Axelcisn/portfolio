@@ -9,16 +9,21 @@ describe("company price from IB", () => {
   });
 
   test("returns normalized price data", async () => {
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      text: async () => JSON.stringify({
+    const responses = [
+      {
         ok: true,
-        symbol: "AAPL",
-        currency: "USD",
-        price: 101,
-        fields: { "83": "1" },
-      }),
-    }));
+        text: async () =>
+          JSON.stringify([
+            { conid: "1", symbol: "AAPL", companyName: "Apple", exchange: "NASDAQ" },
+          ]),
+      },
+      { ok: true, text: async () => JSON.stringify([{ currency: "USD" }]) },
+      {
+        ok: true,
+        text: async () => JSON.stringify([{ "31": "101", "82": "100", "83": "1" }]),
+      },
+    ];
+    global.fetch = vi.fn(async () => responses.shift());
     const req = { nextUrl: new URL("http://localhost/api/company?symbol=AAPL") };
     const res = await GET(req);
     const data = await res.json();
@@ -32,17 +37,20 @@ describe("company price from IB", () => {
   });
 
   test("computes mid price from bid/ask when last is 0", async () => {
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      text: async () =>
-        JSON.stringify({
-          ok: true,
-          symbol: "AAPL",
-          currency: "USD",
-          price: 0,
-          fields: { "84": "101", "86": "103", "83": "2" },
-        }),
-    }));
+    const responses = [
+      {
+        ok: true,
+        text: async () =>
+          JSON.stringify([{ conid: "1", symbol: "AAPL", companyName: "Apple" }]),
+      },
+      { ok: true, text: async () => JSON.stringify([{ currency: "USD" }]) },
+      {
+        ok: true,
+        text: async () =>
+          JSON.stringify([{ "31": "", "84": "101", "86": "103", "82": "100", "83": "2" }]),
+      },
+    ];
+    global.fetch = vi.fn(async () => responses.shift());
     const req = { nextUrl: new URL("http://localhost/api/company?symbol=AAPL") };
     const res = await GET(req);
     const data = await res.json();

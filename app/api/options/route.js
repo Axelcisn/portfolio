@@ -92,12 +92,12 @@ export async function GET(req) {
       errorMsg = "Cannot connect to IBKR gateway. Please ensure it's running and authenticated.";
     }
     
-    const payload = { 
-      ok: false, 
+    const payload = {
+      ok: false,
       error: errorMsg,
-      symbol 
+      symbol
     };
-    return Response.json(payload, { status: 502 });
+    return Response.json(payload, { status: 200 });
   }
 }
 
