@@ -19,15 +19,18 @@ function IconTile({ size = 48, children }) {
         .oa-icon-tile {
           display: grid;
           place-items: center;
-          border: 1px solid var(--border, #2a2f3a);
-          background: var(--card, #111214);
+          border: 1px solid var(--border, rgba(255,255,255,0.1));
+          background: linear-gradient(180deg, #1f1f23, #111214);
           color: var(--text, #e5e7eb);
+          overflow: hidden;
+          box-shadow: inset 0 1px 1px rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.4);
         }
         @media (prefers-color-scheme: light) {
           .oa-icon-tile {
-            border-color: var(--border, #e5e7eb);
-            background: #fff;
+            border-color: var(--border, rgba(0,0,0,0.1));
+            background: linear-gradient(180deg, #fff, #f5f5f5);
             color: var(--text, #111);
+            box-shadow: inset 0 1px 1px rgba(255,255,255,0.6), 0 1px 2px rgba(0,0,0,0.08);
           }
         }
       `}</style>
@@ -129,12 +132,12 @@ export default function StrategyIcon({
       if (!legs.length) return { line: "", pos: [], neg: [] };
       const bundle = { legs };
       const [lo, hi] = suggestBounds(bundle, { spot: env.spot });
-      const N = 60;
+      const N = 80;
       const xs = Array.from({ length: N }, (_, i) => lo + (i * (hi - lo)) / (N - 1));
       const ys = xs.map((x) => payoffAt(x, bundle));
       const yMin = Math.min(0, ...ys);
       const yMax = Math.max(0, ...ys);
-      const pad = 2;
+      const pad = Math.max(4, size * 0.08);
       const xScale = (x) => pad + ((x - lo) / (hi - lo)) * (size - 2 * pad);
       const yScale = (y) =>
         size - pad - ((y - yMin) / (yMax - yMin || 1)) * (size - 2 * pad);
@@ -157,16 +160,17 @@ export default function StrategyIcon({
       viewBox={`0 0 ${size} ${size}`}
       fill="none"
       stroke={stroke}
-      strokeWidth="2"
+      strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      shapeRendering="geometricPrecision"
       aria-hidden="true"
     >
       {neg.map((d, i) => (
-        <path key={`neg-${i}`} d={d} fill="rgba(239,68,68,0.45)" stroke="none" />
+        <path key={`neg-${i}`} d={d} fill="rgba(255,69,58,0.4)" stroke="none" />
       ))}
       {pos.map((d, i) => (
-        <path key={`pos-${i}`} d={d} fill="rgba(16,185,129,0.45)" stroke="none" />
+        <path key={`pos-${i}`} d={d} fill="rgba(52,199,89,0.4)" stroke="none" />
       ))}
       {line && <path d={line} fill="none" stroke={stroke} />}
     </svg>
