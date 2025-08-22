@@ -83,7 +83,10 @@ function StrategyInner() {
   }, [expiries, selectedExpiry]);
 
   /* ===== 01 — Derived inputs ===== */
-  const rawSpot = Number(company?.spot);
+  // Some company payloads expose `displaySpot` or `spot`; use whichever is valid
+  const rawSpot = Number(
+    company?.spot != null ? company.spot : company?.displaySpot
+  );
   const sigma = ivValue ?? null;
   const T = horizon > 0 ? horizon / 365 : null;
 

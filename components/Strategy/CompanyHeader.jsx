@@ -60,16 +60,26 @@ export default function CompanyHeader({ company, spot, currency }) {
 
   const exLabel = useMemo(() => normalizeExchangeLabel(company), [company]);
 
+  const price = useMemo(() => {
+    if (Number.isFinite(spot) && spot > 0) return spot;
+    const alt = Number(company?.spot ?? company?.displaySpot);
+    return Number.isFinite(alt) && alt > 0 ? alt : null;
+  }, [spot, company?.spot, company?.displaySpot]);
+
+  const prev = useMemo(() => {
+    const p = Number(company?.prevClose ?? company?.prevCloseTarget);
+    return Number.isFinite(p) ? p : null;
+  }, [company?.prevClose, company?.prevCloseTarget]);
+
   const changeAbs = useMemo(() => {
-    const prev = Number(company?.prevClose);
-    if (Number.isFinite(prev) && prev > 0 && Number.isFinite(spot)) return spot - prev;
+    if (prev != null && price != null) return price - prev;
     return null;
-  }, [spot, company?.prevClose]);
+  }, [price, prev]);
 
   const changePct = useMemo(() => {
-    if (!Number.isFinite(changeAbs) || !Number.isFinite(company?.prevClose) || company.prevClose <= 0) return null;
-    return (changeAbs / company.prevClose) * 100;
-  }, [changeAbs, company?.prevClose]);
+    if (changeAbs != null && prev > 0) return (changeAbs / prev) * 100;
+    return null;
+  }, [changeAbs, prev]);
 
   const closeStr = useMemo(
     () => new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZoneName: "short" }),
@@ -126,7 +136,7 @@ export default function CompanyHeader({ company, spot, currency }) {
 
       <div className="hero-price">
         <div className="p-big">
-          {Number.isFinite(spot) ? Number(spot).toFixed(2) : "0.00"}
+          {Number.isFinite(price) ? price.toFixed(2) : "—"}
           <span className="p-ccy"> {currency || "USD"}</span>
         </div>
         {Number.isFinite(changeAbs) && Number.isFinite(changePct) && (
