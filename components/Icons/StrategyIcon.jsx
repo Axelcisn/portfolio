@@ -137,7 +137,7 @@ export default function StrategyIcon({
       const ys = xs.map((x) => payoffAt(x, bundle));
       const yMin = Math.min(0, ...ys);
       const yMax = Math.max(0, ...ys);
-      const pad = Math.max(4, size * 0.08);
+      const pad = 0; // no padding so fills reach tile edges
       const xScale = (x) => pad + ((x - lo) / (hi - lo)) * (size - 2 * pad);
       const yScale = (y) =>
         size - pad - ((y - yMin) / (yMax - yMin || 1)) * (size - 2 * pad);
