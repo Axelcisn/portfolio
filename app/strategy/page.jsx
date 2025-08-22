@@ -1,7 +1,7 @@
 // app/strategy/page.jsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
@@ -69,7 +69,7 @@ const pickNearest = (list) => {
   return list[list.length - 1];
 };
 
-export default function Strategy() {
+function StrategyInner() {
   const params = useSearchParams();
   const symbolParam = params.get("symbol")?.toUpperCase() || null;
   /* ===== 00 — Local state ===== */
@@ -691,5 +691,13 @@ export default function Strategy() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function Strategy() {
+  return (
+    <Suspense fallback={<div className="p-6 text-center text-sm text-muted">Loading…</div>}>
+      <StrategyInner />
+    </Suspense>
   );
 }
