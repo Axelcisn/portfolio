@@ -43,14 +43,20 @@ export default function CompanySearchBox({ placeholder = "Search", defaultQuery 
     const t = setTimeout(async () => {
       setLoading(true); setErr("");
       try {
-        const res = await fetch(`/api/ibkr/search?symbol=${encodeURIComponent(q.trim())}`, {
+        const res = await fetch(`/api/ibkr/search?q=${encodeURIComponent(q.trim())}`, {
           cache: "no-store", signal: ac.signal
         });
         const text = await res.text();
         let json;
         try { json = JSON.parse(text); } catch { json = text; }
         if (!res.ok) throw new Error(typeof json === "string" ? json : (json?.error || res.statusText));
-        const arr = Array.isArray(json) ? json : [];
+        const arr = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+            ? json.data
+            : Array.isArray(json?.results)
+              ? json.results
+              : [];
         const mapped = arr.map(mapItem).filter(x => x.symbol);
         setItems(mapped.slice(0, 20));
         setOpen(true);

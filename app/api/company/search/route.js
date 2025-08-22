@@ -4,94 +4,9 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/* tiny TTL cache */
-const TTL_MS = 60_000;
-const C = new Map();
-const now = () => Date.now();
-const getC = (k) => {
-  const v = C.get(k);
-  if (!v) return null;
-  if (now() - v.ts > TTL_MS) { C.delete(k); return null; }
-  return v.payload;
-};
-const setC = (k, payload) => C.set(k, { ts: now(), payload });
-
-const normalize = (q) => ({
-  symbol: q.symbol || q.ticker || "",
-  name:
-    q.longname || q.shortname || q.longName || q.shortName ||
-    q.name || q.symbol || "",
-  exchange: q.exchDisp || q.exchange || q.fullExchangeName || "",
-  currency: q.currency || "USD",
-  type: q.quoteType || q.typeDisp || q.type || "EQUITY",
-});
-
-async function yahooQuery2(q, limit) {
-  const u = new URL("https://query2.finance.yahoo.com/v1/finance/search");
-  u.searchParams.set("q", q);
-  u.searchParams.set("quotesCount", String(limit));
-  u.searchParams.set("newsCount", "0");
-  u.searchParams.set("listsCount", "0");
-  u.searchParams.set("lang", "en-US");
-  const r = await fetch(u, {
-    headers: { "User-Agent": "Mozilla/5.0 (StrategyApp; Node)" },
-    cache: "no-store",
-  });
-  const j = await r.json();
-  const quotes = Array.isArray(j?.quotes) ? j.quotes : [];
-  return quotes.map(normalize);
-}
-
-async function yahooAutoc(q, limit) {
-  const u = new URL("https://autoc.finance.yahoo.com/autoc");
-  u.searchParams.set("query", q);
-  u.searchParams.set("region", "1");
-  u.searchParams.set("lang", "en");
-  const r = await fetch(u, {
-    headers: { "User-Agent": "Mozilla/5.0 (StrategyApp; Node)" },
-    cache: "no-store",
-  });
-  const j = await r.json();
-  const arr = Array.isArray(j?.ResultSet?.Result) ? j.ResultSet.Result : [];
-  return arr.slice(0, limit).map((it) =>
-    normalize({
-      symbol: it.symbol,
-      longname: it.name,
-      exchDisp: it.exchDisp || it.exch,
-      currency: it.cur || "USD",
-      quoteType: it.typeDisp || it.type || "EQUITY",
-    })
+export async function GET() {
+  return NextResponse.json(
+    { error: "Yahoo company search API is disabled" },
+    { status: 503 }
   );
-}
-
-export async function GET(req) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const q = (searchParams.get("q") || "").trim();
-    const limit = Math.min(20, Math.max(1, +(searchParams.get("limit") || 8)));
-
-    if (!q) {
-      const empty = { ok: true, data: { results: [] }, results: [] };
-      return NextResponse.json(empty, { status: 200 });
-    }
-
-    const key = `${q.toLowerCase()}|${limit}`;
-    const hit = getC(key);
-    if (hit) return NextResponse.json(hit, { status: 200 });
-
-    let results = await yahooQuery2(q, limit);
-    if (!results.length) results = await yahooAutoc(q, limit);
-
-    const payload = { ok: true, data: { results }, results };
-    setC(key, payload);
-    return NextResponse.json(payload, {
-      status: 200,
-      headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=30" },
-    });
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: { code: "UPSTREAM_ERROR", message: String(e?.message ?? e) } },
-      { status: 502 }
-    );
-  }
 }
