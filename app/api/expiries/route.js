@@ -49,11 +49,12 @@ export async function GET(req) {
       return Response.json({ ok: false, error: j?.error || "IB fetch failed" });
     }
 
+    const src = j?.data || j || {};
     let expiries = [];
-    if (Array.isArray(j.expiries)) {
-      expiries = j.expiries;
-    } else if (Array.isArray(j.expirationDates)) {
-      expiries = j.expirationDates
+    if (Array.isArray(src.expiries)) {
+      expiries = src.expiries;
+    } else if (Array.isArray(src.expirationDates)) {
+      expiries = src.expirationDates
         .map((d) => {
           const nd = new Date(d);
           if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
@@ -62,8 +63,8 @@ export async function GET(req) {
           return null;
         })
         .filter(Boolean);
-    } else if (Array.isArray(j.options)) {
-      expiries = j.options
+    } else if (Array.isArray(src.options)) {
+      expiries = src.options
         .map((o) => o?.expiry || o?.expiration || o?.expirationDate)
         .filter(Boolean)
         .map((d) => {

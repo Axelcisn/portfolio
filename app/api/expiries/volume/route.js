@@ -38,7 +38,8 @@ export async function GET(req) {
       return Response.json({ ok: false, error: j?.error || "IB fetch failed" });
     }
 
-    const opts = Array.isArray(j.options) ? j.options : [];
+    const src = j?.data || j || {};
+    const opts = Array.isArray(src.options) ? src.options : [];
     const out = [];
     for (const node of opts) {
       const expiry = toISO(node?.expiry || node?.expiration || node?.expirationDate);

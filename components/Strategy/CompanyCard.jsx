@@ -116,6 +116,25 @@ async function fetchSpotFromChart(sym) {
   }
 }
 
+async function fetchSpotFromIB(sym) {
+  try {
+    const u = `/api/ibkr/basic?symbol=${encodeURIComponent(sym)}`;
+    const r = await fetch(u, { cache: "no-store" });
+    const j = await r.json();
+    if (!r.ok || j?.ok === false) return null;
+    let px = Number(j.price);
+    if (Number.isFinite(px) && px > 0) return px;
+    const bid = Number(j?.fields?.["84"]);
+    const ask = Number(j?.fields?.["86"]);
+    if (Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0) {
+      return (bid + ask) / 2;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function CompanyCard({
   value = null,
   onConfirm,
@@ -213,23 +232,25 @@ export default function CompanyCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* If a value was passed initially, confirm it once on mount */
+  /* When parent value changes, refetch company */
   useEffect(() => {
     if (value?.symbol) {
       const sym = value.symbol.toUpperCase();
-      setPicked({ symbol: sym, name: value.name || "", exchange: value.exchange || "" });
-      confirmSymbol(sym);
+      if (sym !== selSymbol) {
+        setPicked({ symbol: sym, name: value.name || "", exchange: value.exchange || "" });
+        confirmSymbol(sym);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [value?.symbol]);
 
-  /* Lightweight live price poll (15s) using chart endpoint only */
+  /* Live price poll via IBKR (5s) */
   useEffect(() => {
     if (!selSymbol) return;
     let stop = false;
     let id;
     const tick = async () => {
-      const px = await fetchSpotFromChart(selSymbol);
+      const px = await fetchSpotFromIB(selSymbol);
       if (!stop && Number.isFinite(px)) {
         setSpot(px);
         onConfirm?.({
@@ -244,7 +265,7 @@ export default function CompanyCard({
           beta: value?.beta ?? null,
         });
       }
-      id = setTimeout(tick, 15000);
+      id = setTimeout(tick, 5000);
     };
     tick();
     return () => { stop = true; clearTimeout(id); };

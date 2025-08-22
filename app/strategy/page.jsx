@@ -70,7 +70,6 @@ function StrategyInner() {
     if (mem.ivValue != null) setIvValue(mem.ivValue);
     if (mem.legsUi) setLegsUi(mem.legsUi);
     if (mem.netPremium != null) setNetPremium(mem.netPremium);
-    if (mem.tab) setTab(mem.tab);
     if (mem.expiry) setSelectedExpiry(mem.expiry);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memReady]);
@@ -302,6 +301,11 @@ function StrategyInner() {
   /* ===== 06 — Tabs ===== */
   const [tab, setTab] = useState("overview");
   const TABS = STRATEGY_TABS;
+
+  // reset to Overview whenever a new company is selected
+  useEffect(() => {
+    setTab("overview");
+  }, [company?.symbol]);
 
   const tabTitle = useMemo(() => {
     const base = TABS.find(t => t.key === tab)?.label || "Overview";
