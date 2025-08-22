@@ -1,46 +1,36 @@
 // components/Icons/StrategyIcon.jsx
 "use client";
-import React from "react";
 
-/** Shared SVG wrapper */
-function Svg({ size = 48, stroke = "currentColor", children, ...rest }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 48 48"
-      fill="none"
-      stroke={stroke}
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      {...rest}
-    >
-      {children}
-    </svg>
-  );
-}
+import React, { useMemo } from "react";
+import materializeSeeded from "../Strategy/defs/materializeSeeded";
+import rowsToLegs from "../Strategy/utils/rowsToLegs";
+import { payoffAt, suggestBounds } from "../../lib/strategy/payoff.js";
 
-/** Tile wrapper (rounded square, OA-like) */
+/** Tile wrapper (rounded square) */
 function IconTile({ size = 48, children }) {
   const radius = Math.round(size / 4);
   return (
-    <div className="oa-icon-tile" style={{ width: size, height: size, borderRadius: radius }}>
+    <div
+      className="oa-icon-tile"
+      style={{ width: size, height: size, borderRadius: radius }}
+    >
       {children}
       <style jsx>{`
         .oa-icon-tile {
           display: grid;
           place-items: center;
-          border: 1px solid var(--border, #2a2f3a);
-          background: var(--card, #111214);
-          color: var(--oa-green, #22c55e);
+          border: 1px solid var(--border, rgba(255,255,255,0.1));
+          background: linear-gradient(180deg, #1f1f23, #111214);
+          color: var(--text, #e5e7eb);
+          overflow: hidden;
+          box-shadow: inset 0 1px 1px rgba(255,255,255,0.06), 0 1px 2px rgba(0,0,0,0.4);
         }
         @media (prefers-color-scheme: light) {
           .oa-icon-tile {
-            border-color: var(--border, #e5e7eb);
-            background: #fff;
-            color: var(--oa-green-700, #16a34a);
+            border-color: var(--border, rgba(0,0,0,0.1));
+            background: linear-gradient(180deg, #fff, #f5f5f5);
+            color: var(--text, #111);
+            box-shadow: inset 0 1px 1px rgba(255,255,255,0.6), 0 1px 2px rgba(0,0,0,0.08);
           }
         }
       `}</style>
@@ -48,199 +38,145 @@ function IconTile({ size = 48, children }) {
   );
 }
 
-/* ===== Glyphs (Option Alpha-style approximations) ===== */
+/** Build SVG area paths above/below zero */
+function buildAreaPaths(xs, ys, xScale, yScale) {
+  const pos = [], neg = [];
+  const eps = 1e-9;
+  let seg = null, sign = 0;
 
-// Slopes
-const BullSlope = (p) => (
-  <Svg {...p}>
-    <path d="M8 36 Q 20 22 40 12" />
-    <circle cx="8" cy="36" r="1.6" />
-  </Svg>
-);
-const BearSlope = (p) => (
-  <Svg {...p}>
-    <path d="M8 12 Q 20 26 40 36" />
-    <circle cx="8" cy="12" r="1.6" />
-  </Svg>
-);
+  const push = () => {
+    if (!seg || seg.length < 3) {
+      seg = null;
+      return;
+    }
+    const d =
+      seg
+        .map((p, i) => `${i ? "L" : "M"}${xScale(p[0])},${yScale(p[1])}`)
+        .join(" ") + " Z";
+    (sign > 0 ? pos : neg).push(d);
+    seg = null;
+    sign = 0;
+  };
 
-// “Tent” (straddles/strangles)
-const VTent = (p) => (
-  <Svg {...p}>
-    <path d="M8 36 L24 12 L40 36" />
-  </Svg>
-);
-const InvertedTent = (p) => (
-  <Svg {...p}>
-    <path d="M8 12 L24 36 L40 12" />
-  </Svg>
-);
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i], y = ys[i];
+    const s = y > eps ? 1 : y < -eps ? -1 : 0;
 
-// Spreads / stepped
-const SteppedUp = (p) => (
-  <Svg {...p}>
-    <path d="M8 36 L22 36 L26 24 L40 24" />
-  </Svg>
-);
-const SteppedDown = (p) => (
-  <Svg {...p}>
-    <path d="M8 24 L22 24 L26 36 L40 36" />
-  </Svg>
-);
-const SteppedFlat = (p) => (
-  <Svg {...p}>
-    <path d="M8 30 L40 30" />
-  </Svg>
-);
+    if (i > 0) {
+      const y0 = ys[i - 1], s0 = y0 > eps ? 1 : y0 < -eps ? -1 : 0;
+      if (s !== s0) {
+        const x0 = xs[i - 1], dy = y - y0;
+        const xCross = dy === 0 ? x : x0 + ((0 - y0) * (x - x0)) / dy;
 
-// Calendars
-const Calendar = (p) => (
-  <Svg {...p}>
-    <path d="M10 30 C14 26, 18 26, 22 30" />
-    <path d="M26 30 C30 26, 34 26, 38 30" />
-  </Svg>
-);
+        if (seg) {
+          seg.push([xCross, 0]);
+          push();
+        }
+        if (s !== 0) {
+          seg = [[xCross, 0], [x, y]];
+          sign = s;
+          continue;
+        }
+        seg = null;
+        sign = 0;
+        continue;
+      }
+    }
 
-// Ratios / backspreads
-const RatioUp = (p) => (
-  <Svg {...p}>
-    <path d="M8 36 Q 20 25 30 20" />
-    <path d="M30 20 Q 36 17 40 12" />
-  </Svg>
-);
-const RatioDown = (p) => (
-  <Svg {...p}>
-    <path d="M8 12 Q 20 23 30 28" />
-    <path d="M30 28 Q 36 31 40 36" />
-  </Svg>
-);
+    if (s === 0) {
+      if (seg) {
+        seg.push([x, 0]);
+        push();
+      }
+    } else {
+      if (!seg) {
+        seg = [[x, 0]];
+        sign = s;
+      }
+      seg.push([x, y]);
+    }
+  }
 
-// Butterflies
-const ButterflyUp = (p) => (
-  <Svg {...p}>
-    <path d="M8 36 L20 18 L24 12 L28 18 L40 36" />
-  </Svg>
-);
-const ButterflyDown = (p) => (
-  <Svg {...p}>
-    <path d="M8 12 L20 30 L24 36 L28 30 L40 12" />
-  </Svg>
-);
-
-// Diagonals
-const DiagonalUp = (p) => (
-  <Svg {...p}>
-    <path d="M10 36 L36 12" />
-  </Svg>
-);
-const DiagonalDown = (p) => (
-  <Svg {...p}>
-    <path d="M10 12 L36 36" />
-  </Svg>
-);
-
-// Boxes / special
-const BoxLong = (p) => (
-  <Svg {...p}>
-    <rect x="12" y="16" width="24" height="16" rx="2.5" />
-  </Svg>
-);
-const BoxShort = (p) => (
-  <Svg {...p}>
-    <rect x="12" y="16" width="24" height="16" rx="2.5" />
-    <path d="M16 20 L32 28" />
-    <path d="M32 20 L16 28" />
-  </Svg>
-);
-const Cross = (p) => (
-  <Svg {...p}>
-    <path d="M14 14 L34 34" />
-    <path d="M34 14 L14 34" />
-  </Svg>
-);
-
-// Fallback (small dot)
-const Dot = (p) => (
-  <Svg {...p}>
-    <circle cx="24" cy="24" r="2.2" />
-  </Svg>
-);
-
-/* ===== Strategy → Glyph mapping ===== */
-
-export const iconsMap = {
-  // Calls / Puts
-  long_call: BullSlope,
-  short_call: BearSlope,
-  long_put: BearSlope,
-  short_put: BullSlope,
-  protective_put: SteppedUp,
-  covered_call: SteppedDown,
-  covered_put: SteppedUp,
-  collar: SteppedFlat,
-  leaps: BullSlope,
-
-  // Spreads
-  bull_call_spread: SteppedUp,
-  bull_put_spread: SteppedUp,
-  bear_call_spread: SteppedDown,
-  bear_put_spread: SteppedDown,
-
-  // Straddles / Strangles
-  long_straddle: VTent,
-  short_straddle: InvertedTent,
-  long_strangle: VTent,
-  short_strangle: InvertedTent,
-
-  // Calendars
-  call_calendar: Calendar,
-  put_calendar: Calendar,
-
-  // Condors / Butterflies
-  iron_condor: InvertedTent,
-  iron_butterfly: InvertedTent,
-  reverse_condor: VTent,
-  reverse_butterfly: VTent,
-  call_butterfly: ButterflyUp,
-  put_butterfly: ButterflyDown,
-
-  // Diagonals
-  call_diagonal: DiagonalUp,
-  put_diagonal: DiagonalDown,
-
-  // Ratios / Backspreads
-  call_ratio: RatioUp,
-  put_ratio: RatioDown,
-  call_backspread: RatioUp,
-  put_backspread: RatioDown,
-
-  // Boxes / misc
-  long_box: BoxLong,
-  short_box: BoxShort,
-  reversal: Cross,
-  strap: BullSlope,
-  stock_repair: SteppedUp,
-
-  // Manual builder
-  manual: Cross,
-};
+  if (seg) {
+    seg.push([xs[xs.length - 1], 0]);
+    push();
+  }
+  return { pos, neg };
+}
 
 /**
- * StrategyIcon – drop-in icon that renders an OA-style tile + glyph
- * @param {string} name  strategy key (see iconsMap)
- * @param {number} size  tile size in px (default 48)
- * @param {boolean} tile whether to render tile container (default true)
- * @param {string}  color CSS color for glyph (defaults to OA green)
+ * StrategyIcon – renders a mini payoff chart for the given strategy
+ * @param {string} strategy Strategy key (e.g., "bear-call-spread")
+ * @param {number} size     Tile size in px
+ * @param {boolean} tile    Whether to wrap in OA-style tile
+ * @param {number} spot     Underlying price for seeding (fallback 100)
+ * @param {number} sigma    Volatility for seeding (annualized)
+ * @param {number} T        Time to expiry (years)
+ * @param {number} riskFree Risk-free rate
  */
-export default function StrategyIcon({ name, size = 48, tile = true, color }) {
-  const Glyph = iconsMap[name] || Dot;
-  const stroke = color || "currentColor";
-  const inner = <Glyph size={Math.max(32, Math.min(48, size))} stroke={stroke} />;
+export default function StrategyIcon({
+  strategy,
+  size = 48,
+  tile = true,
+  spot = 100,
+  sigma = 0.2,
+  T = 30 / 365,
+  riskFree = 0,
+  color,
+}) {
+  const { line, pos, neg } = useMemo(() => {
+    try {
+      const env = { spot, sigma, T, riskFree };
+      const rows = materializeSeeded(strategy, env);
+      const legs = rowsToLegs(rows);
+      if (!legs.length) return { line: "", pos: [], neg: [] };
+      const bundle = { legs };
+      const [lo, hi] = suggestBounds(bundle, { spot: env.spot });
+      const N = 80;
+      const xs = Array.from({ length: N }, (_, i) => lo + (i * (hi - lo)) / (N - 1));
+      const ys = xs.map((x) => payoffAt(x, bundle));
+      const yMin = Math.min(0, ...ys);
+      const yMax = Math.max(0, ...ys);
+      const pad = 0; // no padding so fills reach tile edges
+      const xScale = (x) => pad + ((x - lo) / (hi - lo)) * (size - 2 * pad);
+      const yScale = (y) =>
+        size - pad - ((y - yMin) / (yMax - yMin || 1)) * (size - 2 * pad);
+      const line = ys
+        .map((y, i) => `${i ? "L" : "M"}${xScale(xs[i])},${yScale(y)}`)
+        .join(" ");
+      const { pos, neg } = buildAreaPaths(xs, ys, xScale, yScale);
+      return { line, pos, neg };
+    } catch {
+      return { line: "", pos: [], neg: [] };
+    }
+  }, [strategy, spot, sigma, T, riskFree, size]);
 
-  if (!tile) return inner;
-  return (
-    <IconTile size={size}>
-      {inner}
-    </IconTile>
+  const stroke = color || "currentColor";
+
+  const svg = (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      fill="none"
+      stroke={stroke}
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      shapeRendering="geometricPrecision"
+      aria-hidden="true"
+    >
+      {neg.map((d, i) => (
+        <path key={`neg-${i}`} d={d} fill="rgba(255,69,58,0.4)" stroke="none" />
+      ))}
+      {pos.map((d, i) => (
+        <path key={`pos-${i}`} d={d} fill="rgba(52,199,89,0.4)" stroke="none" />
+      ))}
+      {line && <path d={line} fill="none" stroke={stroke} />}
+    </svg>
   );
+
+  if (!tile) return svg;
+  return <IconTile size={size}>{svg}</IconTile>;
 }
+

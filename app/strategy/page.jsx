@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import CompanyCard from "../../components/Strategy/CompanyCard";
 import MarketCard from "../../components/Strategy/MarketCard";
@@ -69,6 +70,8 @@ const pickNearest = (list) => {
 };
 
 export default function Strategy() {
+  const params = useSearchParams();
+  const symbolParam = params.get("symbol")?.toUpperCase() || null;
   /* ===== 00 — Local state ===== */
   const [company, setCompany] = useState(null);
   const [currency, setCurrency] = useState("EUR");
@@ -95,6 +98,12 @@ export default function Strategy() {
 
   // Controlled expiry selection (shared with OptionsTab + StatsRail)
   const [selectedExpiry, setSelectedExpiry] = useState(null);
+
+  useEffect(() => {
+    if (symbolParam && (!company || company.symbol !== symbolParam)) {
+      setCompany({ symbol: symbolParam });
+    }
+  }, [symbolParam]);
 
   /* ===== Memory (persists by symbol) ===== */
   const { data: mem, loaded: memReady, save: memSave } = useStrategyMemory(company?.symbol);
@@ -129,6 +138,17 @@ export default function Strategy() {
     () => (rawSpot > 0 ? rawSpot : (Number(fallbackSpot) > 0 ? Number(fallbackSpot) : null)),
     [rawSpot, fallbackSpot]
   );
+
+  const changeAbs = useMemo(() => {
+    const prev = Number(company?.prevClose);
+    if (Number.isFinite(prev) && prev > 0 && Number.isFinite(spotEff)) return spotEff - prev;
+    return null;
+  }, [spotEff, company?.prevClose]);
+
+  const changePct = useMemo(() => {
+    if (!Number.isFinite(changeAbs) || !Number.isFinite(company?.prevClose) || company.prevClose <= 0) return null;
+    return (changeAbs / company.prevClose) * 100;
+  }, [changeAbs, company?.prevClose]);
 
   /* ===== 02 — Helpers ===== */
   const num = (v) => {
@@ -258,8 +278,23 @@ export default function Strategy() {
       company?.shortName ??
       company?.companyName ??
       "";
-    return name || company?.symbol || "";
+    return name;
   }, [company]);
+
+  const logoUrl = useMemo(() => {
+    const n = company?.longName || company?.name || "";
+    if (!n) return null;
+    const core = n
+      .replace(/,?\s+(inc|corp|corporation|co|company|ltd|plc|sa|ag|nv|oyj|ab)$/i, "")
+      .replace(/[^a-z0-9]/gi, "")
+      .toLowerCase();
+    if (!core) return null;
+    return `https://logo.clearbit.com/${core}.com`;
+  }, [company?.longName, company?.name]);
+
+  const closeStr = useMemo(() => (
+    new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZoneName: "short" })
+  ), []);
 
   // If we only have a ticker (no good name), try IB first, then Yahoo.
   useEffect(() => {
@@ -320,10 +355,28 @@ export default function Strategy() {
     return () => { cancel = true; };
   }, [company?.symbol]);
 
-  const handleApply = (legsObj, netPrem) => {
+  const handleApply = (legsObj, netPrem, _meta, info) => {
     setLegsUi(legsObj || {});
     setNetPremium(Number.isFinite(netPrem) ? netPrem : 0);
-    if (company?.symbol) memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+    if (company?.symbol) {
+      memSave({ legsUi: legsObj || {}, netPremium: Number.isFinite(netPrem) ? netPrem : 0 });
+      if (info?.name) {
+        try {
+          const raw = localStorage.getItem("screener_saved");
+          const list = raw ? JSON.parse(raw) : [];
+          const entry = {
+            symbol: company.symbol,
+            strategy: info.name,
+            savedAt: Date.now(),
+          };
+          const next = list.filter(
+            (i) => !(i.symbol === entry.symbol && i.strategy === entry.strategy)
+          );
+          next.push(entry);
+          localStorage.setItem("screener_saved", JSON.stringify(next));
+        } catch {}
+      }
+    }
   };
 
   /* ===== 06 — Tabs ===== */
@@ -332,6 +385,11 @@ export default function Strategy() {
     { key: "overview",   label: "Overview" },
     { key: "financials", label: "Financials" },
     { key: "news",       label: "News" },
+    { key: "ideas",      label: "Ideas" },
+    { key: "discussions",label: "Discussions" },
+    { key: "technicals", label: "Technicals" },
+    { key: "forecast",   label: "Forecast" },
+    { key: "seasonals",  label: "Seasonals" },
     { key: "options",    label: "Options" },
     { key: "bonds",      label: "Bonds" },
   ];
@@ -356,7 +414,16 @@ export default function Strategy() {
         <section className="hero">
           <div className="hero-id">
             <div className="hero-logo" aria-hidden="true">
-              {String((displayTitle || company?.symbol || "?")).slice(0, 1)}
+              {logoUrl ? (
+                <img
+                  src={logoUrl}
+                  alt=""
+                  style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              ) : (
+                String((displayTitle || company?.symbol || "?")).slice(0, 1)
+              )}
             </div>
             <div className="hero-texts">
               {/* Title: Company name only */}
@@ -367,6 +434,17 @@ export default function Strategy() {
                   <>
                     <span className="dot">•</span>
                     <span className="ex">{exLabel}</span>
+                    <span className="ex-icons">
+                      <span className="icon" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none"><path d="M5 12h14"/></svg>
+                      </span>
+                      <span className="icon" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none"><path d="M7 20l5-5 5 5M7 4h10l-3 5 3 5H7l3-5z"/></svg>
+                      </span>
+                      <span className="icon" aria-hidden="true">
+                        <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none"><path d="M3 12h3l3 8 4-16 3 8h5"/></svg>
+                      </span>
+                    </span>
                   </>
                 )}
               </div>
@@ -378,16 +456,12 @@ export default function Strategy() {
               {Number.isFinite(spotEff) ? Number(spotEff).toFixed(2) : "0.00"}
               <span className="p-ccy"> {company?.currency || currency || "USD"}</span>
             </div>
-            <div className="p-sub">
-              At close •{" "}
-              {new Date().toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZoneName: "short",
-              })}
-            </div>
+            {Number.isFinite(changeAbs) && Number.isFinite(changePct) && (
+              <div className={`p-change ${changeAbs >= 0 ? "up" : "down"}`}>
+                {changeAbs >= 0 ? "+" : ""}{changeAbs.toFixed(2)} ({changePct.toFixed(2)}%)
+              </div>
+            )}
+            <div className="p-sub">At close at {closeStr}</div>
           </div>
         </section>
       ) : (
@@ -490,6 +564,41 @@ export default function Strategy() {
         </section>
       )}
 
+      {tab === "ideas" && (
+        <section>
+          <h3 className="section-title">Ideas</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "discussions" && (
+        <section>
+          <h3 className="section-title">Discussions</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "technicals" && (
+        <section>
+          <h3 className="section-title">Technicals</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "forecast" && (
+        <section>
+          <h3 className="section-title">Forecast</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
+      {tab === "seasonals" && (
+        <section>
+          <h3 className="section-title">Seasonals</h3>
+          <p className="muted">Coming soon.</p>
+        </section>
+      )}
+
       {tab === "options" && (
         <OptionsTab
           symbol={company?.symbol || ""}
@@ -516,16 +625,16 @@ export default function Strategy() {
         /* Tabs */
         .tabs{
           display:flex; gap:6px;
-          margin:12px 0 16px;
+          margin:20px 0 22px;
           border-bottom:1px solid var(--border);
         }
         .tab{
           height:42px; padding:0 14px; border:0; background:transparent;
-          color:var(--text); opacity:.8; font-weight:800; cursor:pointer;
+          color:var(--text); opacity:.8; font-weight:600; cursor:pointer;
           border-bottom:2px solid transparent; margin-bottom:-1px;
         }
         .tab:hover{ opacity:1; }
-        .tab.is-active{ opacity:1; border-bottom-color:var(--accent,#3b82f6); }
+        .tab.is-active{ opacity:1; border-bottom-color:currentColor; }
 
         /* Title between tabs and cards */
         .tab-title{
@@ -537,26 +646,30 @@ export default function Strategy() {
         }
 
         /* Hero */
-        .hero{ padding:10px 0 18px 0; border-bottom:1px solid var(--border); margin-bottom:16px; }
-        .hero-id{ display:flex; align-items:center; gap:14px; min-width:0; }
+        .hero{ padding:20px 0 24px 0; border-bottom:1px solid var(--border); margin-bottom:20px; }
+        .hero-id{ display:flex; align-items:center; gap:16px; min-width:0; }
         .hero-logo{
           width:84px; height:84px; border-radius:20px;
           background: radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.08), rgba(0,0,0,.35));
           border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
-          font-weight:700; font-size:36px;
+          font-weight:700; font-size:36px; overflow:hidden;
         }
-        .hero-texts{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+        .hero-texts{ display:flex; flex-direction:column; gap:8px; min-width:0; }
         .hero-name{ margin:0; font-size:40px; line-height:1.05; letter-spacing:-.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .hero-pill{
-          display:inline-flex; align-items:center; gap:10px; height:38px; padding:0 14px;
-          border-radius:9999px; border:1px solid var(--border); background:var(--card); font-weight:600;
-          width:fit-content;
+          display:inline-flex; align-items:center; gap:8px; height:auto; padding:0;
+          border:0; background:transparent; font-weight:600; width:fit-content;
         }
         .hero-pill .dot{ opacity:.6; }
+        .ex-icons{ display:inline-flex; gap:4px; margin-left:6px; }
+        .icon{ width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:4px; border:1px solid var(--border); }
 
-        .hero-price{ margin-top:12px; }
-        .p-big{ font-size:48px; line-height:1; font-weight:800; letter-spacing:-.5px; }
+        .hero-price{ margin-top:16px; }
+        .p-big{ font-size:56px; line-height:1; font-weight:800; letter-spacing:-.5px; }
         .p-ccy{ font-size:18px; font-weight:600; margin-left:10px; opacity:.9; }
+        .p-change{ margin-top:6px; font-size:20px; font-weight:600; }
+        .p-change.up{ color:#16a34a; }
+        .p-change.down{ color:#dc2626; }
         .p-sub{ margin-top:6px; font-size:14px; opacity:.75; }
 
         /* Grid below — stretch so both cards share the same height */
