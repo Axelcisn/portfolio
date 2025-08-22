@@ -16,6 +16,7 @@ export default function CompanySearchBox({ placeholder = "Search", defaultQuery 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [idx, setIdx] = useState(-1);
+  const [hasSelected, setHasSelected] = useState(false);
   const acRef = useRef(null);
   const boxRef = useRef(null);
   const listId = "csb-listbox";
@@ -89,6 +90,7 @@ export default function CompanySearchBox({ placeholder = "Search", defaultQuery 
     if (!it) return;
     setQ(it.symbol);
     setOpen(false);
+    setHasSelected(true);
     try { onPick?.(it); } catch {}
   }, [onPick]);
 
@@ -119,8 +121,11 @@ export default function CompanySearchBox({ placeholder = "Search", defaultQuery 
         type="text"
         placeholder={placeholder}
         value={q}
-        onChange={(e) => setQ(e.target.value)}
-        onFocus={() => { if (items.length) setOpen(true); }}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setHasSelected(false);
+        }}
+        onFocus={() => { if (items.length || (q && !hasSelected)) setOpen(true); }}
         onKeyDown={onKeyDown}
         role="combobox"
         aria-autocomplete="list"

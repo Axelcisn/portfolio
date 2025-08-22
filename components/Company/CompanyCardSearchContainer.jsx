@@ -19,6 +19,7 @@ export default function CompanyCardSearchContainer({
   }, []);
 
   const [symbol, setSymbol] = useState(initialSymbol || last);
+  const [searchQuery, setSearchQuery] = useState(initialSymbol || last);
   const [prefetching, setPrefetching] = useState(false);
 
   // Persist on change
@@ -32,6 +33,7 @@ export default function CompanyCardSearchContainer({
     const next = String(res?.symbol || "").trim().toUpperCase();
     if (!next) return;
     setSymbol(next);
+    setSearchQuery(next); // Keep search box in sync
   }, []);
 
   // --- Prefetch company → expiries → closest options (silent, best-effort) ---
@@ -74,7 +76,7 @@ export default function CompanyCardSearchContainer({
       <div className="cc-bar">
         <CompanySearchBox
           placeholder="Search company or ticker"
-          defaultQuery={symbol}
+          defaultQuery={searchQuery}
           onPick={handlePick}
         />
         {/* Subtle activity dot while background prefetching, non-blocking */}
