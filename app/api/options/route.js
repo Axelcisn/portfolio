@@ -24,6 +24,14 @@ function setCached(symbol, dateISO, payload) {
   CACHE.set(k, { ts: Date.now(), payload });
 }
 
+const toISO = (d) => {
+  const nd = new Date(d);
+  if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
+  const unix = Number(d);
+  if (Number.isFinite(unix)) return new Date(unix * 1000).toISOString().slice(0, 10);
+  return null;
+};
+
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const symbol = (searchParams.get("symbol") || "").trim();
@@ -44,18 +52,37 @@ export async function GET(req) {
 
   try {
     const base = new URL(req.url).origin;
-    let url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
-    if (dateParam) url += `&date=${encodeURIComponent(dateParam)}`;
+    const url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
 
     const r = await fetch(url, { cache: "no-store" });
     const j = await r.json().catch(() => null);
-    if (!r.ok || !j || j?.ok === false) {
+    if (!r.ok || !j || j?.error) {
       const payload = { ok: false, error: j?.error || "IB fetch failed" };
       return Response.json(payload);
     }
 
-    setCached(symbol, dateParam, j);
-    return Response.json(j);
+    const src = j?.data || j || {};
+    const opts = Array.isArray(src.options) ? src.options : [];
+    const iso = toISO(dateParam);
+    const node = iso
+      ? opts.find((o) => toISO(o?.expiry || o?.expiration || o?.expirationDate) === iso) || null
+      : opts[0] || null;
+    if (!node) {
+      const payload = { ok: false, error: "No chain for selected expiry." };
+      return Response.json(payload);
+    }
+
+    const calls = Array.isArray(node.calls) ? node.calls : [];
+    const puts = Array.isArray(node.puts) ? node.puts : [];
+    const meta = {
+      spot: Number(src?.spot ?? src?.underlyingPrice ?? node?.underlyingPrice) || null,
+      currency: src?.currency || node?.currency || null,
+      expiry: iso || toISO(node?.expiry || node?.expiration || node?.expirationDate),
+    };
+    const payload = { ok: true, data: { calls, puts, meta } };
+
+    setCached(symbol, dateParam, payload);
+    return Response.json(payload);
   } catch (err) {
     const payload = { ok: false, error: err?.message || "IB fetch failed" };
     return Response.json(payload);
