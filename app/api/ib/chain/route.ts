@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Agent, type Dispatcher } from "undici";
-import { generateMockChain } from "../../../lib/providers/mockOptionsData";
+import { generateMockChain } from "lib/providers/mockOptionsData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

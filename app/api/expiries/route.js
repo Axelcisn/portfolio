@@ -1,5 +1,5 @@
 // app/api/expiries/route.js
-import { generateMockChain } from '../../../lib/providers/mockOptionsData';
+import { generateMockChain } from 'lib/providers/mockOptionsData';
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

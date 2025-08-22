@@ -7,7 +7,7 @@
  * @param {string} symbol - Stock symbol
  * @returns {object} Mock chain data in IB API format
  */
-export function generateMockChain(symbol) {
+export function generateMockChain(symbol: string): any {
   const basePrice = getBasePrice(symbol);
   const expiries = generateExpiries();
   const options = expiries.map(expiry => generateOptionsForExpiry(expiry, basePrice));
@@ -27,7 +27,7 @@ export function generateMockChain(symbol) {
 /**
  * Get a realistic base price for common symbols
  */
-function getBasePrice(symbol) {
+function getBasePrice(symbol: string): number {
   const prices = {
     'META': 752.50,
     'AAPL': 178.50,
@@ -47,7 +47,7 @@ function getBasePrice(symbol) {
 /**
  * Get currency for symbol (EUR for European stocks, USD otherwise)
  */
-function getCurrency(symbol) {
+function getCurrency(symbol: string): string {
   const eurSymbols = ['SAP', 'ASML', 'NVO', 'MC', 'OR'];
   return eurSymbols.includes(symbol.toUpperCase()) ? 'EUR' : 'USD';
 }
@@ -55,8 +55,8 @@ function getCurrency(symbol) {
 /**
  * Generate realistic expiry dates
  */
-function generateExpiries() {
-  const expiries = [];
+function generateExpiries(): string[] {
+  const expiries: string[] = [];
   const today = new Date();
   
   // Weekly expiries for the next 4 weeks
@@ -105,7 +105,7 @@ function generateExpiries() {
 /**
  * Format date as YYYY-MM-DD
  */
-function formatDate(date) {
+function formatDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -115,13 +115,13 @@ function formatDate(date) {
 /**
  * Generate options for a specific expiry
  */
-function generateOptionsForExpiry(expiry, basePrice) {
+function generateOptionsForExpiry(expiry: string, basePrice: number): any {
   const strikes = generateStrikes(basePrice);
   const daysToExpiry = getDaysToExpiry(expiry);
   const annualizedTime = daysToExpiry / 365;
   
-  const calls = [];
-  const puts = [];
+  const calls: any[] = [];
+  const puts: any[] = [];
   
   strikes.forEach(strike => {
     const moneyness = strike / basePrice;
@@ -183,8 +183,8 @@ function generateOptionsForExpiry(expiry, basePrice) {
 /**
  * Generate strike prices around the base price
  */
-function generateStrikes(basePrice) {
-  const strikes = [];
+function generateStrikes(basePrice: number): number[] {
+  const strikes: number[] = [];
   const strikeInterval = getStrikeInterval(basePrice);
   const numStrikes = 15; // Number of strikes on each side
   
@@ -201,7 +201,7 @@ function generateStrikes(basePrice) {
 /**
  * Get appropriate strike interval based on price
  */
-function getStrikeInterval(price) {
+function getStrikeInterval(price: number): number {
   if (price < 25) return 0.5;
   if (price < 50) return 1;
   if (price < 100) return 2.5;
@@ -213,10 +213,10 @@ function getStrikeInterval(price) {
 /**
  * Calculate days to expiry
  */
-function getDaysToExpiry(expiryDate) {
+function getDaysToExpiry(expiryDate: string): number {
   const today = new Date();
   const expiry = new Date(expiryDate);
-  const diffTime = expiry - today;
+  const diffTime = expiry.getTime() - today.getTime();
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return Math.max(1, diffDays);
 }
@@ -224,7 +224,7 @@ function getDaysToExpiry(expiryDate) {
 /**
  * Simplified Black-Scholes call price calculation
  */
-function calculateCallPrice(S, K, T, sigma) {
+function calculateCallPrice(S: number, K: number, T: number, sigma: number): number {
   const r = 0.05; // Risk-free rate
   
   if (T <= 0) return Math.max(0, S - K);
@@ -241,7 +241,7 @@ function calculateCallPrice(S, K, T, sigma) {
 /**
  * Simplified Black-Scholes put price calculation
  */
-function calculatePutPrice(S, K, T, sigma) {
+function calculatePutPrice(S: number, K: number, T: number, sigma: number): number {
   const r = 0.05; // Risk-free rate
   
   if (T <= 0) return Math.max(0, K - S);
@@ -258,7 +258,7 @@ function calculatePutPrice(S, K, T, sigma) {
 /**
  * Calculate delta
  */
-function calculateDelta(type, S, K, T, sigma) {
+function calculateDelta(type: string, S: number, K: number, T: number, sigma: number): number {
   if (T <= 0) return type === 'call' ? (S > K ? 1 : 0) : (S < K ? -1 : 0);
   
   const d1 = (Math.log(S / K) + (0.05 + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
@@ -270,7 +270,7 @@ function calculateDelta(type, S, K, T, sigma) {
 /**
  * Calculate gamma
  */
-function calculateGamma(S, K, T, sigma) {
+function calculateGamma(S: number, K: number, T: number, sigma: number): number {
   if (T <= 0) return 0;
   
   const d1 = (Math.log(S / K) + (0.05 + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
@@ -282,7 +282,7 @@ function calculateGamma(S, K, T, sigma) {
 /**
  * Calculate theta
  */
-function calculateTheta(type, S, K, T, sigma) {
+function calculateTheta(type: string, S: number, K: number, T: number, sigma: number): number {
   if (T <= 0) return 0;
   
   const r = 0.05;
@@ -305,7 +305,7 @@ function calculateTheta(type, S, K, T, sigma) {
 /**
  * Calculate vega
  */
-function calculateVega(S, K, T, sigma) {
+function calculateVega(S: number, K: number, T: number, sigma: number): number {
   if (T <= 0) return 0;
   
   const d1 = (Math.log(S / K) + (0.05 + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
@@ -317,7 +317,7 @@ function calculateVega(S, K, T, sigma) {
 /**
  * Calculate rho
  */
-function calculateRho(type, K, T) {
+function calculateRho(type: string, K: number, T: number): number {
   if (T <= 0) return 0;
   
   const r = 0.05;
@@ -331,7 +331,7 @@ function calculateRho(type, K, T) {
 /**
  * Normal cumulative distribution function
  */
-function normalCDF(x) {
+function normalCDF(x: number): number {
   const a1 = 0.254829592;
   const a2 = -0.284496736;
   const a3 = 1.421413741;
@@ -356,13 +356,13 @@ function normalCDF(x) {
 /**
  * Normal probability density function
  */
-function normalPDF(x) {
+function normalPDF(x: number): number {
   return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 }
 
 /**
  * Round to specified decimal places
  */
-function round(value, decimals) {
+function round(value: number, decimals: number): number {
   return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
 }
