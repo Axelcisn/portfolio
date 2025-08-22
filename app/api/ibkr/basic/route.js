@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET(req) {
-  const { searchParams } = new URL(req.url);
+  const rawUrl = req.url || (req.nextUrl && (req.nextUrl.href || String(req.nextUrl)));
+  const { searchParams } = new URL(rawUrl);
   const symbol = (searchParams.get('symbol') || '').trim().toUpperCase();
   
   if (!symbol) {

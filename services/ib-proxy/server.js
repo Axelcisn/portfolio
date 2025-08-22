@@ -5,14 +5,36 @@ import https from 'https';
 
 const app = express();
 const PORT = process.env.PORT || 4010;
-const IB = (process.env.IB_GATEWAY_URL || 'https://localhost:5000').replace(/\/$/, '');
+const rawIB = process.env.IB_GATEWAY_URL || 'https://localhost:5000';
+// normalize base (no trailing slash)
+const IB = rawIB.replace(/\/+$/, '');
 const agent = new https.Agent({ rejectUnauthorized: false }); // CP Gateway uses self-signed cert
 
 app.get('/v1/ping', (req, res) => res.json({ ok: true, up: true }));
 
 async function ibGet(path) {
-  const url = `${IB}${path.startsWith('/') ? '' : '/'}${path}`;
-  const r = await fetch(url, { agent, headers: { Accept: 'application/json' } });
+  // Try primary path first. Some gateways mount the Client Portal API under
+  // /v1/api while others expose endpoints at the root. If primary 404s, retry
+  // with the alternate base.
+  const makeUrl = (base) => `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+
+  const primaryUrl = makeUrl(IB);
+  let r = await fetch(primaryUrl, { agent, headers: { Accept: 'application/json' } });
+
+  if (r.status === 404) {
+    // If the requested path starts with /v1/api, try stripping that prefix
+    if (path.match(/^\/v1\/api/i)) {
+      const strippedPath = path.replace(/^\/v1\/api/i, '') || '/';
+      const altUrl = makeUrl(IB) + (strippedPath.startsWith('/') ? '' : '/') + strippedPath;
+      r = await fetch(altUrl, { agent, headers: { Accept: 'application/json' } });
+    } else {
+      // Otherwise try appending /v1/api to the base (for gateways that mount there)
+      const altBase = IB.endsWith('/v1/api') ? IB.replace(/\/v1\/api$/, '') : `${IB}/v1/api`;
+      const altUrl = makeUrl(altBase);
+      r = await fetch(altUrl, { agent, headers: { Accept: 'application/json' } });
+    }
+  }
+
   const text = await r.text();
   let j; try { j = JSON.parse(text); } catch { j = text; }
   if (!r.ok) {
