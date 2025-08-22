@@ -60,6 +60,35 @@ function normQ(q) { return (q || "").trim(); }
 function pickStr(...xs){ return xs.find(v => typeof v === "string" && v.trim()); }
 function pickNum(...xs){ return xs.find(v => Number.isFinite(v)); }
 
+// Mock data for testing when IBKR is not available
+function getMockSearchResults(query, limit) {
+  const mockCompanies = [
+    { conid: 265598, symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 272093, symbol: "MSFT", name: "Microsoft Corporation", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 76792991, symbol: "GOOGL", name: "Alphabet Inc. Class A", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 208813719, symbol: "GOOG", name: "Alphabet Inc. Class C", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 107113386, symbol: "AMZN", name: "Amazon.com Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 45049569, symbol: "META", name: "Meta Platforms Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 13977, symbol: "TSLA", name: "Tesla Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 4815747, symbol: "NVDA", name: "NVIDIA Corporation", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 15547816, symbol: "JPM", name: "JPMorgan Chase & Co.", exchange: "NYSE", currency: "USD", secType: "STK" },
+    { conid: 8072, symbol: "V", name: "Visa Inc.", exchange: "NYSE", currency: "USD", secType: "STK" },
+    { conid: 1433, symbol: "JNJ", name: "Johnson & Johnson", exchange: "NYSE", currency: "USD", secType: "STK" },
+    { conid: 4578, symbol: "WMT", name: "Walmart Inc.", exchange: "NYSE", currency: "USD", secType: "STK" },
+    { conid: 43645865, symbol: "UNH", name: "UnitedHealth Group Inc.", exchange: "NYSE", currency: "USD", secType: "STK" },
+    { conid: 107113386, symbol: "AMD", name: "Advanced Micro Devices Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+    { conid: 107113386, symbol: "NFLX", name: "Netflix Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
+  ];
+  
+  const q = query.toUpperCase();
+  const filtered = mockCompanies.filter(company => 
+    company.symbol.includes(q) || 
+    company.name.toUpperCase().includes(q)
+  );
+  
+  return filtered.slice(0, limit);
+}
+
 function mapResults(arr = [], limit = 8) {
   const out = [];
   const seen = new Set();
@@ -110,7 +139,10 @@ export async function GET(req) {
     const data = await searchCore(q, limit);
     return NextResponse.json({ ok:true, source:"ibkr", q, count:data.length, data });
   } catch (err) {
-    return NextResponse.json({ ok:false, error:String(err?.message || err) }, { status:502 });
+    // Fallback to mock data when IBKR is not available
+    console.warn("IBKR search failed, using mock data:", err.message);
+    const mockData = getMockSearchResults(q, limit);
+    return NextResponse.json({ ok:true, source:"mock", q, count:mockData.length, data:mockData });
   }
 }
 

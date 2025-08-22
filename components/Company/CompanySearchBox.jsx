@@ -23,8 +23,8 @@ export default function CompanySearchBox({ placeholder = "Search", defaultQuery 
   // Normalize IBKR secdef item -> {symbol,name,exchange,conid}
   const mapItem = useCallback((r) => {
     const symbol = String(r?.symbol || "").toUpperCase();
-    const name = r?.companyName || r?.companyHeader?.split(" - ")[0] || symbol;
-    const exchange = r?.description || ""; // e.g. "NASDAQ", "TSE"
+    const name = r?.name || r?.companyName || r?.description || r?.companyHeader?.split(" - ")[0] || symbol;
+    const exchange = r?.exchange || r?.primaryExchange || r?.description || ""; // e.g. "NASDAQ", "TSE"
     const conid = r?.conid ? String(r.conid) : undefined;
     return { symbol, name, exchange, conid };
   }, []);
