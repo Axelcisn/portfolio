@@ -1,161 +1,70 @@
-// IBKR-backed symbol autocomplete via Client Portal Web API.
-// Primary: POST /iserver/secdef/search; Fallback: GET /trsrv/stocks
-// Env: IB_PROXY_URL (optional, defaults to local gateway); IB_PROXY_TOKEN (optional bearer)
+// app/api/ibkr/search/route.js
+// IBKR search endpoint - wrapper around ibkrService
+import { NextResponse } from "next/server";
+import ibkrService from "../../../../lib/services/ibkrService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-import { NextResponse } from "next/server";
-import https from "node:https";
-import http from "node:http";
-import { readFileSync } from "node:fs";
-
-function getPort() {
-  try {
-    return (readFileSync("/tmp/ibkr_gateway_port", "utf8").trim() || "5001");
-  } catch {
-    return process.env.IBKR_PORT || "5001";
-  }
-}
-
-const BASE = (process.env.IB_PROXY_URL || `https://localhost:${getPort()}/v1/api`).replace(/\/+$/,'');
-const BEARER = process.env.IB_PROXY_TOKEN || "";
-
-/** Low-level request using Node http/https; allows self-signed proxies */
-function ibRequest(path, { method="GET", body, timeoutMs=8000 } = {}) {
-  const url = new URL(BASE + path);
-  const isHttps = url.protocol === "https:";
-  const agent = isHttps ? new https.Agent({ rejectUnauthorized: false }) : undefined;
-
-  return new Promise((resolve, reject) => {
-    const req = (isHttps ? https : http).request({
-      method,
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        ...(BEARER ? { "Authorization": `Bearer ${BEARER}` } : {})
-      },
-      agent,
-      timeout: timeoutMs
-    }, res => {
-      let data = "";
-      res.on("data", d => { data += d; });
-      res.on("end", () => {
-        let json;
-        try { json = JSON.parse(data); } catch { json = data; }
-        resolve({ status: res.statusCode || 0, headers: res.headers, json });
-      });
-    });
-    req.on("error", reject);
-    if (body) req.write(typeof body === "string" ? body : JSON.stringify(body));
-    req.end();
-  });
-}
-
-function normQ(q) { return (q || "").trim(); }
-function pickStr(...xs){ return xs.find(v => typeof v === "string" && v.trim()); }
-function pickNum(...xs){ return xs.find(v => Number.isFinite(v)); }
-
-// Mock data for testing when IBKR is not available
-function getMockSearchResults(query, limit) {
-  const mockCompanies = [
-    { conid: 265598, symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 272093, symbol: "MSFT", name: "Microsoft Corporation", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 76792991, symbol: "GOOGL", name: "Alphabet Inc. Class A", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 208813719, symbol: "GOOG", name: "Alphabet Inc. Class C", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 107113386, symbol: "AMZN", name: "Amazon.com Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 45049569, symbol: "META", name: "Meta Platforms Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 13977, symbol: "TSLA", name: "Tesla Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 4815747, symbol: "NVDA", name: "NVIDIA Corporation", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 15547816, symbol: "JPM", name: "JPMorgan Chase & Co.", exchange: "NYSE", currency: "USD", secType: "STK" },
-    { conid: 8072, symbol: "V", name: "Visa Inc.", exchange: "NYSE", currency: "USD", secType: "STK" },
-    { conid: 1433, symbol: "JNJ", name: "Johnson & Johnson", exchange: "NYSE", currency: "USD", secType: "STK" },
-    { conid: 4578, symbol: "WMT", name: "Walmart Inc.", exchange: "NYSE", currency: "USD", secType: "STK" },
-    { conid: 43645865, symbol: "UNH", name: "UnitedHealth Group Inc.", exchange: "NYSE", currency: "USD", secType: "STK" },
-    { conid: 107113386, symbol: "AMD", name: "Advanced Micro Devices Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-    { conid: 107113386, symbol: "NFLX", name: "Netflix Inc.", exchange: "NASDAQ", currency: "USD", secType: "STK" },
-  ];
-  
-  const q = query.toUpperCase();
-  const filtered = mockCompanies.filter(company => 
-    company.symbol.includes(q) || 
-    company.name.toUpperCase().includes(q)
-  );
-  
-  return filtered.slice(0, limit);
-}
-
-function mapResults(arr = [], limit = 8) {
-  const out = [];
-  const seen = new Set();
-  for (const r of (Array.isArray(arr) ? arr : [])) {
-    const item = {
-      conid: pickNum(r.conid, r.contractId, r.cnid, r.id) || null,
-      symbol: pickStr(r.symbol, r.localSymbol, r.ticker) || null,
-      name:   pickStr(r.description, r.companyName, r.name, r.fullName) || null,
-      exchange: pickStr(r.exchange, r.primaryExchange, r.listingExchange) || null,
-      currency: pickStr(r.currency, r.ccy) || null,
-      secType:  pickStr(r.secType, r.sec_type, r.type) || null
-    };
-    if (!item.symbol && !item.name) continue;
-    const key = `${item.conid || item.symbol}-${item.exchange || ""}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
-async function searchCore(q, limit) {
-  // 1) Primary search
-  const primary = await ibRequest("/iserver/secdef/search", {
-    method: "POST",
-    body: { symbol: q, name: true }
-  });
-  if (primary.status >= 200 && primary.status < 300) {
-    const list = mapResults(primary.json, limit);
-    if (list.length) return list;
-  }
-  // 2) Fallback
-  const fb = await ibRequest(`/trsrv/stocks?symbol=${encodeURIComponent(q)}`, { method: "GET" });
-  if (fb.status >= 200 && fb.status < 300 && fb.json) {
-    const list = Array.isArray(fb.json) ? fb.json : Object.values(fb.json).flat();
-    return mapResults(list, limit);
-  }
-  return [];
+function normalizeQuery(q) { 
+  return (q || "").trim(); 
 }
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
-  const q = normQ(searchParams.get("q"));
+  const query = normalizeQuery(searchParams.get("q"));
   const limit = Math.min(20, Math.max(1, +(searchParams.get("limit") || 8)));
-  if (!q) return NextResponse.json({ ok:true, source:"ibkr", q, count:0, data:[] });
+  
+  if (!query) {
+    return NextResponse.json({ ok: true, source: "ibkr", q: query, count: 0, data: [] });
+  }
+  
   try {
-    const data = await searchCore(q, limit);
-    return NextResponse.json({ ok:true, source:"ibkr", q, count:data.length, data });
+    const data = await ibkrService.searchSymbols(query, limit);
+    return NextResponse.json({ 
+      ok: true, 
+      source: "ibkr", 
+      q: query, 
+      count: data.length, 
+      data 
+    });
   } catch (err) {
-    // Fallback to mock data when IBKR is not available
-    console.warn("IBKR search failed, using mock data:", err.message);
-    const mockData = getMockSearchResults(q, limit);
-    return NextResponse.json({ ok:true, source:"mock", q, count:mockData.length, data:mockData });
+    console.error(`IBKR search failed for "${query}":`, err);
+    
+    // Return error instead of falling back to mock
+    // The service should handle connection issues internally
+    return NextResponse.json({ 
+      ok: false, 
+      error: err.message || "IBKR search failed",
+      q: query 
+    }, { status: 502 });
   }
 }
 
 export async function POST(req) {
   const body = await req.json().catch(() => ({}));
-  const q = normQ(body.q || body.query || body.symbol);
+  const query = normalizeQuery(body.q || body.query || body.symbol);
   const limit = Math.min(20, Math.max(1, +(body.limit || 8)));
-  if (!q) return NextResponse.json({ ok:true, source:"ibkr", q, count:0, data:[] });
+  
+  if (!query) {
+    return NextResponse.json({ ok: true, source: "ibkr", q: query, count: 0, data: [] });
+  }
+  
   try {
-    const data = await searchCore(q, limit);
-    return NextResponse.json({ ok:true, source:"ibkr", q, count:data.length, data });
+    const data = await ibkrService.searchSymbols(query, limit);
+    return NextResponse.json({ 
+      ok: true, 
+      source: "ibkr", 
+      q: query, 
+      count: data.length, 
+      data 
+    });
   } catch (err) {
-    return NextResponse.json({ ok:false, error:String(err?.message || err) }, { status:502 });
+    console.error(`IBKR search failed for "${query}":`, err);
+    return NextResponse.json({ 
+      ok: false, 
+      error: err.message || "IBKR search failed" 
+    }, { status: 502 });
   }
 }
-

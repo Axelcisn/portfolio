@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { yahooDailyCloses } from "../../../lib/yahoo.js";
+import ibkrService from "../../../lib/services/ibkrService";
 import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats.js";
 
 export const runtime = "nodejs";
@@ -31,7 +31,14 @@ export async function GET(req) {
 
     if (!symbol) return err(400, "SYMBOL_REQUIRED", "symbol required");
 
-    const bars = await yahooDailyCloses(symbol, range, "1d");
+    // Get historical data from IBKR
+    const histData = await ibkrService.getHistoricalData(symbol, range, "1d");
+    
+    // Transform to expected format (bars with t and close)
+    const bars = histData.map(bar => ({
+      t: bar.time,
+      close: bar.close
+    }));
 
     if (!Array.isArray(bars) || bars.length < 2) {
       return err(502, "NO_DATA", "no chart data available");

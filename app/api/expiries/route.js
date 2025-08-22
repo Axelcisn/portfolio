@@ -1,10 +1,9 @@
 // app/api/expiries/route.js
-import { generateMockChain } from 'lib/providers/mockOptionsData';
+// Options expiries endpoint - uses IBKR exclusively
+import ibkrService from '../../../lib/services/ibkrService';
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-// Fetch expiries via the Interactive Brokers chain proxy
 
 // ---- 30s micro-cache (module scoped) ----
 const TTL_MS = 30 * 1000;
@@ -20,6 +19,7 @@ function getCached(symbol) {
   }
   return hit.expiries;
 }
+
 function setCached(symbol, expiries) {
   const key = String(symbol || "").toUpperCase();
   CACHE.set(key, { ts: Date.now(), expiries: Array.isArray(expiries) ? expiries : [] });
@@ -27,7 +27,7 @@ function setCached(symbol, expiries) {
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get("symbol") || "").trim();
+  const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
   const noCache = searchParams.get("nocache") === "1";
 
   if (!symbol) {
@@ -38,62 +38,29 @@ export async function GET(req) {
   if (!noCache) {
     const cached = getCached(symbol);
     if (cached) {
-      return Response.json({ ok: true, expiries: cached });
+      return Response.json({ ok: true, expiries: cached, source: "cache" });
     }
   }
 
   try {
-    const base = new URL(req.url).origin;
-    const url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
-    const r = await fetch(url, { cache: "no-store" });
-    const j = await r.json().catch(() => null);
+    // Get expiries from IBKR
+    const expiries = await ibkrService.getOptionExpiries(symbol);
     
-    // Handle authentication errors - return mock expiries instead of error
-    if (j?.authRequired || j?.error === "unauthorized") {
-      console.log('[Expiries] Auth required for IB bridge, using mock data');
-      const mockData = generateMockChain(symbol);
-      const mockExpiries = mockData?.data?.expiries || [];
-      setCached(symbol, mockExpiries);
-      return Response.json({ ok: true, expiries: mockExpiries });
-    }
-    
-    if (!r.ok || !j || j?.ok === false) {
-      return Response.json({ ok: false, error: j?.error || "IB fetch failed" });
-    }
-
-    const src = j?.data || j || {};
-    let expiries = [];
-    if (Array.isArray(src.expiries)) {
-      expiries = src.expiries;
-    } else if (Array.isArray(src.expirationDates)) {
-      expiries = src.expirationDates
-        .map((d) => {
-          const nd = new Date(d);
-          if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
-          const unix = Number(d);
-          if (Number.isFinite(unix)) return new Date(unix * 1000).toISOString().slice(0, 10);
-          return null;
-        })
-        .filter(Boolean);
-    } else if (Array.isArray(src.options)) {
-      expiries = src.options
-        .map((o) => o?.expiry || o?.expiration || o?.expirationDate)
-        .filter(Boolean)
-        .map((d) => {
-          const nd = new Date(d);
-          if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
-          const unix = Number(d);
-          if (Number.isFinite(unix)) return new Date(unix * 1000).toISOString().slice(0, 10);
-          return null;
-        })
-        .filter(Boolean);
-    }
-
-    // cache successful result
+    // Cache successful result
     setCached(symbol, expiries);
-
-    return Response.json({ ok: true, expiries });
-  } catch (err) {
-    return Response.json({ ok: false, error: err?.message || "IB fetch failed" });
+    
+    return Response.json({ 
+      ok: true, 
+      expiries, 
+      source: "ibkr",
+      symbol 
+    });
+  } catch (error) {
+    console.error(`Failed to get expiries for ${symbol}:`, error);
+    return Response.json({ 
+      ok: false, 
+      error: error.message || "IBKR fetch failed",
+      symbol 
+    }, { status: 502 });
   }
 }

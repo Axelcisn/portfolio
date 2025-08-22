@@ -1,5 +1,7 @@
 // app/api/company/route.js
+// Company quote endpoint - uses IBKR exclusively
 import { NextResponse } from "next/server";
+import ibkrService from "../../../lib/services/ibkrService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,68 +10,66 @@ export async function GET(req) {
   const symbol = (req.nextUrl.searchParams.get("symbol") || "")
     .trim()
     .toUpperCase();
+    
   if (!symbol) {
     return NextResponse.json({ error: "symbol required" }, { status: 400 });
   }
+  
   try {
-    const base = req.nextUrl.origin;
-    const r = await fetch(
-      `${base}/api/ibkr/basic?symbol=${encodeURIComponent(symbol)}`,
-      { cache: "no-store" }
-    );
-    const text = await r.text();
-    let j;
-    try {
-      j = JSON.parse(text);
-    } catch {
-      j = null;
+    // Get quote data from IBKR
+    const quote = await ibkrService.getQuote(symbol);
+    
+    // Calculate derived values
+    let spot = quote.price;
+    if (!spot && quote.bid && quote.ask) {
+      spot = (quote.bid + quote.ask) / 2;
+    } else if (!spot && quote.bid) {
+      spot = quote.bid;
+    } else if (!spot && quote.ask) {
+      spot = quote.ask;
     }
-    if (!r.ok || !j || j?.ok === false) {
-      const msg = (j && (j.error || j.message)) || text || "ibkr_basic_failed";
-      return NextResponse.json({ error: msg });
-    }
-    let spot = Number(j.price);
-    if (!Number.isFinite(spot) || spot <= 0) {
-      const bid = j.fields ? Number(j.fields["84"]) : NaN;
-      const ask = j.fields ? Number(j.fields["86"]) : NaN;
-      if (Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0) {
-        spot = (bid + ask) / 2;
-      } else if (Number.isFinite(bid) && bid > 0) {
-        spot = bid;
-      } else if (Number.isFinite(ask) && ask > 0) {
-        spot = ask;
-      } else {
-        spot = NaN;
+    
+    let prevClose = quote.close;
+    let change = null;
+    let changePct = quote.changePercent;
+    
+    if (spot && prevClose) {
+      change = spot - prevClose;
+      if (!changePct) {
+        changePct = (change / prevClose) * 100;
       }
+    } else if (spot && changePct) {
+      prevClose = spot / (1 + changePct / 100);
+      change = spot - prevClose;
     }
-
-    let prevClose = null,
-      change = null,
-      changePct = null;
-    if (j.fields && j.fields["83"] !== undefined && Number.isFinite(spot) && spot > 0) {
-      const pct = Number(j.fields["83"]);
-      if (Number.isFinite(pct)) {
-        changePct = pct;
-        const pc = spot / (1 + pct / 100);
-        if (Number.isFinite(pc)) {
-          prevClose = pc;
-          change = spot - pc;
-        }
-      }
-    }
+    
     return NextResponse.json(
       {
-        symbol: j.symbol || symbol,
-        currency: j.currency || null,
-        spot: Number.isFinite(spot) && spot > 0 ? spot : null,
-        prevClose: Number.isFinite(prevClose) ? prevClose : null,
-        change: Number.isFinite(change) ? change : null,
-        changePct: Number.isFinite(changePct) ? changePct : null,
+        symbol: quote.symbol,
+        currency: quote.currency,
+        spot: spot || null,
+        prevClose: prevClose || null,
+        change: change || null,
+        changePct: changePct || null,
         session: "At close",
+        // Additional fields from IBKR
+        name: quote.name,
+        exchange: quote.exchange,
+        bid: quote.bid,
+        ask: quote.ask,
+        high: quote.high,
+        low: quote.low,
+        volume: quote.volume,
+        high52Week: quote.high52Week,
+        low52Week: quote.low52Week
       },
       { status: 200 }
     );
   } catch (e) {
-    return NextResponse.json({ error: String(e?.message || e || "ibkr_basic_failed") });
+    console.error(`Failed to get quote for ${symbol}:`, e);
+    return NextResponse.json(
+      { error: e.message || "IBKR quote failed" },
+      { status: 502 }
+    );
   }
 }

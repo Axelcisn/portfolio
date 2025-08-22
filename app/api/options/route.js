@@ -1,4 +1,7 @@
 // app/api/options/route.js
+// Options chain endpoint - uses IBKR exclusively
+import ibkrService from '../../../lib/services/ibkrService';
+
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -6,11 +9,12 @@ export const runtime = "nodejs";
 const TTL_MS = 30 * 1000;
 const CACHE = new Map(); // key: SYMBOL|DATE -> { ts, payload }
 
-function getKey(symbol, dateISO) {
-  return `${String(symbol || "").toUpperCase()}|${String(dateISO || "")}`;
+function getKey(symbol, expiry) {
+  return `${String(symbol || "").toUpperCase()}|${String(expiry || "")}`;
 }
-function getCached(symbol, dateISO) {
-  const k = getKey(symbol, dateISO);
+
+function getCached(symbol, expiry) {
+  const k = getKey(symbol, expiry);
   const hit = CACHE.get(k);
   if (!hit) return null;
   if (Date.now() - hit.ts > TTL_MS) {
@@ -19,23 +23,16 @@ function getCached(symbol, dateISO) {
   }
   return hit.payload;
 }
-function setCached(symbol, dateISO, payload) {
-  const k = getKey(symbol, dateISO);
+
+function setCached(symbol, expiry, payload) {
+  const k = getKey(symbol, expiry);
   CACHE.set(k, { ts: Date.now(), payload });
 }
 
-const toISO = (d) => {
-  const nd = new Date(d);
-  if (Number.isFinite(nd.getTime())) return nd.toISOString().slice(0, 10);
-  const unix = Number(d);
-  if (Number.isFinite(unix)) return new Date(unix * 1000).toISOString().slice(0, 10);
-  return null;
-};
-
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get("symbol") || "").trim();
-  const dateParam = (searchParams.get("date") || "").trim();
+  const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
+  const expiry = (searchParams.get("date") || searchParams.get("expiry") || "").trim();
   const noCache = searchParams.get("nocache") === "1";
 
   if (!symbol) {
@@ -44,69 +41,63 @@ export async function GET(req) {
 
   // Serve from cache if available (unless bypassed)
   if (!noCache) {
-    const cached = getCached(symbol, dateParam);
+    const cached = getCached(symbol, expiry);
     if (cached) {
-      return Response.json(cached);
+      return Response.json({ ...cached, source: "cache" });
     }
   }
 
   try {
-    const base = new URL(req.url).origin;
-    const url = `${base}/api/ib/chain?symbol=${encodeURIComponent(symbol)}`;
-
-    const r = await fetch(url, { cache: "no-store" });
-    const j = await r.json().catch(() => null);
+    // Get options chain from IBKR
+    const chain = await ibkrService.getOptionsChain(symbol, expiry);
     
-    // Handle authentication errors specifically
-    if (j?.authRequired || j?.error === "unauthorized") {
-      const payload = { 
-        ok: false, 
-        error: "Options data unavailable - authentication required. Please configure IB Bridge credentials." 
-      };
-      return Response.json(payload);
+    // Get current quote for spot price
+    let spotPrice = null;
+    let currency = null;
+    try {
+      const quote = await ibkrService.getQuote(symbol);
+      spotPrice = quote.price || ((quote.bid + quote.ask) / 2) || null;
+      currency = quote.currency;
+    } catch (e) {
+      console.warn(`Could not get spot price for ${symbol}:`, e.message);
     }
     
-    if (!r.ok || !j || j?.error) {
-      const payload = { ok: false, error: j?.error || "IB fetch failed" };
-      return Response.json(payload);
-    }
-
-    const src = j?.data || j || {};
-    const opts = Array.isArray(src.options) ? src.options : [];
-    const iso = toISO(dateParam);
-    const node = iso
-      ? opts.find((o) => toISO(o?.expiry || o?.expiration || o?.expirationDate) === iso) || null
-      : opts[0] || null;
-    if (!node) {
-      // Provide more helpful error message
-      const availableExpiries = opts
-        .map(o => o?.expiry || o?.expiration || o?.expirationDate)
-        .filter(Boolean)
-        .map(d => toISO(d))
-        .filter(Boolean);
-      
-      const errorMsg = availableExpiries.length > 0
-        ? `No options data for ${dateParam || 'selected date'}. Available dates: ${availableExpiries.slice(0, 5).join(', ')}${availableExpiries.length > 5 ? '...' : ''}`
-        : "No options chain data available for this symbol.";
-      
-      const payload = { ok: false, error: errorMsg };
-      return Response.json(payload);
-    }
-
-    const calls = Array.isArray(node.calls) ? node.calls : [];
-    const puts = Array.isArray(node.puts) ? node.puts : [];
-    const meta = {
-      spot: Number(src?.spot ?? src?.underlyingPrice ?? node?.underlyingPrice) || null,
-      currency: src?.currency || node?.currency || null,
-      expiry: iso || toISO(node?.expiry || node?.expiration || node?.expirationDate),
+    // Transform to expected format
+    const payload = {
+      ok: true,
+      data: {
+        calls: chain.calls || [],
+        puts: chain.puts || [],
+        meta: {
+          spot: spotPrice,
+          currency: currency,
+          expiry: chain.selectedExpiry || expiry || (chain.expiries && chain.expiries[0]) || null,
+          availableExpiries: chain.expiries || []
+        }
+      },
+      source: "ibkr"
     };
-    const payload = { ok: true, data: { calls, puts, meta } };
-
-    setCached(symbol, dateParam, payload);
+    
+    // Cache successful result
+    setCached(symbol, expiry, payload);
     return Response.json(payload);
-  } catch (err) {
-    const payload = { ok: false, error: err?.message || "IB fetch failed" };
-    return Response.json(payload);
+  } catch (error) {
+    console.error(`Failed to get options chain for ${symbol}:`, error);
+    
+    // Provide helpful error messages
+    let errorMsg = error.message || "IBKR fetch failed";
+    if (error.message.includes('not found')) {
+      errorMsg = `Symbol ${symbol} not found or no options available`;
+    } else if (error.message.includes('connection failed')) {
+      errorMsg = "Cannot connect to IBKR gateway. Please ensure it's running and authenticated.";
+    }
+    
+    const payload = { 
+      ok: false, 
+      error: errorMsg,
+      symbol 
+    };
+    return Response.json(payload, { status: 502 });
   }
 }
 
