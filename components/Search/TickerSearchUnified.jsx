@@ -9,7 +9,7 @@ const TickerSearchUnified = React.forwardRef(function TickerSearchUnified(
     minLen = 2,
     limit = 8,
     debounceMs = 220,
-    endpoint = "/api/company/search",
+    endpoint = "/api/ibkr/search",  // Changed to use IBKR search
     mapResult,
   },
   forwardedRef
