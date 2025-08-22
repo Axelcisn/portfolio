@@ -5,9 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ChainTable from "./ChainTable";
 import ChainSettings from "./ChainSettings";
-import YahooHealthButton from "./YahooHealthButton";
 import RefreshExpiriesButton from "./RefreshExpiriesButton";
-import YahooHealthToaster from "./YahooHealthToaster";
 
 /* ---------------- helpers ---------------- */
 const normalizeExpiries = (xs) => {
@@ -261,7 +259,6 @@ export default function OptionsTab({
           <button type="button" className={`seg ${groupBy === "expiry" ? "is-on" : ""}`} onClick={() => setGroupBy("expiry")}>By expiration</button>
           <button type="button" className={`seg ${groupBy === "strike" ? "is-on" : ""}`} onClick={() => setGroupBy("strike")}>By strike</button>
 
-          <YahooHealthButton />
           <RefreshExpiriesButton
             onRefresh={onRefreshExpiries}
             busy={!!loadingExpiries}
@@ -285,8 +282,6 @@ export default function OptionsTab({
           </button>
         </div>
       </div>
-
-      <YahooHealthToaster />
 
       <div className="expiry-wrap">
         <div className="expiry" aria-busy={loadingExpiries ? "true" : "false"}>
