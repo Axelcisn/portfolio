@@ -14,7 +14,7 @@ import CompanyHeader from "../../components/Strategy/CompanyHeader";
 import { STRATEGY_TABS } from "../../components/Strategy/tabs";
 
 import useDebounce from "../../lib/useDebounce";
-import useStrategyMemory from "../../components/state/useStrategyMemory";
+import useStrategyMemory from "../../lib/useStrategyMemory";
 
 const pickNearest = (list) => {
   if (!Array.isArray(list) || list.length === 0) return null;

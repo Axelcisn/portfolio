@@ -1,7 +1,7 @@
-// components/Strategy/hooks/__tests__/useBreakEven.payload.test.js
+// tests/useBreakEven.payload.test.js
 // Smoke tests for the request payload shape expected by /api/strategy/breakeven.
 
-import { __testOnly_buildPayload as build } from '../useBreakEven';
+import { __testOnly_buildPayload as build } from '../components/Strategy/hooks/useBreakEven';
 
 describe('useBreakEven payload builder (smoke)', () => {
   it('maps option & stock legs with numeric fields', () => {

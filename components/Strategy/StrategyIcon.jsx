@@ -1,10 +1,10 @@
-// components/Icons/StrategyIcon.jsx
+// components/Strategy/StrategyIcon.jsx
 "use client";
 
 import React, { useMemo } from "react";
-import materializeSeeded from "../Strategy/defs/materializeSeeded";
-import rowsToLegs from "../Strategy/utils/rowsToLegs";
-import { payoffAt, suggestBounds } from "../../lib/strategy/payoff.js";
+import materializeSeeded from "./defs/materializeSeeded";
+import rowsToLegs from "./utils/rowsToLegs";
+import { payoffAt, suggestBounds } from "../lib/strategy/payoff.js";
 
 /** Tile wrapper (rounded square) */
 function IconTile({ size = 48, children }) {
