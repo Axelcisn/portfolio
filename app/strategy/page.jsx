@@ -13,8 +13,24 @@ import useExpiries from "../../components/Options/useExpiries";
 import CompanyHeader from "../../components/Strategy/CompanyHeader";
 import { STRATEGY_TABS } from "../../components/Strategy/tabs";
 
-import useDebounce from "../../hooks/useDebounce";
 import useStrategyMemory from "../../components/state/useStrategyMemory";
+
+// Simple debounce hook to avoid excessive API calls
+const useDebounce = (value, delay) => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  
+  return debouncedValue;
+};
 
 const pickNearest = (list) => {
   if (!Array.isArray(list) || list.length === 0) return null;
