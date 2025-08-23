@@ -63,6 +63,23 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
   };
   const closeSearch = () => setSearchOpen(false);
 
+  /* IBKR connection status */
+  const [ibkrConnected, setIbkrConnected] = useState(false);
+  const checkIbkr = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ibkr/health");
+      const data = await res.json();
+      setIbkrConnected(!!data.connected);
+    } catch {
+      setIbkrConnected(false);
+    }
+  }, []);
+  useEffect(() => {
+    checkIbkr();
+    const id = setInterval(checkIbkr, 30000);
+    return () => clearInterval(id);
+  }, [checkIbkr]);
+
   /* search -> broadcast + optional nav */
   const onPick = (item) => {
     const fire = () => {
@@ -135,6 +152,14 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
         ) : (
           <>
             <div className="clock">{now} <span className="muted">({tz.split("/")[1] || "Rome"})</span></div>
+            <button
+              type="button"
+              className="health"
+              aria-label="IBKR connection status"
+              onClick={checkIbkr}
+              style={{ backgroundColor: ibkrConnected ? "#3b82f6" : "#ef4444" }}
+              title={ibkrConnected ? "IBKR connected" : "IBKR disconnected"}
+            />
             <button type="button" className="theme" aria-label="Toggle dark mode" onClick={toggleTheme}>
               {theme === "dark" ? (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -198,6 +223,11 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
           display:flex; align-items:center; justify-content:center;
           background:var(--card); color:var(--text);
           border:1px solid var(--border); cursor:pointer;
+        }
+        .health{
+          width:12px; height:12px; border-radius:50%;
+          border:1px solid var(--border);
+          cursor:pointer;
         }
         .search-close{
           backdrop-filter:saturate(180%) blur(20px);

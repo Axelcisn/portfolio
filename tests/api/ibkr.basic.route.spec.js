@@ -4,11 +4,14 @@ import { vi } from "vitest";
 
 describe("ibkr basic endpoint", () => {
   const realFetch = global.fetch;
+  const realUrl = process.env.IB_PROXY_URL;
   afterEach(() => {
     global.fetch = realFetch;
+    process.env.IB_PROXY_URL = realUrl;
   });
 
   test("falls back to next candidate when first lacks price", async () => {
+    process.env.IB_PROXY_URL = "https://example.test";
     const responses = [
       // search results with two candidates
       {
