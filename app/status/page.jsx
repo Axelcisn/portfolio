@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-export default function IbkrSettings() {
+export default function StatusPage() {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
 
@@ -21,9 +21,11 @@ export default function IbkrSettings() {
   useEffect(() => {
     load();
   }, []);
-
   return (
     <div className="grid">
+      <div className={`banner ${status ? (status.connected ? 'ok' : 'bad') : ''}`}>
+        {status ? (status.connected ? "We're fully operational" : 'IBKR connection issues') : 'Checking status...'}
+      </div>
       <section className="card">
         <div className="header">
           <h3>IBKR Connection</h3>
@@ -86,6 +88,20 @@ export default function IbkrSettings() {
         )}
       </section>
       <style jsx>{`
+        .banner {
+          margin-bottom: 16px;
+          padding: 12px 16px;
+          border-radius: 6px;
+          font-weight: 600;
+        }
+        .banner.ok {
+          background: color-mix(in oklab, var(--positive) 15%, transparent);
+          color: var(--positive);
+        }
+        .banner.bad {
+          background: color-mix(in oklab, var(--negative) 15%, transparent);
+          color: var(--negative);
+        }
         .status-list { list-style: none; padding: 0; margin: 0; }
         .status-list li { margin-bottom: 12px; }
         .label { display: inline-block; width: 160px; }

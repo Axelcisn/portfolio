@@ -46,6 +46,7 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
       { label: "Portfolio", href: "/portfolio" },
       { label: "Strategy", href: "/strategy", search: true },
       { label: "Screener", href: "/screener" },
+      { label: "Status", href: "/status" },
     ],
     []
   );
@@ -156,7 +157,7 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
               type="button"
               className="health"
               aria-label="IBKR connection status"
-              onClick={() => router.push('/settings/ibkr')}
+              onClick={() => router.push('/status')}
               style={{ backgroundColor: ibkrConnected ? "#3b82f6" : "#ef4444" }}
               title={ibkrConnected ? "IBKR connected" : "IBKR disconnected"}
             />
