@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="$(cat /tmp/ibkr_gateway_port 2>/dev/null || echo 5001)"
-BASE="https://localhost:${PORT}/v1/api"
+. "$(dirname "$0")/common.sh"
+
+BASE="$(ibkr_base_url)"
 echo "[using] $BASE"
 
 # Keepalive

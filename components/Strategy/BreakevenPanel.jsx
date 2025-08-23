@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rowsToApiLegs } from "./utils"; // ✅ centralized mapper via barrel
+import { fmtCur } from "../../utils/format";
 
 /* ------------ strategy alias handling ------------ */
 const STRAT_ALIASES = Object.freeze({
@@ -61,19 +62,6 @@ function normalizeStrategyKey(x) {
   return STRAT_ALIASES[s] ?? null;
 }
 
-function fmtPrice(x, ccy = "USD") {
-  if (!Number.isFinite(x)) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: ccy,
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    }).format(x);
-  } catch {
-    return Number(x).toFixed(2);
-  }
-}
 
 /** If a straddle was chosen but strikes differ, use the correct *strangle* key. */
 function disambiguateStraddle(key, legs) {
@@ -199,14 +187,14 @@ export default function BreakevenPanel({
         <div className="be-row">
           <div className="be-col">
             <div className="k">Lower</div>
-            <div className="v">{fmtPrice(state.be[0], currency)}</div>
+            <div className="v">{fmtCur(state.be[0], currency)}</div>
             {Number.isFinite(spot) && Number.isFinite(state.be[0]) && (
               <div className="hint">Δ {(((state.be[0] - spot) / spot) * 100).toFixed(2)}%</div>
             )}
           </div>
           <div className="be-col">
             <div className="k">Upper</div>
-            <div className="v">{fmtPrice(state.be[1], currency)}</div>
+            <div className="v">{fmtCur(state.be[1], currency)}</div>
             {Number.isFinite(spot) && Number.isFinite(state.be[1]) && (
               <div className="hint">Δ {(((state.be[1] - spot) / spot) * 100).toFixed(2)}%</div>
             )}
@@ -216,7 +204,7 @@ export default function BreakevenPanel({
         <div className="be-row">
           <div className="be-col">
             <div className="k">Price</div>
-            <div className="v">{fmtPrice(state.be[0], currency)}</div>
+            <div className="v">{fmtCur(state.be[0], currency)}</div>
             {Number.isFinite(spot) && Number.isFinite(state.be[0]) && (
               <div className="hint">Δ {(((state.be[0] - spot) / spot) * 100).toFixed(2)}%</div>
             )}
