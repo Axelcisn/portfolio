@@ -17,6 +17,7 @@ import { useTimeBasis } from "../ui/TimeBasisContext";
 
 // 🔹 Live Stats context (sigma/rf/q/drift/μ/spot)
 import { useStatsCtx } from "./statsBus";
+import { fmtCur, fmtNum } from "../../lib/format";
 
 /* ---------- utils ---------- */
 function lin([d0, d1], [r0, r1]) {
@@ -34,25 +35,11 @@ function tickStep(min, max, count) {
 }
 function ticks(min, max, count = 6) {
   const st = tickStep(min, max, count);
-  const start = Math.ceil(min / st) * st;
+const start = Math.ceil(min / st) * st;
   const out = [];
   for (let v = start; v <= max + 1e-9; v += st) out.push(v);
   return out;
 }
-const fmtNum = (x, d = 2) => (Number.isFinite(x) ? Number(x).toFixed(d) : "—");
-const fmtCur = (x, ccy = "USD") => {
-  if (!Number.isFinite(Number(x))) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: ccy,
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    }).format(Number(x));
-  } catch {
-    return `${Number(x).toFixed(2)} ${ccy}`;
-  }
-};
 /** Fast quantile on a numeric copy (no external libs). */
 function quantile(arr, p) {
   if (!arr?.length) return NaN;

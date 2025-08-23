@@ -3,14 +3,9 @@ set -euo pipefail
 
 SYMS=("$@"); [ ${#SYMS[@]} -gt 0 ] || SYMS=(MSFT AAPL)
 
-# Detect active port
-PORT="$(cat /tmp/ibkr_gateway_port 2>/dev/null || true)"
-if [ -z "${PORT:-}" ]; then
-  if lsof -nP -iTCP:5001 -sTCP:LISTEN >/dev/null 2>&1; then PORT=5001
-  elif lsof -nP -iTCP:5000 -sTCP:LISTEN >/dev/null 2>&1; then PORT=5000
-  else PORT=5001; fi
-fi
-BASE="https://localhost:${PORT}/v1/api"
+. "$(dirname "$0")/common.sh"
+
+BASE="$(ibkr_base_url)"
 echo "[using] $BASE"
 
 # Helpers

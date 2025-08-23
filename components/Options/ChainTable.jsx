@@ -4,6 +4,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
+import { fmtCur, fmtNum, fmtPct } from "../../lib/format";
 
 // ---- centralized quant math (single source of truth) ----
 import {
@@ -22,8 +23,6 @@ import {
 /* ---------- tiny utils ---------- */
 const isNum = (x) => Number.isFinite(x);
 const pick = (x) => (isNum(x) ? x : null);
-const moneySign = (ccy) =>
-  ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
 
 /* Robust wrappers for hub helpers (support object/array/object-return) */
 function hubCI95({ S0, mu, sigma, T }) {
@@ -74,11 +73,9 @@ export default function ChainTable({
     return typeof unsub === "function" ? unsub : () => {};
   }, []);
 
-  const fmt = (v, d = 2) => (isNum(v) ? Number(v).toFixed(d) : "—");
   const effCurrency = meta?.currency || currency || "USD";
-  const fmtMoney = (v, d = 2) =>
-    isNum(v) ? `${moneySign(effCurrency)}${Number(v).toFixed(d)}` : "—";
-  const fmtPct = (p, d = 2) => (isNum(p) ? `${(p * 100).toFixed(d)}%` : "—");
+  const fmt = (v, d = 2) => fmtNum(v, d);
+  const fmtMoney = (v, d = 2) => fmtCur(v, effCurrency, d);
 
   // Settings — safe defaults
   const sortDir = settings?.sort === "desc" ? "desc" : "asc";

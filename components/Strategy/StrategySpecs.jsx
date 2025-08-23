@@ -2,7 +2,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { fmtCur } from "../../utils/format";
+import { fmtCur } from "../../lib/format";
 
 function Spec({ k, v }) {
   return (

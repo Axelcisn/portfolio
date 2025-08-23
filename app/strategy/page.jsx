@@ -13,7 +13,7 @@ import useExpiries from "../../components/Options/useExpiries";
 import CompanyHeader from "../../components/Strategy/CompanyHeader";
 import { STRATEGY_TABS } from "../../components/Strategy/tabs";
 
-import useDebounce from "../../hooks/useDebounce";
+import useDebounce from "../../lib/useDebounce";
 import useStrategyMemory from "../../components/state/useStrategyMemory";
 
 const pickNearest = (list) => {

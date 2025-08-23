@@ -1,5 +1,5 @@
-// tests/lib/ibkrService.spec.js
-import { searchSymbols } from '../../lib/services/ibkrService.js';
+// tests/ibkrService.spec.js
+import { searchSymbols } from '../lib/services/ibkrService.js';
 import https from 'https';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 

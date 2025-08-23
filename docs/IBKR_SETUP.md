@@ -68,7 +68,7 @@ IBKR_TWS_PORT=7496
 After configuration, run the diagnostic script:
 
 ```bash
-node scripts/start-ibkr-connection.js
+node scripts/ibkr/start-connection.js
 ```
 
 You should see:

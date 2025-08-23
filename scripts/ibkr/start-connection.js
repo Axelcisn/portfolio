@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-// scripts/start-ibkr-connection.js
+// scripts/ibkr/start-connection.js
 // Script to start and manage IBKR connection
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import https from 'https';
-import { getConnectionManager } from '../lib/services/ibkrConnectionManager.js';
+import { getConnectionManager } from '../../lib/services/ibkrConnectionManager.js';
 
 const execAsync = promisify(exec);
 
