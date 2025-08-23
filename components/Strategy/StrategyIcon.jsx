@@ -4,7 +4,7 @@
 import React, { useMemo } from "react";
 import materializeSeeded from "./defs/materializeSeeded";
 import rowsToLegs from "./utils/rowsToLegs";
-import { payoffAt, suggestBounds } from "../lib/strategy/payoff.js";
+import { payoffAt, suggestBounds } from "../../lib/strategy/payoff.js";
 
 /** Tile wrapper (rounded square) */
 function IconTile({ size = 48, children }) {
