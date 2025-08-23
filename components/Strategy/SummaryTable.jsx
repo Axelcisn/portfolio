@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useMemo } from "react";
+import { fmtCur, fmtNum } from "../../utils/format";
 
 const TYPE_LABEL = {
   lc: "Long Call",
@@ -13,24 +14,6 @@ const TYPE_LABEL = {
 };
 
 const IS_STOCK = (t) => t === "ls" || t === "ss";
-
-// format helpers
-function fmtNum(v, d = 2) {
-  return Number.isFinite(Number(v)) ? Number(v).toFixed(d) : "—";
-}
-function fmtCur(v, ccy = "USD", d = 2) {
-  if (!Number.isFinite(Number(v))) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: ccy,
-      maximumFractionDigits: d,
-    }).format(Number(v));
-  } catch {
-    const sym = ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : "$";
-    return sym + Number(v).toFixed(d);
-  }
-}
 
 /**
  * Compute signed premium for a single row

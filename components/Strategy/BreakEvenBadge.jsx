@@ -4,20 +4,7 @@
 import { useMemo } from "react";
 import useBreakEven from "./hooks/useBreakEven";
 import { rowsToApiLegs } from "./utils";
-
-function fmtPrice(x, ccy = "USD") {
-  if (!Number.isFinite(Number(x))) return "—";
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: ccy,
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-    }).format(Number(x));
-  } catch {
-    return Number(x).toFixed(2);
-  }
-}
+import { fmtCur } from "../../utils/format";
 
 export default function BreakEvenBadge({
   rows,
@@ -44,9 +31,9 @@ export default function BreakEvenBadge({
 
   return (
     <span className="be-badge">
-      {Number.isFinite(a) && !Number.isFinite(b) && fmtPrice(a, currency)}
+      {Number.isFinite(a) && !Number.isFinite(b) && fmtCur(a, currency)}
       {Number.isFinite(a) && Number.isFinite(b) &&
-        `${fmtPrice(a, currency)} | ${fmtPrice(b, currency)}`}
+        `${fmtCur(a, currency)} | ${fmtCur(b, currency)}`}
       <style jsx>{`
         .be-badge { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
         .muted { color: var(--muted); }
