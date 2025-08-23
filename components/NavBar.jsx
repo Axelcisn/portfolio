@@ -156,7 +156,7 @@ export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }
               type="button"
               className="health"
               aria-label="IBKR connection status"
-              onClick={checkIbkr}
+              onClick={() => router.push('/settings/ibkr')}
               style={{ backgroundColor: ibkrConnected ? "#3b82f6" : "#ef4444" }}
               title={ibkrConnected ? "IBKR connected" : "IBKR disconnected"}
             />
