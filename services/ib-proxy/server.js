@@ -1,16 +1,13 @@
 // services/ib-proxy/server.js
-import express from 'express';
-import fetch from 'node-fetch';
-import https from 'https';
+import { createServer } from 'node:http';
+import { Agent } from 'undici';
 
-const app = express();
 const PORT = process.env.PORT || 4010;
 const rawIB = process.env.IB_GATEWAY_URL || 'https://localhost:5000';
 // normalize base (no trailing slash)
 const IB = rawIB.replace(/\/+$/, '');
-const agent = new https.Agent({ rejectUnauthorized: false }); // CP Gateway uses self-signed cert
-
-app.get('/v1/ping', (req, res) => res.json({ ok: true, up: true }));
+// CP Gateway uses self-signed cert
+const agent = new Agent({ connect: { rejectUnauthorized: false } });
 
 async function ibGet(path) {
   // Try primary path first. Some gateways mount the Client Portal API under
@@ -19,19 +16,19 @@ async function ibGet(path) {
   const makeUrl = (base) => `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 
   const primaryUrl = makeUrl(IB);
-  let r = await fetch(primaryUrl, { agent, headers: { Accept: 'application/json' } });
+  let r = await fetch(primaryUrl, { dispatcher: agent, headers: { Accept: 'application/json' } });
 
   if (r.status === 404) {
     // If the requested path starts with /v1/api, try stripping that prefix
     if (path.match(/^\/v1\/api/i)) {
       const strippedPath = path.replace(/^\/v1\/api/i, '') || '/';
       const altUrl = makeUrl(IB) + (strippedPath.startsWith('/') ? '' : '/') + strippedPath;
-      r = await fetch(altUrl, { agent, headers: { Accept: 'application/json' } });
+      r = await fetch(altUrl, { dispatcher: agent, headers: { Accept: 'application/json' } });
     } else {
       // Otherwise try appending /v1/api to the base (for gateways that mount there)
       const altBase = IB.endsWith('/v1/api') ? IB.replace(/\/v1\/api$/, '') : `${IB}/v1/api`;
       const altUrl = makeUrl(altBase);
-      r = await fetch(altUrl, { agent, headers: { Accept: 'application/json' } });
+      r = await fetch(altUrl, { dispatcher: agent, headers: { Accept: 'application/json' } });
     }
   }
 
@@ -44,34 +41,62 @@ async function ibGet(path) {
   return j;
 }
 
-// GET /v1/company?symbol=AAPL
-app.get('/v1/company', async (req, res) => {
-  const symbol = String(req.query.symbol || '').toUpperCase();
-  if (!symbol) return res.status(400).json({ ok: false, error: 'symbol required' });
+const server = createServer(async (req, res) => {
   try {
-    // Client Portal Gateway symbol resolver
-    const data = await ibGet(`/v1/api/trsrv/stocks?symbol=${encodeURIComponent(symbol)}`);
-    const arr = data?.symbols?.[0]?.contracts || [];
-    const best = arr.find(c => c.isUS) || arr[0] || null;
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-    if (!best) return res.json({ ok: false, error: 'not_found', symbol });
+    if (req.method === 'GET' && url.pathname === '/v1/ping') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, up: true }));
+      return;
+    }
 
-    const out = {
-      ok: true,
-      symbol,
-      conid: best.conid ?? null,
-      longName: best.companyName ?? null,
-      currency: best.currency ?? null,
-      primaryExchange: best.primaryExchange || best.exchange || null,
-      rawExchange: best.exchange || null,
-    };
-    if (process.env.DEBUG_IB_PROXY === '1') out._raw = data;
-    res.json(out);
-  } catch (e) {
-    res.json({ ok: false, error: String(e.message || e) });
+    if (req.method === 'GET' && url.pathname === '/v1/company') {
+      const symbol = String(url.searchParams.get('symbol') || '').toUpperCase();
+      if (!symbol) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'symbol required' }));
+        return;
+      }
+      try {
+        // Client Portal Gateway symbol resolver
+        const data = await ibGet(`/v1/api/trsrv/stocks?symbol=${encodeURIComponent(symbol)}`);
+        const arr = data?.symbols?.[0]?.contracts || [];
+        const best = arr.find(c => c.isUS) || arr[0] || null;
+
+        if (!best) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'not_found', symbol }));
+          return;
+        }
+
+        const out = {
+          ok: true,
+          symbol,
+          conid: best.conid ?? null,
+          longName: best.companyName ?? null,
+          currency: best.currency ?? null,
+          primaryExchange: best.primaryExchange || best.exchange || null,
+          rawExchange: best.exchange || null,
+        };
+        if (process.env.DEBUG_IB_PROXY === '1') out._raw = data;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(out));
+      } catch (e) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+      }
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'not_found' }));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'internal_error' }));
   }
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`[ib-proxy] listening on http://localhost:${PORT} -> CP ${IB}`);
 });
