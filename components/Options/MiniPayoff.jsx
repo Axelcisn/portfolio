@@ -1,7 +1,7 @@
 // components/Options/MiniPayoff.jsx
 "use client";
 import { useMemo, useRef, useState } from "react";
-import { beLongCall, beShortCall, beLongPut, beShortPut, isNum } from "../../lib/options/math";
+import { breakEven } from "../../lib/quant/index.js";
 
 export default function MiniPayoff({
   S0=100, K=100, premium=2, side="long", kind="call",
@@ -41,10 +41,10 @@ export default function MiniPayoff({
   },[xMin,xMax,payoff,w,h]);
 
   // BE
-  const BE = useMemo(()=>{
-    if(kind==="call") return (side==="long"? beLongCall:beShortCall)(K, premium);
-    return (side==="long"? beLongPut:beShortPut)(K, premium);
-  },[K,premium,side,kind]);
+  const BE = useMemo(
+    () => breakEven({ type: kind, K, premium }),
+    [kind, K, premium]
+  );
 
   // tooltip
   const [tip,setTip] = useState(null);
@@ -70,7 +70,7 @@ export default function MiniPayoff({
         {/* path */}
         <path d={pts.path} fill="none" stroke="var(--text)" strokeWidth="1.8" opacity="0.9"/>
         {/* BE marker */}
-        {isNum(BE) && (
+        {Number.isFinite(BE) && (
           <>
             <circle cx={pts.X(BE)} cy={pts.Y(0)} r="4" fill="var(--accent, #3b82f6)" />
             <text x={pts.X(BE)+6} y={pts.Y(0)-6} fontSize="10" fill="var(--text)" opacity="0.85">BE</text>

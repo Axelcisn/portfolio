@@ -1,8 +1,5 @@
 // app/api/yahoo/session/route.js
-import {
-  getYahooSessionInfo,
-  resetYahooSession,
-} from "../../../../lib/providers/yahooSession";
+import { getYahooSessionInfo, resetYahooSession } from "../../../../lib/yahoo.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
