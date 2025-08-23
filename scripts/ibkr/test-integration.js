@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Test script for IBKR integration endpoints
-// Run with: node scripts/test-ibkr-integration.js
+// Run with: node scripts/ibkr/test-integration.js
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
