@@ -2,15 +2,9 @@
 "use client";
 
 import React from "react";
+import { fmtCur, fmtNum, fmtPct } from "../../lib/format";
 
 const isNum = (x) => Number.isFinite(x);
-
-const moneySign = (ccy) =>
-  ccy === "EUR" ? "€" : ccy === "GBP" ? "£" : ccy === "JPY" ? "¥" : "$";
-
-function fmt(v, d = 2) { return isNum(v) ? Number(v).toFixed(d) : "—"; }
-function fmtPct(p, d = 2) { return isNum(p) ? `${(p * 100).toFixed(d)}%` : "—"; }
-function fmtMoney(v, ccy = "USD", d = 2) { return isNum(v) ? `${moneySign(ccy)}${Number(v).toFixed(d)}` : "—"; }
 
 export default function StrategyMetricsBar({
   totals,
@@ -41,19 +35,19 @@ export default function StrategyMetricsBar({
     const off = Math.abs(rnSanity.diff);
     const scale = Math.max(1, Math.abs(totals.totalExpP) + Math.abs(rnSanity.carry));
     const offPct = (off / scale) * 100;
-    rnNote = offPct < 5 ? null : `⚠︎ RN sanity off by ${offPct.toFixed(1)}%`;
+  rnNote = offPct < 5 ? null : `⚠︎ RN sanity off by ${offPct.toFixed(1)}%`;
   }
 
   return (
     <div className="strat-metrics" role="region" aria-label="Strategy metrics">
-      <Pill label="E[Profit]" value={fmtMoney(totals?.totalExpP, currency)} tone={toneNum(totals?.totalExpP)} />
-      <Pill label="E[Loss]" value={fmtMoney(totals?.totalEL, currency)} tone="neg" />
+      <Pill label="E[Profit]" value={fmtCur(totals?.totalExpP, currency)} tone={toneNum(totals?.totalExpP)} />
+      <Pill label="E[Loss]" value={fmtCur(totals?.totalEL, currency)} tone="neg" />
       <Pill label="P(Profit)" value={fmtPct(totals?.pop)} tone={toneNum((totals?.pop ?? 0) - 0.5)} />
       <Pill label="E[Return]" value={fmtPct(totals?.expR)} tone={toneNum(totals?.expR)} />
-      <Pill label="Sharpe" value={fmt(totals?.sharpe, 2)} tone={toneNum(totals?.sharpe)} />
-      <Pill label="MC(S)" value={fmtMoney(meanMC, currency)} />
-      <Pill label="95% CI" value={`${fmtMoney(ciL, currency)} — ${fmtMoney(ciU, currency)}`} compact />
-      <Pill label="Spot Price" value={fmtMoney(S0, currency)} />
+      <Pill label="Sharpe" value={fmtNum(totals?.sharpe, 2)} tone={toneNum(totals?.sharpe)} />
+      <Pill label="MC(S)" value={fmtCur(meanMC, currency)} />
+      <Pill label="95% CI" value={`${fmtCur(ciL, currency)} — ${fmtCur(ciU, currency)}`} compact />
+      <Pill label="Spot Price" value={fmtCur(S0, currency)} />
       {rnNote && <div className="rn-note">{rnNote}</div>}
 
       <style jsx>{`

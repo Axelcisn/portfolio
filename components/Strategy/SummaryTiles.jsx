@@ -1,5 +1,5 @@
 "use client";
-import { fmtCur, fmtPct } from "../../utils/format";
+import { fmtCur, fmtPct } from "../../lib/format";
 
 export default function SummaryTiles({ currency = "EUR", netPremium = 0, probProfit = null, expectancy = null, expReturn = null }) {
   return (

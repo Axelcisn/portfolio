@@ -42,3 +42,4 @@ Thumbs.db
 .vercel/
 services/ib-proxy/.env
 .vercel
+!config/.env.example

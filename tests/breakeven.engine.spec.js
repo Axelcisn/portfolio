@@ -1,4 +1,4 @@
-// tests/strategy/breakeven.engine.spec.js
+// tests/breakeven.engine.spec.js
 // Unit tests for the authoritative engine: lib/strategy/breakeven.js
 
 import breakevenEngine from "lib/strategy/breakeven";

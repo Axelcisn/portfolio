@@ -1,5 +1,5 @@
-// components/Strategy/utils/__tests__/rowsToApiLegs.test.js
-import rowsToApiLegs from '../rowsToApiLegs';
+// tests/rowsToApiLegs.test.js
+import rowsToApiLegs from '../components/Strategy/utils/rowsToApiLegs';
 
 describe('rowsToApiLegs', () => {
   it('maps options and stock legs (including K/strike, premium, qty)', () => {

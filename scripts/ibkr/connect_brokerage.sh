@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Discover active port (prefer saved, else listening)
-read_port() { [ -f /tmp/ibkr_gateway_port ] && cat /tmp/ibkr_gateway_port || echo ""; }
-PORT="$(read_port)"
-if [ -z "$PORT" ]; then
-  if lsof -nP -iTCP:5001 -sTCP:LISTEN >/dev/null 2>&1; then PORT=5001
-  elif lsof -nP -iTCP:5000 -sTCP:LISTEN >/dev/null 2>&1; then PORT=5000
-  else PORT=5001; fi
-fi
-BASE="https://localhost:${PORT}/v1/api"
+. "$(dirname "$0")/common.sh"
+
+BASE="$(ibkr_base_url)"
 echo "[using] $BASE"
 
 probe() {
@@ -34,9 +28,9 @@ probe "reauthenticate"   "$BASE/iserver/reauthenticate" POST || true
 echo "[wait] brokerage auth -> connected"
 ok=0
 for i in {1..60}; do
-  RESP="$(curl -sk -X POST --data "" "$BASE/iserver/auth/status" || true)"
+  RESP="$(ibkr_auth_status "$BASE")"
   echo "$RESP"
-  if echo "$RESP" | grep -q '"authenticated":true' && echo "$RESP" | grep -q '"connected":true'; then
+  if [ "$(ibkr_is_authenticated "$RESP")" = "true" ] && [ "$(ibkr_is_connected "$RESP")" = "true" ]; then
     ok=1; echo "[ok] bridge ready"; break
   fi
   sleep 2

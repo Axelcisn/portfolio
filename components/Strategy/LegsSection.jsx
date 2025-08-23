@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import LegRow from "./LegRow";
-import { fmtNum } from "../../utils/format";
+import { fmtNum } from "../../lib/format";
 
 const num = (v) => {
   const n = parseFloat(String(v ?? "").replace(",", "."));

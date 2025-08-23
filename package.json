@@ -10,12 +10,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:cov": "vitest run --coverage",
-    "test:be": "vitest run tests/strategy/breakeven.engine.spec.js tests/api/breakeven.route.spec.js tests/api/breakeven.api.spec.js"
+    "test": "vitest run --config config/vitest.config.mjs",
+    "test:watch": "vitest --config config/vitest.config.mjs",
+    "test:cov": "vitest run --coverage --config config/vitest.config.mjs",
+    "test:be": "vitest run --config config/vitest.config.mjs tests/breakeven.engine.spec.js tests/api/breakeven.route.spec.js tests/api/breakeven.api.spec.js"
   },
   "dependencies": {
+    "dotenv": "^16.6.1",
     "next": "14",
     "react": "18",
     "react-dom": "18",
@@ -30,5 +31,21 @@
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "typescript": "5.9.2",
     "vitest": "^3.2.4"
+  },
+  "eslintConfig": {
+    "extends": [
+      "next/core-web-vitals",
+      "next/typescript"
+    ],
+    "rules": {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          "varsIgnorePattern": "^_",
+          "argsIgnorePattern": "^_",
+          "caughtErrorsIgnorePattern": "^_"
+        }
+      ]
+    }
   }
 }

@@ -4,7 +4,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import TickerSearchUnified from "./Search/TickerSearchUnified";
+import TickerSearchUnified from "./TickerSearchUnified";
 
 export default function NavBar({ tz = "Europe/Rome", autoNavigateOnPick = true }) {
   const pathname = usePathname();

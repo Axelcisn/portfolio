@@ -44,6 +44,7 @@ function stableKey(obj) {
 }
 
 function toNum(x) {
+  if (x == null) return null;
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
 }

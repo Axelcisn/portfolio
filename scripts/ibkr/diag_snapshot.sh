@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-set -u
+set -euo pipefail
 
-BASES=("https://127.0.0.1:5000/v1/api" "https://localhost:5000/v1/api")
+. "$(dirname "$0")/common.sh"
+
+PORT="$(ibkr_detect_port)"
+BASES=("https://127.0.0.1:${PORT}/v1/api" "$(ibkr_base_url)")
 
 echo "=== IBKR SNAPSHOT ==="
-echo "[1/5] Port 5000 listening?"
-if lsof -nP -iTCP:5000 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "OK: 5000 LISTENING"
+echo "[1/5] Port $PORT listening?"
+if lsof -nP -iTCP:${PORT} -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "OK: $PORT LISTENING"
 else
-  echo "NO: 5000 NOT LISTENING"
+  echo "NO: $PORT NOT LISTENING"
 fi
 
 echo
