@@ -1,6 +1,7 @@
 // app/api/ibkr/basic/route.js
 // IBKR basic quote endpoint - wrapper around ibkrService
 import ibkrService, { ibRequest } from '../../../../lib/services/ibkrService';
+import mockIbkrService from '../../../../lib/services/mockIbkrService';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -62,10 +63,66 @@ export async function GET(req) {
       }
     }
 
-    // If no candidate produced a price, return ok:false payload
+    // If no candidate produced a price, try mock data for development
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const mockQuote = await mockIbkrService.getQuote(symbol);
+        if (mockQuote && mockQuote.price) {
+          return new Response(JSON.stringify({
+            ok: true,
+            symbol: symbol,
+            name: mockQuote.name,
+            exchange: mockQuote.exchange,
+            currency: mockQuote.currency,
+            conid: mockQuote.conid,
+            price: mockQuote.price,
+            fields: {
+              '31': String(mockQuote.price),
+              '83': String(mockQuote.changePercent || 0),
+              '84': mockQuote.bid ? String(mockQuote.bid) : null,
+              '86': mockQuote.ask ? String(mockQuote.ask) : null
+            },
+            ts: Date.now(),
+            mock: true
+          }), { status: 200 });
+        }
+      } catch (mockErr) {
+        console.error('Mock data also failed:', mockErr);
+      }
+    }
+    
     return new Response(JSON.stringify({ ok: false, error: 'No price available for symbol' }), { status: 200 });
   } catch (err) {
     console.error(`Failed to get basic quote for ${symbol}:`, err);
+    
+    // Try mock data in development
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const mockQuote = await mockIbkrService.getQuote(symbol);
+        if (mockQuote && mockQuote.price) {
+          return Response.json({
+            ok: true,
+            symbol: symbol,
+            name: mockQuote.name,
+            exchange: mockQuote.exchange,
+            currency: mockQuote.currency,
+            conid: mockQuote.conid,
+            price: mockQuote.price,
+            fields: {
+              '31': String(mockQuote.price),
+              '83': String(mockQuote.changePercent || 0),
+              '84': mockQuote.bid ? String(mockQuote.bid) : null,
+              '86': mockQuote.ask ? String(mockQuote.ask) : null
+            },
+            ts: Date.now(),
+            mock: true
+          }, { status: 200 });
+        }
+      } catch (mockErr) {
+        console.error('Mock data also failed:', mockErr);
+      }
+    }
+    
     return Response.json(
       { ok: false, error: err.message || 'IBKR fetch failed' },
       { status: 200 }

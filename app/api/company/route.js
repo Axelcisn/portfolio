@@ -17,7 +17,9 @@ export async function GET(req) {
   
   try {
     // Use the internal ibkr/basic endpoint to obtain normalized basic quote
-    const r = await fetch(`/api/ibkr/basic?symbol=${encodeURIComponent(symbol)}`, { cache: 'no-store' });
+    // In server-side context, we need to use absolute URL
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    const r = await fetch(`${baseUrl}/api/ibkr/basic?symbol=${encodeURIComponent(symbol)}`, { cache: 'no-store' });
     // Some test mocks replace fetch with a simple function that returns an object
     // without .json(); handle that by reading text and parsing if necessary.
     let j;
