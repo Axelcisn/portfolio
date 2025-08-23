@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-import { getYahooSessionInfo } from "../../../../lib/providers/yahooSession";
+import { getYahooSessionInfo } from "../../../../lib/providers/yahooSession.js";
 
 export async function GET() {
   try {

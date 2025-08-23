@@ -2,7 +2,7 @@
 import {
   getYahooSessionInfo,
   resetYahooSession,
-} from "../../../../lib/providers/yahooSession";
+} from "../../../../lib/providers/yahooSession.js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

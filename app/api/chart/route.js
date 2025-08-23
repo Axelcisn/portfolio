@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import ibkrService from "../../../lib/services/ibkrService";
+import ibkrService from "../../../lib/services/ibkrService.js";
 import { logReturns, annualizedFromDailyLogs } from "../../../lib/stats.js";
 
 export const runtime = "nodejs";

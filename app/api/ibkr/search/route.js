@@ -1,7 +1,7 @@
 // app/api/ibkr/search/route.js
 // IBKR search endpoint - wrapper around ibkrService
 import { NextResponse } from "next/server";
-import ibkrService from "../../../../lib/services/ibkrService";
+import ibkrService from "../../../../lib/services/ibkrService.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

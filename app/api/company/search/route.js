@@ -1,7 +1,7 @@
 // app/api/company/search/route.js
 // Company search endpoint - uses IBKR exclusively
 import { NextResponse } from "next/server";
-import ibkrService from "../../../../lib/services/ibkrService";
+import ibkrService from "../../../../lib/services/ibkrService.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

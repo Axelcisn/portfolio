@@ -1,7 +1,7 @@
 // app/api/ibkr/basic/route.js
 // IBKR basic quote endpoint - wrapper around ibkrService
-import ibkrService, { ibRequest } from '../../../../lib/services/ibkrService';
-import mockIbkrService from '../../../../lib/services/mockIbkrService';
+import ibkrService, { ibRequest } from '../../../../lib/services/ibkrService.js';
+import mockIbkrService from '../../../../lib/services/mockIbkrService.js';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

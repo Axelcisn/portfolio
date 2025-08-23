@@ -1,6 +1,6 @@
 // app/api/expiries/route.js
 // Options expiries endpoint - uses IBKR exclusively
-import ibkrService from '../../../lib/services/ibkrService';
+import ibkrService from '../../../lib/services/ibkrService.js';
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

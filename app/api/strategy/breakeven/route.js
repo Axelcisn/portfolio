@@ -2,7 +2,7 @@
 // Next.js (App Router) API — Break-even calculator for option strategies.
 
 import { NextResponse } from "next/server";
-import { computeBreakEvens } from "lib/strategy/breakeven.js";
+import { computeBreakEvens } from "../../../../lib/strategy/breakeven.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -16,7 +16,7 @@
     "test:be": "vitest run --config config/vitest.config.mjs tests/breakeven.engine.spec.js tests/api/breakeven.route.spec.js tests/api/breakeven.api.spec.js"
   },
   "dependencies": {
-    "next": "14",
+    "next": "^14.2.10",
     "react": "18",
     "react-dom": "18"
   },
