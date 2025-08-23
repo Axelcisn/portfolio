@@ -37,7 +37,7 @@ USE_MOCK_OPTIONS=true  # Set to true to always use mock data
 
 ## Mock Data Features
 
-The mock data provider (`lib/providers/mockOptionsData.js`) generates:
+The mock data provider generates:
 
 - **Realistic pricing** using Black-Scholes model
 - **Multiple expiries**: Weekly, monthly, and quarterly options
@@ -105,12 +105,6 @@ yarn dev
 ```
 
 ## Implementation Details
-
-### Files Modified
-- `/app/api/ib/chain/route.ts` - Added mock data fallback
-- `/app/api/options/route.js` - Improved error handling
-- `/app/api/expiries/route.js` - Returns mock expiries on auth fail
-- `/lib/providers/mockOptionsData.js` - Mock data generator
 
 ### Key Features
 - Automatic fallback chain: IB → Mock Server → Generated Mock
