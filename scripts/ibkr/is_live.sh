@@ -10,10 +10,10 @@ echo "[using] $BASE"
 curl -sk -X POST --data "" "$BASE/tickle" >/dev/null || true
 
 # Check current status
-STATUS="$(curl -sk -X POST --data "" "$BASE/iserver/auth/status" || true)"
+STATUS="$(ibkr_auth_status "$BASE")"
 echo "[status] $STATUS"
-AUTH="$(printf '%s' "$STATUS" | tr -d '\n' | sed -n 's/.*"authenticated":\([^,}]*\).*/\1/p')"
-CONN="$(printf '%s' "$STATUS" | tr -d '\n' | sed -n 's/.*"connected":\([^,}]*\).*/\1/p')"
+AUTH="$(ibkr_is_authenticated "$STATUS")"
+CONN="$(ibkr_is_connected "$STATUS")"
 
 # If not connected, try reauthenticate and poll
 if [ "$AUTH" != "true" ] || [ "$CONN" != "true" ]; then
@@ -21,10 +21,10 @@ if [ "$AUTH" != "true" ] || [ "$CONN" != "true" ]; then
   curl -sk -X POST --data "" "$BASE/iserver/reauthenticate" >/dev/null || true
   for i in {1..30}; do
     sleep 1
-    STATUS="$(curl -sk -X POST --data "" "$BASE/iserver/auth/status" || true)"
+    STATUS="$(ibkr_auth_status "$BASE")"
     echo "[status] $STATUS"
-    AUTH="$(printf '%s' "$STATUS" | tr -d '\n' | sed -n 's/.*"authenticated":\([^,}]*\).*/\1/p')"
-    CONN="$(printf '%s' "$STATUS" | tr -d '\n' | sed -n 's/.*"connected":\([^,}]*\).*/\1/p')"
+    AUTH="$(ibkr_is_authenticated "$STATUS")"
+    CONN="$(ibkr_is_connected "$STATUS")"
     if [ "$AUTH" = "true" ] && [ "$CONN" = "true" ]; then break; fi
   done
 fi

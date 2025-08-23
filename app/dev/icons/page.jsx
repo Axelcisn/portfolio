@@ -2,7 +2,7 @@
 "use client";
 
 import React from "react";
-import StrategyIcon from "../../../components/Icons/StrategyIcon.jsx";
+import StrategyIcon from "../../../components/Strategy/StrategyIcon.jsx";
 
 const NAMES = [
   "manual",

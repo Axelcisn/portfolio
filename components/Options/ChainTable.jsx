@@ -4,7 +4,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback, useId } from "react";
 import { subscribeStatsCtx, snapshotStatsCtx } from "../Strategy/statsBus";
-import { fmtCur, fmtNum, fmtPct } from "../../utils/format";
+import { fmtCur, fmtNum, fmtPct } from "../../lib/format";
 
 // ---- centralized quant math (single source of truth) ----
 import {

@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rowsToApiLegs } from "./utils"; // ✅ centralized mapper via barrel
-import { fmtCur } from "../../utils/format";
+import { fmtCur } from "../../lib/format";
 
 /* ------------ strategy alias handling ------------ */
 const STRAT_ALIASES = Object.freeze({

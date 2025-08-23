@@ -7,7 +7,7 @@ import StrategyModal from "./StrategyModal";
 import * as Strat from "./assignStrategy";
 
 /* NEW: OA-style icon renderer */
-import StrategyIcon from "../Icons/StrategyIcon";
+import StrategyIcon from "./StrategyIcon";
 
 /**
  * Header row: "Strategy" title on the left; Search + Settings on the right (same line).

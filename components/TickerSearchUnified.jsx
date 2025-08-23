@@ -1,4 +1,4 @@
-// components/Search/TickerSearchUnified.jsx
+// components/TickerSearchUnified.jsx
 "use client";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 

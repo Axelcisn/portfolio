@@ -4,7 +4,7 @@
 import { useMemo } from "react";
 import useBreakEven from "./hooks/useBreakEven";
 import { rowsToApiLegs } from "./utils";
-import { fmtCur } from "../../utils/format";
+import { fmtCur } from "../../lib/format";
 
 export default function BreakEvenBadge({
   rows,

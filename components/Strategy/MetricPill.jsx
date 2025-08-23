@@ -1,7 +1,7 @@
 // components/Strategy/MetricPill.jsx
 "use client";
 
-import { fmtCur, fmtPct, fmtNum } from "../../utils/format";
+import { fmtCur, fmtPct, fmtNum } from "../../lib/format";
 
 export default function MetricPill({ label, value, fmt = "num2", currency = "EUR" }) {
   const render = () => {

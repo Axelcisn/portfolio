@@ -2,7 +2,7 @@
 "use client";
 
 import React from "react";
-import { fmtCur, fmtNum, fmtPct } from "../../utils/format";
+import { fmtCur, fmtNum, fmtPct } from "../../lib/format";
 
 const isNum = (x) => Number.isFinite(x);
 

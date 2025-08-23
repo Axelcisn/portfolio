@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { fmtCur, fmtNum } from "../../utils/format";
+import { fmtCur, fmtNum } from "../../lib/format";
 
 const TYPE_LABEL = {
   lc: "Long Call",

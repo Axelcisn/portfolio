@@ -1,7 +1,7 @@
 // components/Strategy/MarketCard.jsx
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fmtPct } from "../../utils/format";
+import { fmtPct } from "../../lib/format";
 
 /* Expanded index list (labels only) */
 const INDICES = [

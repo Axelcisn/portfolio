@@ -17,7 +17,7 @@ import { useTimeBasis } from "../ui/TimeBasisContext";
 
 // 🔹 Live Stats context (sigma/rf/q/drift/μ/spot)
 import { useStatsCtx } from "./statsBus";
-import { fmtCur, fmtNum } from "../../utils/format";
+import { fmtCur, fmtNum } from "../../lib/format";
 
 /* ---------- utils ---------- */
 function lin([d0, d1], [r0, r1]) {
