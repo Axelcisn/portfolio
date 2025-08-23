@@ -19,3 +19,23 @@ ibkr_base_url() {
   port="$(ibkr_detect_port)"
   echo "https://localhost:${port}/v1/api"
 }
+
+# Fetch auth status JSON from gateway
+ibkr_auth_status() {
+  local base="${1:-$(ibkr_base_url)}"
+  curl -sk -X POST --data "" "$base/iserver/auth/status" || true
+}
+
+# Internal helper to grab a field from status JSON
+_ibkr_status_field() {
+  local key="$1" json="$2"
+  printf '%s' "$json" | tr -d '\n' | sed -n "s/.*\"${key}\":\([^,}]*\).*/\1/p"
+}
+
+ibkr_is_authenticated() {
+  _ibkr_status_field authenticated "$1"
+}
+
+ibkr_is_connected() {
+  _ibkr_status_field connected "$1"
+}

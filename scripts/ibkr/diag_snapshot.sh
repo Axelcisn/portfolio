@@ -4,7 +4,7 @@ set -euo pipefail
 . "$(dirname "$0")/common.sh"
 
 PORT="$(ibkr_detect_port)"
-BASES=("https://127.0.0.1:${PORT}/v1/api" "https://localhost:${PORT}/v1/api")
+BASES=("https://127.0.0.1:${PORT}/v1/api" "$(ibkr_base_url)")
 
 echo "=== IBKR SNAPSHOT ==="
 echo "[1/5] Port $PORT listening?"
