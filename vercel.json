@@ -1,10 +1,4 @@
 {
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "outputDirectory": ".next",
   "framework": "nextjs",
-  "github": { "enabled": true, "silent": true },
-  "routes": [
-    { "src": "/(.*)", "dest": "/$1" }
-  ]
+  "github": { "enabled": true, "silent": true }
 }
