@@ -2,7 +2,7 @@
 // Runtime: Node.js (Vercel). Market stats API with ERP and clean meta.
 
 import { NextResponse } from "next/server";
-import { normalizeIndex, currencyByIndex } from "../../../../lib/market/indices.js";
+import { normalizeIndex, currencyByIndex } from "../../../../lib/market.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

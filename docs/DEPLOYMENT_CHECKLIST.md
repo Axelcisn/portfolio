@@ -5,8 +5,6 @@
 ### ✅ Code Changes Verified
 - [x] IBKR connection issues fixed
 - [x] Automatic fallback system implemented
-- [x] Connection manager with auto-reconnection added
-- [x] Proxy bridge service created
 - [x] All changes committed and pushed to GitHub
 
 ### ⚠️ Current Configuration Status

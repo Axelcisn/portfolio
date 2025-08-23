@@ -4,7 +4,7 @@
 // JPY (TONA via BoJ HTML scrape, best-effort), CHF (SARON via SNB CSV, best-effort),
 // CAD (BoC Valet 3M T-bill).
 import { NextResponse } from 'next/server';
-import { mget, mset, mkey } from '../../../lib/server/mcache';
+import { mget, mset, mkey } from '../../../lib/mcache.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

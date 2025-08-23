@@ -63,18 +63,6 @@ USE_IBKR_GATEWAY=false
 IBKR_TWS_PORT=7496
 ```
 
-## Testing Your Connection
-
-After configuration, run the diagnostic script:
-
-```bash
-node scripts/start-ibkr-connection.js
-```
-
-You should see:
-- ✅ Connected status for your chosen endpoint
-- ✅ Authenticated: Yes
-
 ## Troubleshooting
 
 ### Common Issues:
@@ -103,41 +91,23 @@ You should see:
 The updated system now has multiple layers of resilience:
 
 1. **Primary Connection**: Direct to IBKR Gateway (port 4001)
-2. **Fallback 1**: Direct to TWS (port 7496)
-3. **Fallback 2**: Through local proxy bridge (port 5055)
-4. **Auto-reconnection**: Connection manager handles disconnections
-5. **Keep-alive**: Prevents session timeouts
-
-## Optional: Run the Proxy Bridge
-
-For even better connection management, you can run the proxy bridge:
-
-```bash
-node lib/services/ibkrProxyBridge.js
-```
-
-This provides:
-- Automatic failover between Gateway and TWS
-- Connection pooling
-- Request retry logic
-- Health monitoring
+2. **Fallback**: Direct to TWS (port 7496)
+3. **Keep-alive**: Prevents session timeouts
 
 ## Next Steps
 
 1. Enable API in either Gateway or TWS (follow instructions above)
 2. Restart the application
-3. Run the diagnostic script to verify connection
-4. Start your Next.js application:
-   ```bash
-   npm run dev
-   ```
+3. Start your Next.js application:
+    ```bash
+    npm run dev
+    ```
 
 ## Security Notes
 
 - Always use **localhost only** connections for security
 - Keep **Read-Only API** checked unless you need trading
 - Never expose IBKR API ports to the internet
-- Use the proxy bridge for additional security layers
 
 ## Support
 

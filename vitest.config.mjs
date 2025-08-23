@@ -1,5 +1,6 @@
 // vitest.config.mjs
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   test: {
@@ -8,5 +9,10 @@ export default defineConfig({
     include: ['tests/**/*.spec.js'],
     // you can add a setup file later if needed:
     // setupFiles: ['tests/setup.ts'],
+  },
+  resolve: {
+    alias: {
+      lib: fileURLToPath(new URL('./lib', import.meta.url)),
+    },
   },
 });
