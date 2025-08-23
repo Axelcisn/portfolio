@@ -24,9 +24,6 @@
       ],
       "lib/*": [
         "lib/*"
-      ],
-      "lib/strategy/*": [
-        "lib/strategy/*"
       ]
     },
     "plugins": [
