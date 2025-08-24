@@ -1,3 +1,10 @@
+Awesome—since the backend is now healthy and stable, here’s a clean, GitHub‑ready **`README.md`** plus a pragmatic **Step 4 Frontend Roadmap** you can drop straight into your repo.
+
+---
+
+## 📄 README.md (paste this into your repository)
+
+````markdown
 # IB TWS Bridge — Quotes & Option Chain API
 
 Small Flask/ib_insync service that connects to **Interactive Brokers TWS** (or IB Gateway) and exposes simple HTTP endpoints for:
@@ -29,3 +36,135 @@ export IB_HOST=127.0.0.1
 export IB_PORT=7497          # change if using live TWS or IB Gateway
 export IB_CLIENT_ID=9925     # any integer client id
 export IB_CACHE_TTL=2.0      # tiny micro-cache for GETs (seconds)
+````
+
+### 2) Run the bridge
+
+```bash
+python3 ib_bridge_server.py
+# or background:
+nohup python3 ib_bridge_server.py > /tmp/ib-bridge.out 2>&1 &
+```
+
+### 3) Smoke tests
+
+```bash
+# Health
+curl -s http://127.0.0.1:8788/health | python -m json.tool
+
+# Quote (AAPL)
+curl -s "http://127.0.0.1:8788/quote?symbol=AAPL" | python -m json.tool
+# -> {"symbol":"AAPL","bid":..., "ask":..., "last":..., "close":..., "mid":..., "volume":...}
+
+# Option chain (window around ATM)
+curl -s "http://127.0.0.1:8788/optionChain?symbol=AAPL&window=3" | python -m json.tool
+```
+
+---
+
+## API Reference
+
+### `GET /health`
+
+Returns connection status.
+
+```json
+{ "ok": true, "ibConnected": true, "host": "127.0.0.1", "port": 7497 }
+```
+
+### `GET /serverTime`
+
+Returns server/local time (non‑blocking).
+
+```json
+{ "serverTime": "2025-08-24 16:43:51.873258" }
+```
+
+### `GET /quote?symbol=SYM`
+
+Snapshot quote for an underlying (SMART/USD).
+We request **delayed** data type (3) to work without paid subs. If bid/ask/last are missing, we fall back to `close` or `mid`.
+
+```json
+{
+  "symbol":"AAPL",
+  "bid": null,
+  "ask": null,
+  "last": 228.08,
+  "close": 224.90,
+  "mid": 228.08,
+  "volume": 425028
+}
+```
+
+### `GET /optionChain?symbol=SYM[&expiry=YYYY-MM-DD][&window=N]`
+
+Builds a compact chain around the ATM strike:
+
+* Resolves the underlying and **fetches available expirations & strikes** via `reqSecDefOptParams`. ([Interactive Brokers][1])
+* Picks an expiry (explicit or earliest) and selects `window` strikes around the ATM.
+* Requests delayed snapshots for each selected call/put.
+* Cleans NaN/Infinity to JSON `null`.
+
+**Response shape (example):**
+
+```json
+{
+  "ok": true,
+  "symbol": "AAPL",
+  "expiry": "2025-08-29",
+  "underlying": { "conid": 265598, "last": 228.08, "bid": null, "ask": null },
+  "calls": [
+    { "conid": 798299620, "right": "C", "strike": 220.0,
+      "bid": null, "ask": null, "last": null, "mid": null,
+      "volume": null, "openInterest": null, "impliedVol": null }
+  ],
+  "puts": [ /* same fields */ ]
+}
+```
+
+> If IB cannot qualify a contract, you may see code 200 **“No security definition has been found for the request.”** We filter/fallback gracefully. ([Interactive Brokers][2])
+
+---
+
+## Caching & Headers
+
+A tiny in‑process **micro‑cache (default 2 seconds)** reduces duplicate hits:
+
+* First response: `X-Cache: MISS`
+* Cached within TTL: `X-Cache: HIT`
+
+Configure TTL via `IB_CACHE_TTL` (float seconds) or remove the `before_request`/`after_request` cache block if you don’t want it.
+
+---
+
+## Logging & Troubleshooting
+
+* Runtime log: `/tmp/ib-bridge.out`
+* The bridge downgrades/suppresses expected messages for non‑entitled users, e.g.
+  **“Requested market data is not subscribed. Displaying delayed market data.”** (10167) and other **delayed‑data** informational notices. ([Interactive Brokers][1])
+* We always set **market data type = delayed** (3) to work without entitlements. You can change it to `1` (real‑time) if your account is subscribed (1 = real‑time, 2 = frozen, 3 = delayed, 4 = delayed‑frozen). ([Stack Overflow][3])
+
+---
+
+## Security
+
+The Flask server binds to `127.0.0.1` by default. If you expose it, put it behind a proxy and restrict access. Never hard‑code account numbers or tokens into client code.
+
+---
+
+## Why TWS (not Gateway)?
+
+We’re using TWS because it’s already part of your workflow. If you prefer IB Gateway, adjust `IB_PORT`:
+
+* **TWS**: 7497 (paper) / 7496 (live)
+* **Gateway**: 4002 (paper) / 4001 (live) ([Interactive Brokers][4])
+
+---
+
+## License
+
+MIT (see `LICENSE`).
+
+````
+
