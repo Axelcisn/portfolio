@@ -1,0 +1,31 @@
+# IB TWS Bridge — Quotes & Option Chain API
+
+Small Flask/ib_insync service that connects to **Interactive Brokers TWS** (or IB Gateway) and exposes simple HTTP endpoints for:
+
+- `/health` – connection status
+- `/serverTime` – server/local time
+- `/quote?symbol=…` – snapshot quote with smart fallbacks (last/close/mid)
+- `/optionChain?symbol=…&expiry=…&window=…` – compact option chain (calls/puts)
+
+**Notes**
+- We’re intentionally using **TWS** (paper/live) instead of IB Gateway; default ports are `7497` (paper) / `7496` (live) for TWS and `4002` / `4001` for IB Gateway. :contentReference[oaicite:0]{index=0}
+- The bridge requests **delayed market data** by default via `reqMarketDataType(3)` (3 = delayed, 4 = delayed‑frozen). :contentReference[oaicite:1]{index=1}
+- If you don’t have paid real‑time entitlements, IB will return messages like **“Requested market data is not subscribed. Displaying delayed market data.”**; these are expected and we suppress them from logs. :contentReference[oaicite:2]{index=2}
+
+---
+
+## Quick Start
+
+### 0) Prereqs
+- Python 3.10+  
+- `pip install -U ib_insync flask`
+- **Interactive Brokers TWS** (paper or live) running locally with API enabled.
+
+> **TWS ports**: 7497 (paper) / 7496 (live). **IB Gateway**: 4002 (paper) / 4001 (live). :contentReference[oaicite:3]{index=3}
+
+### 1) Configure environment (optional)
+```bash
+export IB_HOST=127.0.0.1
+export IB_PORT=7497          # change if using live TWS or IB Gateway
+export IB_CLIENT_ID=9925     # any integer client id
+export IB_CACHE_TTL=2.0      # tiny micro-cache for GETs (seconds)
