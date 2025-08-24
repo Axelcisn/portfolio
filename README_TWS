@@ -1,10 +1,3 @@
-Awesome—since the backend is now healthy and stable, here’s a clean, GitHub‑ready **`README.md`** plus a pragmatic **Step 4 Frontend Roadmap** you can drop straight into your repo.
-
----
-
-## 📄 README.md (paste this into your repository)
-
-````markdown
 # IB TWS Bridge — Quotes & Option Chain API
 
 Small Flask/ib_insync service that connects to **Interactive Brokers TWS** (or IB Gateway) and exposes simple HTTP endpoints for:
@@ -36,19 +29,11 @@ export IB_HOST=127.0.0.1
 export IB_PORT=7497          # change if using live TWS or IB Gateway
 export IB_CLIENT_ID=9925     # any integer client id
 export IB_CACHE_TTL=2.0      # tiny micro-cache for GETs (seconds)
-````
-
-### 2) Run the bridge
-
-```bash
+2) Run the bridge
 python3 ib_bridge_server.py
 # or background:
 nohup python3 ib_bridge_server.py > /tmp/ib-bridge.out 2>&1 &
-```
-
-### 3) Smoke tests
-
-```bash
+3) Smoke tests
 # Health
 curl -s http://127.0.0.1:8788/health | python -m json.tool
 
@@ -58,34 +43,16 @@ curl -s "http://127.0.0.1:8788/quote?symbol=AAPL" | python -m json.tool
 
 # Option chain (window around ATM)
 curl -s "http://127.0.0.1:8788/optionChain?symbol=AAPL&window=3" | python -m json.tool
-```
 
----
-
-## API Reference
-
-### `GET /health`
-
+API Reference
+GET /health
 Returns connection status.
-
-```json
 { "ok": true, "ibConnected": true, "host": "127.0.0.1", "port": 7497 }
-```
-
-### `GET /serverTime`
-
+GET /serverTime
 Returns server/local time (non‑blocking).
-
-```json
 { "serverTime": "2025-08-24 16:43:51.873258" }
-```
-
-### `GET /quote?symbol=SYM`
-
-Snapshot quote for an underlying (SMART/USD).
-We request **delayed** data type (3) to work without paid subs. If bid/ask/last are missing, we fall back to `close` or `mid`.
-
-```json
+GET /quote?symbol=SYM
+Snapshot quote for an underlying (SMART/USD). We request delayed data type (3) to work without paid subs. If bid/ask/last are missing, we fall back to close or mid.
 {
   "symbol":"AAPL",
   "bid": null,
@@ -95,20 +62,13 @@ We request **delayed** data type (3) to work without paid subs. If bid/ask/last 
   "mid": 228.08,
   "volume": 425028
 }
-```
-
-### `GET /optionChain?symbol=SYM[&expiry=YYYY-MM-DD][&window=N]`
-
+GET /optionChain?symbol=SYM[&expiry=YYYY-MM-DD][&window=N]
 Builds a compact chain around the ATM strike:
-
-* Resolves the underlying and **fetches available expirations & strikes** via `reqSecDefOptParams`. ([Interactive Brokers][1])
-* Picks an expiry (explicit or earliest) and selects `window` strikes around the ATM.
+* Resolves the underlying and fetches available expirations & strikes via reqSecDefOptParams. (Interactive Brokers)
+* Picks an expiry (explicit or earliest) and selects window strikes around the ATM.
 * Requests delayed snapshots for each selected call/put.
-* Cleans NaN/Infinity to JSON `null`.
-
-**Response shape (example):**
-
-```json
+* Cleans NaN/Infinity to JSON null.
+Response shape (example):
 {
   "ok": true,
   "symbol": "AAPL",
@@ -121,50 +81,120 @@ Builds a compact chain around the ATM strike:
   ],
   "puts": [ /* same fields */ ]
 }
-```
+If IB cannot qualify a contract, you may see code 200 “No security definition has been found for the request.” We filter/fallback gracefully. (Interactive Brokers)
 
-> If IB cannot qualify a contract, you may see code 200 **“No security definition has been found for the request.”** We filter/fallback gracefully. ([Interactive Brokers][2])
+Caching & Headers
+A tiny in‑process micro‑cache (default 2 seconds) reduces duplicate hits:
+* First response: X-Cache: MISS
+* Cached within TTL: X-Cache: HIT
+Configure TTL via IB_CACHE_TTL (float seconds) or remove the before_request/after_request cache block if you don’t want it.
+
+Logging & Troubleshooting
+* Runtime log: /tmp/ib-bridge.out
+* The bridge downgrades/suppresses expected messages for non‑entitled users, e.g. “Requested market data is not subscribed. Displaying delayed market data.” (10167) and other delayed‑data informational notices. (Interactive Brokers)
+* We always set market data type = delayed (3) to work without entitlements. You can change it to 1 (real‑time) if your account is subscribed (1 = real‑time, 2 = frozen, 3 = delayed, 4 = delayed‑frozen). (Stack Overflow)
+
+Security
+The Flask server binds to 127.0.0.1 by default. If you expose it, put it behind a proxy and restrict access. Never hard‑code account numbers or tokens into client code.
+
+Why TWS (not Gateway)?
+We’re using TWS because it’s already part of your workflow. If you prefer IB Gateway, adjust IB_PORT:
+* TWS: 7497 (paper) / 7496 (live)
+* Gateway: 4002 (paper) / 4001 (live) (Interactive Brokers)
+
+License
+MIT (see LICENSE).
+---
+
+## 🛠 Step 4 Roadmap — Integrate API into a Frontend (TradingView‑style option table)
+
+Below is a crisp, do‑able plan to ship a minimal but polished UI that consumes the new endpoints. It assumes **React/Next.js** (but works fine with any SPA).
+
+### Milestone A — Data plumbing (½ day)
+1. **API client**  
+   - Create `/lib/api.ts` with functions: `getHealth()`, `getQuote(sym)`, `getChain(sym, {expiry, window})`.  
+   - Use `fetch` with a **base URL env** `NEXT_PUBLIC_TWS_BRIDGE_URL` (default `http://127.0.0.1:8788`).
+2. **Types**  
+   - Define `Quote`, `Chain`, `OptionRow` interfaces based on the JSON above.
+3. **Caching strategy**  
+   - Use **TanStack Query** (or SWR) with staleTime ≈ **2000 ms** to match the server micro‑cache and avoid thundering herds.
+
+**Acceptance**: Page loads; `useQuery` brings back quote + chain for a default symbol (AAPL). Error states render “Data is delayed”/“Service offline”.
 
 ---
 
-## Caching & Headers
+### Milestone B — Option Chain table (1 day)
+1. **Layout**  
+   - Two panes sharing a center **Strike** column: **Calls** (left) | **Strike** (center) | **Puts** (right).  
+   - Columns: **Last** (or Mid), **Vol**, **OI** (may be `null` on delayed), **IV%** (best‑effort, may be `null`).
+2. **Row merging**  
+   - Build the set of **all strikes** appearing in either side; map each strike to `{call?, put?}`.
+3. **Interactions**  
+   - Expiry selector (dropdown).  
+   - Window selector (± strikes around ATM).  
+   - Symbol input (AAPL default).
+4. **Number formatting**  
+   - Prices: 2 decimals; Volume/OI: commas; IV: `%` if present.  
+   - Gracefully show `—` for nulls.
 
-A tiny in‑process **micro‑cache (default 2 seconds)** reduces duplicate hits:
-
-* First response: `X-Cache: MISS`
-* Cached within TTL: `X-Cache: HIT`
-
-Configure TTL via `IB_CACHE_TTL` (float seconds) or remove the `before_request`/`after_request` cache block if you don’t want it.
-
----
-
-## Logging & Troubleshooting
-
-* Runtime log: `/tmp/ib-bridge.out`
-* The bridge downgrades/suppresses expected messages for non‑entitled users, e.g.
-  **“Requested market data is not subscribed. Displaying delayed market data.”** (10167) and other **delayed‑data** informational notices. ([Interactive Brokers][1])
-* We always set **market data type = delayed** (3) to work without entitlements. You can change it to `1` (real‑time) if your account is subscribed (1 = real‑time, 2 = frozen, 3 = delayed, 4 = delayed‑frozen). ([Stack Overflow][3])
+**Acceptance**: Table renders consistently for symbols with rich options (AAPL, SPY) and handles sparse symbols with “No options” messaging.
 
 ---
 
-## Security
-
-The Flask server binds to `127.0.0.1` by default. If you expose it, put it behind a proxy and restrict access. Never hard‑code account numbers or tokens into client code.
-
----
-
-## Why TWS (not Gateway)?
-
-We’re using TWS because it’s already part of your workflow. If you prefer IB Gateway, adjust `IB_PORT`:
-
-* **TWS**: 7497 (paper) / 7496 (live)
-* **Gateway**: 4002 (paper) / 4001 (live) ([Interactive Brokers][4])
+### Milestone C — Quote band & chart (½–1 day)
+1. **Quote band**  
+   - Top header: `SYMBOL` + big **Last** (fallback to `mid` or `close`) + small `bid/ask` if present + currency (USD).
+2. **Mini chart** (optional MVP)  
+   - Start with **sparkline** of last `mid` values if you want a live feel; or integrate TradingView’s free widget as a placeholder (just to anchor layout) while you collect historical data later.
+3. **Data staleness label**  
+   - Add a subtle badge “Delayed (IBKR)” with tooltip explaining delayed data & entitlements. (IB delayed‑data behavior documented by IB.) :contentReference[oaicite:9]{index=9}
 
 ---
 
-## License
+### Milestone D — UX/Perf polish (½ day)
+- **Responsive**: horizontal scroll for narrow screens; sticky headers; row hover.
+- **Virtualization** (optional): if you later expand the chain, use `react-window` for large lists.
+- **Cancel in‑flight**: ensure symbol/expiry switches cancel previous queries (TanStack Query handles this).
+- **QA**: test with a symbol that has no options to verify “No options available”.
 
-MIT (see `LICENSE`).
+---
 
-````
+### Reference snippets (drop‑in)
+
+**`lib/api.ts`**
+```ts
+const BASE = process.env.NEXT_PUBLIC_TWS_BRIDGE_URL ?? 'http://127.0.0.1:8788';
+
+async function get<T>(path: string) {
+  const r = await fetch(`${BASE}${path}`, { headers: { 'Accept': 'application/json' } });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return (await r.json()) as T;
+}
+
+export type Quote = {
+  symbol: string; bid: number|null; ask: number|null; last: number|null;
+  close: number|null; mid: number|null; volume: number|null;
+};
+
+export type OptionRow = {
+  conid: number; right: 'C'|'P'; strike: number;
+  bid: number|null; ask: number|null; last: number|null; mid: number|null;
+  volume: number|null; openInterest: number|null; impliedVol: number|null;
+};
+
+export type Chain = {
+  ok: boolean; symbol: string; expiry: string;
+  underlying: { conid: number; last: number|null; bid: number|null; ask: number|null };
+  calls: OptionRow[]; puts: OptionRow[];
+};
+
+export const getHealth = () => get<{ok:boolean;ibConnected:boolean;host:string;port:number}>('/health');
+export const getQuote  = (s: string) => get<Quote>(`/quote?symbol=${encodeURIComponent(s)}`);
+export const getChain  = (s: string, p: {expiry?: string; window?: number} = {}) => {
+  const q = new URLSearchParams({ symbol: s, ...(p.expiry?{expiry:p.expiry}:{}) , ...(p.window?{window:String(p.window)}:{}) });
+  return get<Chain>(`/optionChain?${q}`);
+};
+Fetching with TanStack Query
+const { data: quote } = useQuery(['q', symbol], () => getQuote(symbol), { staleTime: 2000 });
+const { data: chain } = useQuery(['ch', symbol, expiry, window], () => getChain(symbol, { expiry, window }), { staleTime: 2000 });
 
