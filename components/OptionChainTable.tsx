@@ -1,6 +1,7 @@
 // components/OptionChainTable.tsx
 'use client';
 import React from 'react';
+import useSWR from 'swr';
 
 type Leg = {
   strike: number; right: 'C'|'P';
@@ -17,11 +18,22 @@ function fmt(x: number|null|undefined) {
   return x == null || Number.isNaN(x) ? '—' : Number(x).toFixed(2);
 }
 
-export default function OptionChainTable({ data }: { data: Chain }) {
+const fetcher = (url: string) => fetch(url).then(r => r.json());
+
+export default function OptionChainTable({ symbol }: { symbol: string }) {
+  const { data, error } = useSWR<Chain>(
+    `/api/optionChain?symbol=${symbol}&window=3`,
+    fetcher,
+    { refreshInterval: 10000 }
+  );
+
+  if (error) return <div style={{padding: 20, color: '#999'}}>Failed to load option chain</div>;
+  if (!data) return <div style={{padding: 20, color: '#999'}}>Loading option chain...</div>;
+  if (!data.calls || !data.puts) return <div style={{padding: 20, color: '#999'}}>No option data available</div>;
   const strikes = Array.from(
     new Set<number>([
-      ...data.calls.map(c => c.strike),
-      ...data.puts.map(p => p.strike),
+      ...(data.calls || []).map(c => c.strike),
+      ...(data.puts || []).map(p => p.strike),
     ])
   ).sort((a,b)=>a-b);
 
@@ -29,6 +41,7 @@ export default function OptionChainTable({ data }: { data: Chain }) {
 
   return (
     <div className="wrap">
+      <h3 style={{fontSize: 16, fontWeight: 600, marginBottom: 10}}>Option Chain</h3>
       <table className="table">
         <thead>
           <tr>
