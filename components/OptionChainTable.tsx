@@ -1,77 +1,202 @@
-// components/OptionChainTable.tsx
 'use client';
-import React from 'react';
+
+import React, { useMemo, useState } from 'react';
 import useSWR from 'swr';
+import { fetchJSON } from '@/lib/fetchJSON';
 
-type Leg = {
-  strike: number; right: 'C'|'P';
-  bid: number|null; ask: number|null; mid: number|null; last: number|null;
-  volume: number|null; impliedVol: number|null;
-};
-type Chain = {
-  ok?: boolean; symbol?: string; expiry?: string;
-  underlying?: { last?: number|null };
-  calls: Leg[]; puts: Leg[];
-};
+type Num = number | null;
+type Right = 'C' | 'P';
 
-function fmt(x: number|null|undefined) {
-  return x == null || Number.isNaN(x) ? '—' : Number(x).toFixed(2);
+interface Opt {
+  conid: number;
+  right: Right;
+  strike: number;
+  bid: Num;
+  ask: Num;
+  mid: Num;
+  impliedVol?: Num;
+  openInterest?: number | null;
+  volume?: number | null;
+  last?: Num;
 }
 
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+interface Chain {
+  expiry?: string;
+  calls: Opt[];
+  puts: Opt[];
+  error?: string;
+}
+
+const swrOpts = {
+  keepPreviousData: true,
+  dedupingInterval: 1500,
+  revalidateOnFocus: false,
+  revalidateOnReconnect: false,
+};
+
+function normalizeExpiryForDisplay(s: string): string {
+  const raw = (s || '').replace(/[^0-9]/g, '');
+  if (raw.length === 8) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  return s;
+}
+function wireExpiryForApi(s: string): string {
+  // API likely expects YYYYMMDD; strip dashes/spaces just in case
+  const raw = (s || '').replace(/[^0-9]/g, '');
+  return raw || s;
+}
+function parseExpiriesList(x: any): string[] {
+  if (Array.isArray(x)) return x;
+  if (x && Array.isArray(x.expiries)) return x.expiries;
+  return [];
+}
+
+const dash = '—';
+const fmtPx = (n: Num) => (typeof n === 'number' ? n.toFixed(2) : dash);
+const fmtInt = (n: number | null | undefined) =>
+  typeof n === 'number' ? n.toLocaleString() : dash;
+const fmtIV = (n: Num) => (typeof n === 'number' ? n.toFixed(2) : dash);
+
+type Row = { strike: number; call?: Opt; put?: Opt };
+function mergeRows(calls: Opt[], puts: Opt[]): Row[] {
+  const m = new Map<number, Row>();
+  for (const c of calls || []) {
+    const r = m.get(c.strike) ?? { strike: c.strike };
+    r.call = c; m.set(c.strike, r);
+  }
+  for (const p of puts || []) {
+    const r = m.get(p.strike) ?? { strike: p.strike };
+    r.put = p; m.set(p.strike, r);
+  }
+  return Array.from(m.values()).sort((a, b) => a.strike - b.strike);
+}
 
 export default function OptionChainTable({ symbol }: { symbol: string }) {
-  const { data, error } = useSWR<Chain>(
-    `/api/optionChain?symbol=${symbol}&window=3`,
-    fetcher,
-    { refreshInterval: 10000 }
+  const sym = (symbol || '').trim().toUpperCase();
+
+  const [expiry, setExpiry] = useState<string>('');     // '' = Auto (nearest)
+  const [windowSize, setWindowSize] = useState<number>(1);
+
+  // Expiries list
+  const expKey = sym ? `/api/expiries?symbol=${encodeURIComponent(sym)}` : null;
+  const { data: expiriesRaw } = useSWR<any>(expKey, (u: string) => fetchJSON(u), swrOpts);
+  const expiriesRawList = useMemo(() => parseExpiriesList(expiriesRaw), [expiriesRaw]);
+
+  // Chain: when expiry chosen, use /api/options; else use auto-nearest with window
+  const chainKey = sym
+    ? expiry
+      ? `/api/options?symbol=${encodeURIComponent(sym)}&expiry=${encodeURIComponent(wireExpiryForApi(expiry))}`
+      : `/api/optionChain?symbol=${encodeURIComponent(sym)}&window=${windowSize}`
+    : null;
+
+  const { data: chain, error, isValidating } = useSWR<Chain>(
+    chainKey,
+    (u: string) => fetchJSON<Chain>(u),
+    swrOpts
   );
 
-  if (error) return <div style={{padding: 20, color: '#999'}}>Failed to load option chain</div>;
-  if (!data) return <div style={{padding: 20, color: '#999'}}>Loading option chain...</div>;
-  if (!data.calls || !data.puts) return <div style={{padding: 20, color: '#999'}}>No option data available</div>;
-  const strikes = Array.from(
-    new Set<number>([
-      ...(data.calls || []).map(c => c.strike),
-      ...(data.puts || []).map(p => p.strike),
-    ])
-  ).sort((a,b)=>a-b);
-
-  const byStrike = (arr: Leg[], s: number) => arr.find(x => x.strike === s);
+  const rows = useMemo(
+    () => mergeRows(chain?.calls || [], chain?.puts || []),
+    [chain?.calls, chain?.puts]
+  );
 
   return (
-    <div className="wrap">
-      <h3 style={{fontSize: 16, fontWeight: 600, marginBottom: 10}}>Option Chain</h3>
-      <table className="table">
-        <thead>
-          <tr>
-            <th className="center">CALL Bid</th>
-            <th className="center">Mid</th>
-            <th className="center">Ask</th>
-            <th className="center strike">Strike</th>
-            <th className="center">Bid</th>
-            <th className="center">Mid</th>
-            <th className="center">ASK PUT</th>
-          </tr>
-        </thead>
-        <tbody>
-          {strikes.map(s => {
-            const c = byStrike(data.calls, s);
-            const p = byStrike(data.puts, s);
-            return (
-              <tr key={s}>
-                <td>{fmt(c?.bid)}</td>
-                <td>{fmt(c?.mid)}</td>
-                <td>{fmt(c?.ask)}</td>
-                <td className="strike">{s.toFixed(2)}</td>
-                <td>{fmt(p?.bid)}</td>
-                <td>{fmt(p?.mid)}</td>
-                <td>{fmt(p?.ask)}</td>
+    <section className="rounded-md border border-gray-200 p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-xl font-semibold">Options</h2>
+
+        <label className="text-sm flex items-center gap-2">
+          <span>Expiry:</span>
+          <select
+            className="border rounded px-2 py-1"
+            value={expiry}
+            onChange={(e) => setExpiry(e.currentTarget.value)}
+          >
+            <option value="">Nearest (auto)</option>
+            {expiriesRawList.map((raw) => {
+              const disp = normalizeExpiryForDisplay(raw);
+              return (
+                <option key={raw} value={disp}>{disp}</option>
+              );
+            })}
+          </select>
+        </label>
+
+        {!expiry && (
+          <label className="text-sm flex items-center gap-2">
+            <span>Window:</span>
+            <select
+              className="border rounded px-2 py-1"
+              value={windowSize}
+              onChange={(e) => setWindowSize(Number(e.currentTarget.value))}
+            >
+              {[1, 2, 3, 5].map((n) => (
+                <option key={n} value={n}>
+                  ±{n} strikes
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {isValidating && <span className="text-xs text-gray-500">loading…</span>}
+      </div>
+
+      {error && (
+        <div className="mt-2 text-sm text-red-600">Failed to load options.</div>
+      )}
+      {chain?.error && (
+        <div className="mt-2 text-sm text-amber-600">API error: {chain.error}</div>
+      )}
+
+      <div className="mt-3 overflow-auto">
+        <table className="min-w-full text-sm border border-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-2 py-1 border-b text-left">Strike</th>
+              <th className="px-2 py-1 border-b text-right">C Bid</th>
+              <th className="px-2 py-1 border-b text-right">C Mid</th>
+              <th className="px-2 py-1 border-b text-right">C Ask</th>
+              <th className="px-2 py-1 border-b text-right">C IV</th>
+              <th className="px-2 py-1 border-b text-right">C OI</th>
+              <th className="px-2 py-1 border-b text-right">C Vol</th>
+              <th className="px-2 py-1 border-b text-right">P Bid</th>
+              <th className="px-2 py-1 border-b text-right">P Mid</th>
+              <th className="px-2 py-1 border-b text-right">P Ask</th>
+              <th className="px-2 py-1 border-b text-right">P IV</th>
+              <th className="px-2 py-1 border-b text-right">P OI</th>
+              <th className="px-2 py-1 border-b text-right">P Vol</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.strike} className="odd:bg-white even:bg-gray-50">
+                <td className="px-2 py-1 border-b font-mono">{r.strike}</td>
+
+                <td className="px-2 py-1 border-b text-right">{fmtPx(r.call?.bid ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtPx(r.call?.mid ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtPx(r.call?.ask ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtIV(r.call?.impliedVol ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtInt(r.call?.openInterest)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtInt(r.call?.volume)}</td>
+
+                <td className="px-2 py-1 border-b text-right">{fmtPx(r.put?.bid ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtPx(r.put?.mid ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtPx(r.put?.ask ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtIV(r.put?.impliedVol ?? null)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtInt(r.put?.openInterest)}</td>
+                <td className="px-2 py-1 border-b text-right">{fmtInt(r.put?.volume)}</td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td className="px-2 py-6 text-center text-gray-500" colSpan={13}>
+                  No options for this selection.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
