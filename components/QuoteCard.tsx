@@ -1,85 +1,75 @@
-// components/QuoteCard.tsx
 'use client';
 
-import React from 'react';
 import useSWR from 'swr';
+import { fetchJSON } from '@/lib/fetchJSON';
 
-type Quote = {
-  symbol?: string;
-  last?: number | null;
-  mid?: number | null;
-  close?: number | null;
-  bid?: number | null;
-  ask?: number | null;
-  volume?: number | null;
-};
+type Num = number | null;
 
-const fetcher = (url: string) =>
-  fetch(url, { cache: 'no-store' }).then(r => r.json());
+interface Quote {
+  ask: Num;
+  bid: Num;
+  close: Num;
+  last: Num;
+  mid: Num;
+  symbol: string;
+  volume: Num;
+  error?: string;
+  status?: number;
+}
 
-const isNum = (v: unknown): v is number =>
-  typeof v === 'number' && Number.isFinite(v);
-
-// Prefer: last>0  → mid → close
-function choosePrice(q?: Quote): number | null {
+function pickPrice(q?: Quote): Num {
   if (!q) return null;
-  if (isNum(q.last) && q.last > 0) return q.last;
-  if (isNum(q.mid)) return q.mid;
-  if (isNum(q.close)) return q.close;
-  return null;
-}
-
-function fmtPrice(v: number | null): string {
-  return isNum(v) ? v.toFixed(2) : '—';
-}
-
-function fmtVol(v?: number | null): string {
-  return isNum(v) && v > 0 ? new Intl.NumberFormat().format(v) : '—';
+  const last = q.last;
+  if (typeof last === 'number' && last > 0) return last;
+  return q.mid ?? q.close ?? null;
 }
 
 export default function QuoteCard({ symbol }: { symbol: string }) {
-  const { data, isLoading, mutate } = useSWR<Quote>(
-    `/api/quote?symbol=${encodeURIComponent(symbol)}`,
-    fetcher,
-    { refreshInterval: 12000 }
+  const key = symbol ? `/api/quote?symbol=${encodeURIComponent(symbol)}` : null;
+
+  const { data, error, isValidating } = useSWR<Quote>(
+    key,
+    (url: string) => fetchJSON<Quote>(url),
+    {
+      keepPreviousData: true,
+      dedupingInterval: 1500,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+    }
   );
 
-  const px = choosePrice(data);
-  const vol = fmtVol(data?.volume);
+  const q = data;
+  const px = pickPrice(q);
+  const vol = q?.volume ?? null;
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        border: '1px solid #eee',
-        borderRadius: 12,
-        padding: '12px 14px',
-        background: '#fff',
-        minHeight: 56
-      }}
-    >
-      <strong style={{ fontSize: 18 }}>{symbol}</strong>
-      <span style={{ fontSize: 18 }}>{fmtPrice(px)}</span>
-      <span style={{ color: '#777' }}>vol {vol}</span>
-      <span style={{ flex: 1 }} />
-      <button
-        onClick={() => mutate()}
-        style={{
-          padding: '8px 12px',
-          border: '1px solid #ddd',
-          borderRadius: 10,
-          background: '#fff',
-          cursor: 'pointer'
-        }}
-        aria-label="Refresh quote"
-      >
-        Refresh
-      </button>
-      {isLoading ? (
-        <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>loading…</span>
-      ) : null}
-    </div>
+    <section className="rounded-md border border-gray-200 p-4">
+      <div className="flex items-baseline gap-3">
+        <h2 className="text-xl font-semibold">Quote</h2>
+        <span className="font-mono text-gray-600">{symbol || '—'}</span>
+        {isValidating && <span className="text-xs text-gray-500">loading…</span>}
+      </div>
+
+      {error && (
+        <div className="mt-2 text-sm text-red-600">
+          Failed to load quote.
+        </div>
+      )}
+      {q?.error && (
+        <div className="mt-2 text-sm text-amber-600">
+          API error: {q.error}
+        </div>
+      )}
+
+      <div className="mt-2 text-4xl font-mono">
+        {typeof px === 'number' ? px.toFixed(2) : '—'}
+      </div>
+
+      <div className="mt-1 text-sm text-gray-600 space-x-3">
+        <span>bid {q?.bid ?? '—'}</span>
+        <span>ask {q?.ask ?? '—'}</span>
+        <span>vol {vol ?? '—'}</span>
+      </div>
+    </section>
   );
 }

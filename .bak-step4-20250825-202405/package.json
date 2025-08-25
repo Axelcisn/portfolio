@@ -13,8 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
-    "test:be": "vitest run tests/strategy/breakeven.engine.spec.js tests/api/breakeven.route.spec.js tests/api/breakeven.api.spec.js",
-    "dev:3030": "next dev --port 3030"
+    "test:be": "vitest run tests/strategy/breakeven.engine.spec.js tests/api/breakeven.route.spec.js tests/api/breakeven.api.spec.js"
   },
   "dependencies": {
     "chart.js": "^4.5.0",
