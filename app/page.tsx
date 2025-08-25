@@ -2,7 +2,6 @@
 
 import React from 'react';
 import QuoteCard from '../components/QuoteCard';
-import PriceSparkline from '../components/PriceSparkline';
 import OptionChainTable from '../components/OptionChainTable';
 
 export default function HomePage() {
@@ -24,13 +23,8 @@ export default function HomePage() {
         <span style={{fontSize:12, color:'#666'}}>Bridge: {base}</span>
       </div>
 
-      <section style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, alignItems:'start'}}>
-        <div>
-          <QuoteCard symbol={symbol} />
-        </div>
-        <div style={{background:'#fff',border:'1px solid #eee',borderRadius:8,padding:10}}>
-          <PriceSparkline symbol={symbol} />
-        </div>
+      <section>
+        <QuoteCard symbol={symbol} />
       </section>
 
       <div style={{marginTop:16}}>
