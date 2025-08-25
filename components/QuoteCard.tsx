@@ -1,27 +1,85 @@
+// components/QuoteCard.tsx
 'use client';
+
+import React from 'react';
 import useSWR from 'swr';
 
 type Quote = {
-  symbol: string; bid?: number|null; ask?: number|null; last?: number|null;
-  close?: number|null; mid?: number|null; volume?: number|null;
+  symbol?: string;
+  last?: number | null;
+  mid?: number | null;
+  close?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  volume?: number | null;
 };
 
-const fetcher = (u: string) => fetch(u).then(r => r.json());
+const fetcher = (url: string) =>
+  fetch(url, { cache: 'no-store' }).then(r => r.json());
+
+const isNum = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v);
+
+// Prefer: last>0  → mid → close
+function choosePrice(q?: Quote): number | null {
+  if (!q) return null;
+  if (isNum(q.last) && q.last > 0) return q.last;
+  if (isNum(q.mid)) return q.mid;
+  if (isNum(q.close)) return q.close;
+  return null;
+}
+
+function fmtPrice(v: number | null): string {
+  return isNum(v) ? v.toFixed(2) : '—';
+}
+
+function fmtVol(v?: number | null): string {
+  return isNum(v) && v > 0 ? new Intl.NumberFormat().format(v) : '—';
+}
 
 export default function QuoteCard({ symbol }: { symbol: string }) {
-  const { data, error, mutate } = useSWR<Quote>(`/api/quote?symbol=${encodeURIComponent(symbol)}`, fetcher);
-  const q = data || {};
-  const px = q.last ?? q.mid ?? q.close ?? null;
+  const { data, isLoading, mutate } = useSWR<Quote>(
+    `/api/quote?symbol=${encodeURIComponent(symbol)}`,
+    fetcher,
+    { refreshInterval: 12000 }
+  );
+
+  const px = choosePrice(data);
+  const vol = fmtVol(data?.volume);
 
   return (
-    <div style={{border:'1px solid #eee',borderRadius:8,padding:12,background:'#fff'}}>
-      <div style={{display:'flex',gap:8,alignItems:'baseline'}}>
-        <strong>{symbol}</strong>
-        <span>{px!=null ? Number(px).toFixed(2) : '—'}</span>
-        <small style={{color:'#666'}}>vol {q.volume ?? '—'}</small>
-        <button onClick={()=>mutate()} style={{marginLeft:'auto',padding:'4px 8px',border:'1px solid #ddd',borderRadius:6,background:'#fff'}}>Refresh</button>
-      </div>
-      {error && <div style={{color:'#b00',marginTop:6}}>Failed to load</div>}
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        border: '1px solid #eee',
+        borderRadius: 12,
+        padding: '12px 14px',
+        background: '#fff',
+        minHeight: 56
+      }}
+    >
+      <strong style={{ fontSize: 18 }}>{symbol}</strong>
+      <span style={{ fontSize: 18 }}>{fmtPrice(px)}</span>
+      <span style={{ color: '#777' }}>vol {vol}</span>
+      <span style={{ flex: 1 }} />
+      <button
+        onClick={() => mutate()}
+        style={{
+          padding: '8px 12px',
+          border: '1px solid #ddd',
+          borderRadius: 10,
+          background: '#fff',
+          cursor: 'pointer'
+        }}
+        aria-label="Refresh quote"
+      >
+        Refresh
+      </button>
+      {isLoading ? (
+        <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>loading…</span>
+      ) : null}
     </div>
   );
 }
