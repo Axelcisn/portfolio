@@ -1,14 +1,44 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 
-const BASE = process.env.NEXT_PUBLIC_BRIDGE_BASE || 'http://127.0.0.1:8788';
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get('symbol') || 'AAPL').toUpperCase();
-  const r = await fetch(`${BASE}/quote?symbol=${encodeURIComponent(symbol)}`, { cache: 'no-store' });
-  if (!r.ok) {
-    return NextResponse.json({ ok:false, error:`bridge ${r.status}` }, { status: r.status });
+const BRIDGE_DEFAULT = 'http://127.0.0.1:8788';
+
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const symbol = (url.searchParams.get('symbol') || '').trim().toUpperCase();
+  if (!symbol) return Response.json({ error: 'missing_symbol' }, { status: 400 });
+
+  const BRIDGE = process.env.IB_BRIDGE_URL || BRIDGE_DEFAULT;
+  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(BRIDGE);
+  if (process.env.VERCEL && isLocal) {
+    return Response.json(
+      {
+        error: 'bridge_not_public',
+        hint:
+          'Set IB_BRIDGE_URL and NEXT_PUBLIC_BRIDGE_URL to a public https tunnel that forwards to your IB bridge.'
+      },
+      { status: 503 }
+    );
   }
-  const data = await r.json();
-  return NextResponse.json(data);
+
+  const ctl = new AbortController();
+  const to = setTimeout(() => ctl.abort('timeout'), 15_000);
+
+  try {
+    const r = await fetch(
+      `${BRIDGE}/quote?symbol=${encodeURIComponent(symbol)}`,
+      { signal: ctl.signal }
+    );
+    clearTimeout(to);
+    if (!r.ok) {
+      return Response.json({ error: 'bridge_error', status: r.status }, { status: 502 });
+    }
+    const data = await r.json();
+    return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
+  } catch {
+    clearTimeout(to);
+    return Response.json({ error: 'bridge_unreachable' }, { status: 502 });
+  }
 }
