@@ -1,5 +1,5 @@
 // components/PriceSparkline.tsx
-'use client';
+"use client";
 
 import React from 'react';
 import useSWR from 'swr';
@@ -15,25 +15,28 @@ import { Line } from 'react-chartjs-2';
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip);
 
-type Quote = { last?: number | null; mid?: number | null; close?: number | null };
-
 const fetcher = (url: string) =>
   fetch(url, { cache: 'no-store' }).then(r => r.json());
 
 const isNum = (v: unknown): v is number =>
   typeof v === 'number' && Number.isFinite(v);
 
-function choosePrice(q?: Quote): number | null {
-  if (!q) return null;
-  if (isNum(q.last) && q.last > 0) return q.last;
-  if (isNum(q.mid)) return q.mid;
-  if (isNum(q.close)) return q.close;
+// Extract price from optionChain response
+function choosePriceFromChain(chain?: any): number | null {
+  if (!chain || typeof chain !== 'object') return null;
+  const u = (chain as any).underlying;
+  if (!u) return null;
+  const { last, bid, ask } = u as any;
+  if (isNum(last) && last > 0) return last;
+  if (isNum(bid) && isNum(ask) && bid > 0 && ask > 0) return (bid + ask) / 2;
+  if (isNum(bid) && bid > 0) return bid;
+  if (isNum(ask) && ask > 0) return ask;
   return null;
 }
 
 export default function PriceSparkline({ symbol }: { symbol: string }) {
-  const { data } = useSWR<Quote>(
-    `/api/quote?symbol=${encodeURIComponent(symbol)}`,
+  const { data } = useSWR<any>(
+    `/api/optionChain?symbol=${encodeURIComponent(symbol)}&window=0`,
     fetcher,
     { refreshInterval: 15000 }
   );
@@ -49,7 +52,7 @@ export default function PriceSparkline({ symbol }: { symbol: string }) {
 
   // Push preferred price when available
   React.useEffect(() => {
-    const v = choosePrice(data);
+    const v = choosePriceFromChain(data);
     if (isNum(v)) {
       setSeries(prev => [...prev.slice(-29), v]);
       setLabels(prev => [...prev.slice(-29), '']);
