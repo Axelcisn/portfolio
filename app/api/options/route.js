@@ -1,6 +1,7 @@
 // app/api/options/route.js
-// Options chain endpoint - uses IBKR exclusively
+// Options chain endpoint - uses custom bridge or falls back to IBKR
 import ibkrService from '../../../lib/services/ibkrService';
+import bridgeService from '../../../lib/services/customBridgeService';
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,14 +49,33 @@ export async function GET(req) {
   }
 
   try {
-    // Get options chain from IBKR
-    const chain = await ibkrService.getOptionsChain(symbol, expiry);
+    let chain;
+    let useBridge = true;
+    
+    // Try custom bridge first if it's configured
+    if (process.env.IB_BRIDGE_URL || process.env.NEXT_PUBLIC_BRIDGE_URL) {
+      try {
+        // Parse window parameter if provided
+        const window = searchParams.get("window") ? parseInt(searchParams.get("window")) : 3;
+        chain = await bridgeService.getOptionsChain(symbol, window);
+      } catch (bridgeError) {
+        console.warn(`Bridge service failed, falling back to IBKR:`, bridgeError.message);
+        useBridge = false;
+      }
+    } else {
+      useBridge = false;
+    }
+    
+    // Fall back to IBKR service if bridge failed or not configured
+    if (!useBridge) {
+      chain = await ibkrService.getOptionsChain(symbol, expiry);
+    }
     
     // Get current quote for spot price
     let spotPrice = null;
     let currency = null;
     try {
-      const quote = await ibkrService.getQuote(symbol);
+      const quote = useBridge ? await bridgeService.getQuote(symbol) : await ibkrService.getQuote(symbol);
       spotPrice = quote.price || ((quote.bid + quote.ask) / 2) || null;
       currency = quote.currency;
     } catch (e) {
@@ -75,7 +95,7 @@ export async function GET(req) {
           availableExpiries: chain.expiries || []
         }
       },
-      source: "ibkr"
+      source: useBridge ? "bridge" : "ibkr"
     };
     
     // Cache successful result
